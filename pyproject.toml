@@ -27,6 +27,9 @@ Documentation = "https://github.com/aexoden/factortool#readme"
 Issues = "https://github.com/aexoden/factortool/issues"
 Source = "https://github.com/aexoden/factortool"
 
+[project.scripts]
+factortool = "factortool.cli:main"
+
 [tool.hatch.version]
 path = "src/factortool/__about__.py"
 
