@@ -9,6 +9,7 @@ from loguru import logger
 from tap import Tap
 
 from factortool.config import read_config
+from factortool.factor import FactorEngine
 
 
 class Arguments(Tap):
@@ -42,3 +43,6 @@ def main() -> None:
     except FileNotFoundError:
         logger.error("Configuration file not found")
         sys.exit(1)
+
+    engine = FactorEngine()
+    engine.run([])
