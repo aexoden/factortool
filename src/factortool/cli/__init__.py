@@ -49,7 +49,7 @@ def main() -> None:
     import random  # noqa: PLC0415
     test_numbers: list[Number] = []
 
-    for digits in range(1, 50):
+    for digits in range(60, 65):
         test_numbers.extend([Number(random.randint(10 ** (digits - 1), 10 ** digits)) for _ in range(2)])  # noqa: S311
 
     engine = FactorEngine(config)

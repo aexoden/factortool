@@ -52,26 +52,36 @@ class FactorEngine:
         maximum_ecm_level = max(ECM_CURVES.keys())
 
         for ecm_level in range(minimum_ecm_level, maximum_ecm_level + 1):
-            number_count = len([x for x in numbers if len(x.composite_factors) > 0])
+            overall_number_count = len([x for x in numbers if not x.factored])
+            ecm_number_count = len([x for x in numbers if x.ecm_needed])
 
-            if number_count == 0:
+            if ecm_number_count == 0:
                 break
 
             curves, b1 = ECM_CURVES[ecm_level]
 
             logger.info(
                 "Attempting ECM factoring on {} number{} at t-level {} with {} curves of B1 = {}",
-                number_count,
-                "s" if number_count != 1 else "",
+                overall_number_count,
+                "s" if overall_number_count != 1 else "",
                 ecm_level,
                 curves,
                 b1,
             )
 
-            for number in numbers:
-                number.factor_ecm(curves, b1, self._config.max_threads, self._config.gmp_ecm_path)
-
-                # TODO: Each number has its own maximum ECM level, depending on its size.
+            for number in [x for x in numbers if x.ecm_needed]:
+                number.factor_ecm(ecm_level, self._config.max_threads, self._config.gmp_ecm_path)
 
                 if self._interrupt_level > 0:
                     return
+
+        # Finish the remaining numbers with NFS.
+        number_count = len([x for x in numbers if not x.factored])
+
+        if number_count == 0:
+            return
+
+        logger.info("Attempting NFS factoring on {} number{}", number_count, "s" if number_count != 1 else "")
+
+        for number in [x for x in numbers if not x.factored]:
+            number.factor_nfs(self._config.cado_nfs_path)

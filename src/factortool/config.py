@@ -12,6 +12,7 @@ from pydantic import BaseModel, ValidationError
 
 @dataclass
 class Config(BaseModel):
+    cado_nfs_path: Path
     factordb_username: str
     factordb_password: str
     gmp_ecm_path: Path

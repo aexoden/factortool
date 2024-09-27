@@ -13,6 +13,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from factortool.constants import CADO_NFS_MIN_DIGITS, ECM_CURVES
 from factortool.util import SMALL_PRIMES, is_prime, log_factor_result
 
 
@@ -65,6 +66,45 @@ def factor_ecm(n: int, curves: int, b1: int, max_threads: int, gmp_ecm_path: Pat
 
 
 @cache
+def factor_nfs(n: int, cado_nfs_path: Path) -> list[int]:
+    # Abort if the number of digits is too small for CADO-NFS.
+    digits = len(str(n))
+
+    if digits < CADO_NFS_MIN_DIGITS:
+        return [n]
+
+    # Factor the number using CADO-NFS.
+    cmd = [str(cado_nfs_path), str(n)]
+
+    try:
+        start_time = time.perf_counter_ns()
+
+        result = subprocess.run(
+            cmd,
+            input=str(n),
+            capture_output=True,
+            text=True,
+            check=True,
+            process_group=0,
+        )
+
+        end_time = time.perf_counter_ns()
+        _execution_time = (end_time - start_time) / 1_000_000_000.0
+
+        # TODO: Log the execution time of this run.
+
+        factors = list(map(int, result.stdout.strip().split()))
+
+        if len(factors) > 1:
+            log_factor_result("NFS", n, sorted(factors))
+    except subprocess.CalledProcessError as e:
+        logger.critical("NFS failed for {}: {}", n, e.stderr)
+        sys.exit(4)
+    else:
+        return sorted(factors)
+
+
+@cache
 def factor_tf(n: int) -> list[int]:
     original_n = n
     factors: list[int] = []
@@ -98,9 +138,13 @@ class Number:
     n: int
     prime_factors: list[int]
     composite_factors: list[int]
+    ecm_level: int
     methods: set[str]
 
     def __init__(self, n: int) -> None:
+        self.n = n
+        self.ecm_level = 0
+
         if is_prime(n):
             self.composite_factors = []
             self.prime_factors = [n]
@@ -109,6 +153,21 @@ class Number:
             self.prime_factors = []
 
         self.methods = set()
+
+    @property
+    def ecm_needed(self) -> bool:
+        if self.factored:
+            return False
+
+        # TODO: Change this to handle reading/writing from the database and adjusting based on digits.
+        digits = len(str(self.n))
+        smallest_composite_factor_digits = len(str(min(self.composite_factors)))
+
+        return self.ecm_level < digits // 3 or smallest_composite_factor_digits < CADO_NFS_MIN_DIGITS
+
+    @property
+    def factored(self) -> bool:
+        return len(self.composite_factors) == 0
 
     def factor_tf(self) -> None:
         composite_factors = self.composite_factors.copy()
@@ -126,9 +185,12 @@ class Number:
                 else:
                     self.composite_factors.append(factor)
 
-    def factor_ecm(self, curves: int, b1: int, max_threads: int, gmp_ecm_path: Path) -> None:
+    def factor_ecm(self, level: int, max_threads: int, gmp_ecm_path: Path) -> None:
+        curves, b1 = ECM_CURVES[level]
         composite_factors = self.composite_factors.copy()
         self.composite_factors = []
+
+        self.ecm_level = level
 
         for n in composite_factors:
             factors = factor_ecm(n, curves, b1, max_threads, gmp_ecm_path)
@@ -141,3 +203,20 @@ class Number:
                     self.prime_factors.append(factor)
                 else:
                     self.composite_factors.append(factor)
+
+    def factor_nfs(self, cado_nfs_path: Path) -> None:
+        composite_factors = self.composite_factors.copy()
+        self.composite_factors = []
+
+        for n in composite_factors:
+            factors = factor_nfs(n, cado_nfs_path)
+
+            if len(factors) > 1:
+                self.methods.add("NFS")
+
+                # In theory, CADO-NFS should only return prime factors, but this serves as a sanity check.
+                for factor in factors:
+                    if is_prime(factor):
+                        self.prime_factors.append(factor)
+                    else:
+                        self.composite_factors.append(factor)

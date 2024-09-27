@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
 
+CADO_NFS_MIN_DIGITS = 57
+
 ECM_CURVES: dict[int, tuple[int, int]] = {
     2: (5, 340),
     3: (1, 437),
