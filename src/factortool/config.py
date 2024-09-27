@@ -14,6 +14,8 @@ from pydantic import BaseModel, ValidationError
 class Config(BaseModel):
     factordb_username: str
     factordb_password: str
+    gmp_ecm_path: Path
+    max_threads: int
 
 
 def read_config(path: Path) -> Config:

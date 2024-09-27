@@ -4,16 +4,19 @@
 import signal
 import sys
 
-from collections.abc import Iterable
+from collections.abc import Collection
 from types import FrameType
 
 from loguru import logger
 
+from factortool.config import Config
+from factortool.constants import ECM_CURVES
 from factortool.number import Number
 
 
 class FactorEngine:
-    def __init__(self) -> None:
+    def __init__(self, config: Config) -> None:
+        self._config = config
         self._interrupt_level: int = 0
         signal.signal(signal.SIGINT, self._handle_sigint)
 
@@ -34,10 +37,41 @@ class FactorEngine:
     # Public Methods
     #
 
-    def run(self, numbers: Iterable[Number]) -> None:
+    def run(self, numbers: Collection[Number]) -> None:
         # Attempt to trial factor each number.
+        logger.info("Attempting trial factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
+
         for number in numbers:
             number.factor_tf()
 
             if self._interrupt_level > 0:
                 return
+
+        # Attempt to factor each number via ECM.
+        minimum_ecm_level = min(ECM_CURVES.keys())
+        maximum_ecm_level = max(ECM_CURVES.keys())
+
+        for ecm_level in range(minimum_ecm_level, maximum_ecm_level + 1):
+            number_count = len([x for x in numbers if len(x.composite_factors) > 0])
+
+            if number_count == 0:
+                break
+
+            curves, b1 = ECM_CURVES[ecm_level]
+
+            logger.info(
+                "Attempting ECM factoring on {} number{} at t-level {} with {} curves of B1 = {}",
+                number_count,
+                "s" if number_count != 1 else "",
+                ecm_level,
+                curves,
+                b1,
+            )
+
+            for number in numbers:
+                number.factor_ecm(curves, b1, self._config.max_threads, self._config.gmp_ecm_path)
+
+                # TODO: Each number has its own maximum ECM level, depending on its size.
+
+                if self._interrupt_level > 0:
+                    return

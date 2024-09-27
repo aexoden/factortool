@@ -129,6 +129,10 @@ extend-select = [
     "W",
     "YTT",
 ]
+ignore = [
+    "S404",
+    "S603",
+]
 
 [tool.ruff.lint.flake8-copyright]
 notice-rgx = "(?i)SPDX-FileCopyrightText: \\d{4}"

@@ -40,7 +40,7 @@ def main() -> None:
     args = Arguments().parse_args()
 
     try:
-        _config = read_config(args.config_path)
+        config = read_config(args.config_path)
     except FileNotFoundError:
         logger.error("Configuration file not found")
         sys.exit(1)
@@ -50,7 +50,10 @@ def main() -> None:
     test_numbers: list[Number] = []
 
     for digits in range(1, 50):
-        test_numbers.extend([Number(random.randint(10 ** (digits - 1), 10 ** digits)) for _ in range(10)])  # noqa: S311
+        test_numbers.extend([Number(random.randint(10 ** (digits - 1), 10 ** digits)) for _ in range(2)])  # noqa: S311
 
-    engine = FactorEngine()
+    engine = FactorEngine(config)
     engine.run(test_numbers)
+
+    for number in test_numbers:
+        print(number.methods, number.composite_factors, number.prime_factors)
