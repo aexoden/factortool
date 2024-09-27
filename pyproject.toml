@@ -22,7 +22,8 @@ classifiers = [
 ]
 dependencies = [
     "loguru",
-    "pydantic"
+    "pydantic",
+    "typed-argument-parser",
 ]
 
 [project.urls]
