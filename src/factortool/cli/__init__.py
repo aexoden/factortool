@@ -9,7 +9,8 @@ from loguru import logger
 from tap import Tap
 
 from factortool.config import read_config
-from factortool.factor import FactorEngine
+from factortool.engine import FactorEngine
+from factortool.number import Number
 
 
 class Arguments(Tap):
@@ -44,5 +45,12 @@ def main() -> None:
         logger.error("Configuration file not found")
         sys.exit(1)
 
+    # Test with some random numbers for now.
+    import random  # noqa: PLC0415
+    test_numbers: list[Number] = []
+
+    for digits in range(1, 50):
+        test_numbers.extend([Number(random.randint(10 ** (digits - 1), 10 ** digits)) for _ in range(10)])  # noqa: S311
+
     engine = FactorEngine()
-    engine.run([])
+    engine.run(test_numbers)
