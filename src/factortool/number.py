@@ -14,7 +14,9 @@ from pathlib import Path
 
 from loguru import logger
 
+from factortool.config import Config
 from factortool.constants import CADO_NFS_MIN_DIGITS, ECM_CURVES
+from factortool.stats import FactoringStats
 from factortool.util import SMALL_PRIMES, is_prime, log_factor_result
 
 
@@ -34,8 +36,9 @@ def factor_ecm_single(n: int, curves: int, b1: int, gmp_ecm_path: Path) -> list[
 
 
 @cache
-def factor_ecm(n: int, curves: int, b1: int, max_threads: int, gmp_ecm_path: Path) -> list[int]:
+def factor_ecm(n: int, level: int, max_threads: int, gmp_ecm_path: Path, stats: FactoringStats) -> list[int]:
     # Determine the number of curves for each process.
+    curves, b1 = ECM_CURVES[level]
     thread_count = min(max_threads, curves)
     curves_per_thread = curves // thread_count
     remaining_curves = curves % thread_count
@@ -54,9 +57,9 @@ def factor_ecm(n: int, curves: int, b1: int, max_threads: int, gmp_ecm_path: Pat
         for task in tasks:
             factors = factors.union(task.get())
 
-    # TODO: Log the execution time of this run.
     end_time = time.perf_counter_ns()
-    _execution_time = (end_time - start_time) / 1_0000_000_000.0
+    execution_time = (end_time - start_time) / 1_0000_000_000.0
+    stats.update_ecm(len(str(n)), level, thread_count, execution_time, success=len(factors) > 1)
 
     if len(factors) == 0:
         factors.add(n)
@@ -68,7 +71,7 @@ def factor_ecm(n: int, curves: int, b1: int, max_threads: int, gmp_ecm_path: Pat
 
 
 @cache
-def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path) -> list[int]:
+def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, stats: FactoringStats) -> list[int]:
     # Abort if the number of digits is too small for CADO-NFS.
     digits = len(str(n))
 
@@ -91,9 +94,8 @@ def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path) -> list[int]:
         )
 
         end_time = time.perf_counter_ns()
-        _execution_time = (end_time - start_time) / 1_000_000_000.0
-
-        # TODO: Log the execution time of this run.
+        execution_time = (end_time - start_time) / 1_000_000_000.0
+        stats.update_nfs(digits, max_threads, execution_time)
 
         factors = list(map(int, result.stdout.strip().split()))
 
@@ -140,12 +142,18 @@ class Number:
     n: int
     prime_factors: list[int]
     composite_factors: list[int]
-    ecm_level: int
     methods: set[str]
 
-    def __init__(self, n: int) -> None:
+    _ecm_level: int
+    _stats: FactoringStats
+    _config: Config
+
+    def __init__(self, n: int, config: Config, stats: FactoringStats) -> None:
         self.n = n
-        self.ecm_level = 0
+        self._stats = stats
+        self._config = config
+
+        self._ecm_level = 0
 
         if is_prime(n):
             self.composite_factors = []
@@ -165,13 +173,13 @@ class Number:
         digits = len(str(self.n))
         smallest_composite_factor_digits = len(str(min(self.composite_factors)))
 
-        return self.ecm_level < digits // 3 or smallest_composite_factor_digits < CADO_NFS_MIN_DIGITS
+        return self._ecm_level < digits // 3 or smallest_composite_factor_digits < CADO_NFS_MIN_DIGITS
 
     @property
     def factored(self) -> bool:
         return len(self.composite_factors) == 0
 
-    def _factor_generic(self, method: str, factor_func: Callable[..., list[int]], *args: int | Path) -> None:
+    def _factor_generic(self, method: str, factor_func: Callable[..., list[int]], *args: int | Path | FactoringStats) -> None:  # noqa: E501
         composite_factors = self.composite_factors.copy()
         self.composite_factors = []
 
@@ -190,10 +198,9 @@ class Number:
     def factor_tf(self) -> None:
         self._factor_generic("TF", factor_tf)
 
-    def factor_ecm(self, level: int, max_threads: int, gmp_ecm_path: Path) -> None:
-        curves, b1 = ECM_CURVES[level]
-        self._factor_generic("ECM", factor_ecm, curves, b1, max_threads, gmp_ecm_path)
-        self.ecm_level = level
+    def factor_ecm(self, level: int) -> None:
+        self._factor_generic("ECM", factor_ecm, level, self._config.max_threads, self._config.gmp_ecm_path, self._stats)
+        self._ecm_level = level
 
-    def factor_nfs(self, max_threads: int, cado_nfs_path: Path) -> None:
-        self._factor_generic("NFS", factor_nfs, max_threads, cado_nfs_path)
+    def factor_nfs(self) -> None:
+        self._factor_generic("NFS", factor_nfs, self._config.max_threads, self._config.cado_nfs_path, self._stats)

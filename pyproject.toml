@@ -75,12 +75,9 @@ line-length = 120
 [tool.ruff.format]
 line-ending = "lf"
 
-[tool.ruff.isort]
-lines-between-types = 1
-
 [tool.ruff.lint]
 preview = true
-extend-select = [
+select = [
     "A",
     "ANN",
     "ARG",
@@ -95,6 +92,7 @@ extend-select = [
     "EM",
     "ERA",
     "EXE",
+    "F",
     "FA",
     "FBT",
     "FIX",
@@ -109,6 +107,7 @@ extend-select = [
     "PERF",
     "PIE",
     "PL",
+    "PLR",
     "PT",
     "PTH",
     "PYI",
@@ -136,3 +135,6 @@ ignore = [
 
 [tool.ruff.lint.flake8-copyright]
 notice-rgx = "(?i)SPDX-FileCopyrightText: \\d{4}"
+
+[tool.ruff.lint.isort]
+lines-between-types = 1

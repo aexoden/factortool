@@ -61,9 +61,10 @@ class FactorEngine:
             curves, b1 = ECM_CURVES[ecm_level]
 
             logger.info(
-                "Attempting ECM factoring on {} number{} at t-level {} with {} curve{} of B1 = {}",
+                "Attempting ECM factoring on {} number{} (of {} total remaining) at t-level {} with {} curve{} of B1 = {}",
+                ecm_number_count,
+                "s" if ecm_number_count != 1 else "",
                 overall_number_count,
-                "s" if overall_number_count != 1 else "",
                 ecm_level,
                 curves,
                 "s" if curves != 1 else "",
@@ -71,7 +72,7 @@ class FactorEngine:
             )
 
             for number in [x for x in numbers if x.ecm_needed]:
-                number.factor_ecm(ecm_level, self._config.max_threads, self._config.gmp_ecm_path)
+                number.factor_ecm(ecm_level)
 
                 if self._interrupt_level > 0:
                     return
@@ -85,4 +86,7 @@ class FactorEngine:
         logger.info("Attempting NFS factoring on {} number{}", number_count, "s" if number_count != 1 else "")
 
         for number in [x for x in numbers if not x.factored]:
-            number.factor_nfs(self._config.max_threads, self._config.cado_nfs_path)
+            number.factor_nfs()
+
+            if self._interrupt_level > 0:
+                return

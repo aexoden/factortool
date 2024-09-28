@@ -17,6 +17,7 @@ class Config(BaseModel):
     factordb_password: str
     gmp_ecm_path: Path
     max_threads: int
+    stats_path: Path
 
 
 def read_config(path: Path) -> Config:
