@@ -17,7 +17,11 @@ from loguru import logger
 from factortool.config import Config
 from factortool.constants import CADO_NFS_MIN_DIGITS, ECM_CURVES
 from factortool.stats import FactoringStats
-from factortool.util import SMALL_PRIMES, is_prime, log_factor_result
+from factortool.util import SMALL_PRIMES, format_number, is_prime, log_factor_result
+
+
+class NFSNeededException(Exception):
+    pass
 
 
 def factor_ecm_single(n: int, curves: int, b1: int, gmp_ecm_path: Path) -> list[int]:
@@ -37,6 +41,13 @@ def factor_ecm_single(n: int, curves: int, b1: int, gmp_ecm_path: Path) -> list[
 
 @cache
 def factor_ecm(n: int, level: int, max_threads: int, gmp_ecm_path: Path, stats: FactoringStats) -> list[int]:
+    # If there is no NFS statistics data, signal doing an immediate NFS run.
+    digits = len(str(n))
+    nfs_run_count, _ = stats.get_nfs_stats(digits, max_threads)
+
+    if digits >= CADO_NFS_MIN_DIGITS and nfs_run_count == 0:
+        raise NFSNeededException
+
     # Determine the number of curves for each process.
     curves, b1 = ECM_CURVES[level]
     thread_count = min(max_threads, curves)
@@ -184,7 +195,12 @@ class Number:
         self.composite_factors = []
 
         for n in composite_factors:
-            factors = factor_func(n, *args)
+            try:
+                factors = factor_func(n, *args)
+            except NFSNeededException:
+                logger.info("Immediately doing NFS on {} for statistics", format_number(n))
+                method = "NFS"
+                factors = factor_nfs(n, self._config.max_threads, self._config.cado_nfs_path, self._stats)
 
             if len(factors) > 1:
                 self.methods.add(method)
