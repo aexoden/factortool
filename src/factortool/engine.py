@@ -61,11 +61,12 @@ class FactorEngine:
             curves, b1 = ECM_CURVES[ecm_level]
 
             logger.info(
-                "Attempting ECM factoring on {} number{} at t-level {} with {} curves of B1 = {}",
+                "Attempting ECM factoring on {} number{} at t-level {} with {} curve{} of B1 = {}",
                 overall_number_count,
                 "s" if overall_number_count != 1 else "",
                 ecm_level,
                 curves,
+                "s" if curves != 1 else "",
                 b1,
             )
 
