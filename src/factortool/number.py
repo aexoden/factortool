@@ -33,6 +33,7 @@ def factor_ecm_single(n: int, curves: int, b1: int, gmp_ecm_path: Path) -> list[
     return []
 
 
+@cache
 def factor_ecm(n: int, curves: int, b1: int, max_threads: int, gmp_ecm_path: Path) -> list[int]:
     # Determine the number of curves for each process.
     thread_count = min(max_threads, curves)
