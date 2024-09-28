@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 
+from collections.abc import Callable
 from functools import cache
 from multiprocessing.pool import ApplyResult  # noqa: TCH003 (conflicts with isort, which is more useful for the moment)
 from pathlib import Path
@@ -169,54 +170,29 @@ class Number:
     def factored(self) -> bool:
         return len(self.composite_factors) == 0
 
-    def factor_tf(self) -> None:
+    def _factor_generic(self, method: str, factor_func: Callable[..., list[int]], *args: int | Path) -> None:
         composite_factors = self.composite_factors.copy()
         self.composite_factors = []
 
         for n in composite_factors:
-            factors = factor_tf(n)
+            factors = factor_func(n, *args)
 
             if len(factors) > 1:
-                self.methods.add("TF")
+                self.methods.add(method)
 
             for factor in factors:
                 if is_prime(factor):
                     self.prime_factors.append(factor)
                 else:
                     self.composite_factors.append(factor)
+
+    def factor_tf(self) -> None:
+        self._factor_generic("TF", factor_tf)
 
     def factor_ecm(self, level: int, max_threads: int, gmp_ecm_path: Path) -> None:
         curves, b1 = ECM_CURVES[level]
-        composite_factors = self.composite_factors.copy()
-        self.composite_factors = []
-
+        self._factor_generic("ECM", factor_ecm, curves, b1, max_threads, gmp_ecm_path)
         self.ecm_level = level
 
-        for n in composite_factors:
-            factors = factor_ecm(n, curves, b1, max_threads, gmp_ecm_path)
-
-            if len(factors) > 1:
-                self.methods.add("ECM")
-
-            for factor in factors:
-                if is_prime(factor):
-                    self.prime_factors.append(factor)
-                else:
-                    self.composite_factors.append(factor)
-
     def factor_nfs(self, max_threads: int, cado_nfs_path: Path) -> None:
-        composite_factors = self.composite_factors.copy()
-        self.composite_factors = []
-
-        for n in composite_factors:
-            factors = factor_nfs(n, max_threads, cado_nfs_path)
-
-            if len(factors) > 1:
-                self.methods.add("NFS")
-
-                # In theory, CADO-NFS should only return prime factors, but this serves as a sanity check.
-                for factor in factors:
-                    if is_prime(factor):
-                        self.prime_factors.append(factor)
-                    else:
-                        self.composite_factors.append(factor)
+        self._factor_generic("NFS", factor_nfs, max_threads, cado_nfs_path)
