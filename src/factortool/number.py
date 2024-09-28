@@ -74,7 +74,7 @@ def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path) -> list[int]:
         return [n]
 
     # Factor the number using CADO-NFS.
-    cmd = [str(cado_nfs_path), str(n), '-t', str(max_threads)]
+    cmd = [str(cado_nfs_path), str(n), "-t", str(max_threads)]
 
     try:
         start_time = time.perf_counter_ns()
