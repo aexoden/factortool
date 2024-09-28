@@ -84,4 +84,4 @@ class FactorEngine:
         logger.info("Attempting NFS factoring on {} number{}", number_count, "s" if number_count != 1 else "")
 
         for number in [x for x in numbers if not x.factored]:
-            number.factor_nfs(self._config.cado_nfs_path)
+            number.factor_nfs(self._config.max_threads, self._config.cado_nfs_path)

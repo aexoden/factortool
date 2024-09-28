@@ -66,7 +66,7 @@ def factor_ecm(n: int, curves: int, b1: int, max_threads: int, gmp_ecm_path: Pat
 
 
 @cache
-def factor_nfs(n: int, cado_nfs_path: Path) -> list[int]:
+def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path) -> list[int]:
     # Abort if the number of digits is too small for CADO-NFS.
     digits = len(str(n))
 
@@ -74,7 +74,7 @@ def factor_nfs(n: int, cado_nfs_path: Path) -> list[int]:
         return [n]
 
     # Factor the number using CADO-NFS.
-    cmd = [str(cado_nfs_path), str(n)]
+    cmd = [str(cado_nfs_path), str(n), '-t', str(max_threads)]
 
     try:
         start_time = time.perf_counter_ns()
@@ -204,12 +204,12 @@ class Number:
                 else:
                     self.composite_factors.append(factor)
 
-    def factor_nfs(self, cado_nfs_path: Path) -> None:
+    def factor_nfs(self, max_threads: int, cado_nfs_path: Path) -> None:
         composite_factors = self.composite_factors.copy()
         self.composite_factors = []
 
         for n in composite_factors:
-            factors = factor_nfs(n, cado_nfs_path)
+            factors = factor_nfs(n, max_threads, cado_nfs_path)
 
             if len(factors) > 1:
                 self.methods.add("NFS")
