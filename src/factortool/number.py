@@ -65,7 +65,7 @@ def factor_ecm(n: int, level: int, max_threads: int, gmp_ecm_path: Path, stats: 
         factors.add(n)
 
     if len(factors) > 1:
-        log_factor_result("ECM", n, sorted(factors))
+        log_factor_result(["ECM"], n, sorted(factors))
 
     return sorted(factors)
 
@@ -100,7 +100,7 @@ def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, stats: FactoringSt
         factors = list(map(int, result.stdout.strip().split()))
 
         if len(factors) > 1:
-            log_factor_result("NFS", n, sorted(factors))
+            log_factor_result(["NFS"], n, sorted(factors))
     except subprocess.CalledProcessError as e:
         logger.critical("NFS failed for {}: {}", n, e.stderr)
         sys.exit(4)
@@ -133,7 +133,7 @@ def factor_tf(n: int) -> list[int]:
 
     # Log the factoring result.
     if len(factors) > 1:
-        log_factor_result("TF", original_n, factors)
+        log_factor_result(["TF"], original_n, factors)
 
     return factors
 
@@ -194,6 +194,9 @@ class Number:
                     self.prime_factors.append(factor)
                 else:
                     self.composite_factors.append(factor)
+
+        if self.factored and len(self.methods) > 1:
+            log_factor_result(self.methods, self.n, self.prime_factors)
 
     def factor_tf(self) -> None:
         self._factor_generic("TF", factor_tf)

@@ -58,4 +58,4 @@ def main() -> None:
     engine.run(test_numbers)
 
     for number in test_numbers:
-        print(number.methods, number.composite_factors, number.prime_factors)
+        print(number.n, number.methods, number.composite_factors, number.prime_factors)

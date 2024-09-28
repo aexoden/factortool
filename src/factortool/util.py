@@ -3,6 +3,7 @@
 
 import math
 
+from collections.abc import Iterable
 from functools import cache
 
 import gmpy2
@@ -81,5 +82,5 @@ def is_prime(n: int) -> bool:
     return all(gmpy2.is_strong_prp(n, base) for base in test_bases)
 
 
-def log_factor_result(method: str, n: int, factors: list[int]) -> None:
-    logger.info("{} -> {} = {}", method, format_number(n), " * ".join(map(format_number, sorted(factors))))
+def log_factor_result(methods: Iterable[str], n: int, factors: list[int]) -> None:
+    logger.info("{} -> {} = {}", ", ".join(methods), format_number(n), " * ".join(map(format_number, sorted(factors))))
