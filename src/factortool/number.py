@@ -154,7 +154,7 @@ class Number:
     n: int
     prime_factors: list[int]
     composite_factors: list[int]
-    methods: set[str]
+    methods: list[str]
 
     _ecm_level: int
     _stats: FactoringStats
@@ -174,7 +174,7 @@ class Number:
             self.composite_factors = [n]
             self.prime_factors = []
 
-        self.methods = set()
+        self.methods = []
 
     def __lt__(self, other: object) -> bool:
         return isinstance(other, self.__class__) and self.n < other.n
@@ -263,7 +263,7 @@ class Number:
                 factors = factor_nfs(n, self._config.max_threads, self._config.cado_nfs_path, self._stats)
 
             if len(factors) > 1:
-                self.methods.add(method)
+                self.methods.append(method)
 
             for factor in factors:
                 if is_prime(factor):
@@ -272,7 +272,7 @@ class Number:
                     self.composite_factors.append(factor)
 
         if self.factored and len(self.methods) > 1:
-            log_factor_result(self.methods, self.n, self.prime_factors)
+            log_factor_result(set(self.methods), self.n, self.prime_factors)
 
     def factor_tf(self) -> None:
         self._factor_generic("TF", factor_tf)
