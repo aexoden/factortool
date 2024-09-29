@@ -13,10 +13,14 @@ from pydantic import BaseModel, ValidationError
 @dataclass
 class Config(BaseModel):
     cado_nfs_path: Path
+    factordb_cooldown_period: float
+    factordb_response_path: Path
+    factordb_session_path: Path
     factordb_username: str
     factordb_password: str
     gmp_ecm_path: Path
     max_threads: int
+    result_output_path: Path
     stats_path: Path
 
 

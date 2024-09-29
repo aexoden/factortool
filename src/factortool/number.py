@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from functools import cache
 from multiprocessing.pool import ApplyResult  # noqa: TCH003 (conflicts with isort, which is more useful for the moment)
 from pathlib import Path
@@ -176,6 +176,15 @@ class Number:
 
         self.methods = set()
 
+    def __lt__(self, other: object) -> bool:
+        return isinstance(other, self.__class__) and self.n < other.n
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, self.__class__) and self.n == other.n
+
+    def __hash__(self) -> int:
+        return self.n.__hash__()
+
     @property
     def ecm_needed(self) -> bool:
         if self.factored:
@@ -189,7 +198,9 @@ class Number:
 
         nfs_count, nfs_time = self._stats.get_nfs_stats(digits, self._config.max_threads)
         ecm_count, ecm_time, ecm_p_factor = self._stats.get_ecm_stats(
-            digits, self._ecm_level + 1, self._config.max_threads,
+            digits,
+            self._ecm_level + 1,
+            self._config.max_threads,
         )
 
         # If either of the run counts is zero, just do the ECM. The actual ECM factoring code will immediately do NFS
@@ -234,7 +245,12 @@ class Number:
     def factored(self) -> bool:
         return len(self.composite_factors) == 0
 
-    def _factor_generic(self, method: str, factor_func: Callable[..., list[int]], *args: int | Path | FactoringStats) -> None:  # noqa: E501
+    def _factor_generic(
+        self,
+        method: str,
+        factor_func: Callable[..., list[int]],
+        *args: int | Path | FactoringStats,
+    ) -> None:
         composite_factors = self.composite_factors.copy()
         self.composite_factors = []
 
@@ -267,3 +283,7 @@ class Number:
 
     def factor_nfs(self) -> None:
         self._factor_generic("NFS", factor_nfs, self._config.max_threads, self._config.cado_nfs_path, self._stats)
+
+
+def format_results(numbers: Iterable[Number]) -> str:
+    return "\n".join([f"{x.n}={' '.join(map(str, x.prime_factors + x.composite_factors))}" for x in numbers])

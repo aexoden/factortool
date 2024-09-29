@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
 
+import datetime
 import sys
 
 from pathlib import Path
@@ -10,12 +11,14 @@ from tap import Tap
 
 from factortool.config import read_config
 from factortool.engine import FactorEngine
-from factortool.number import Number
+from factortool.factordb import FactorDB
+from factortool.number import Number, format_results
 from factortool.stats import FactoringStats
 
 
 class Arguments(Tap):
     """Utility for factoring numbers using trial factoring, ECM and NFS methods"""
+
     config_path: Path = Path("config.json")  # Path to the JSON-formatted configuration file
     min_digits: int = 1  # Minimum number of digits fetched composite numbers should have
     batch_size: int = 50  # Number of composite numbers to work on at a time
@@ -25,12 +28,14 @@ class Arguments(Tap):
 def setup_logger() -> None:
     logger.remove(0)
 
-    logger_format = " | ".join([
-        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green>",
-        "<magenta>{elapsed}</magenta>",
-        "<level>{level: <8}</level>",
-        "<level>{message}</level>",
-    ])
+    logger_format = " | ".join(
+        [
+            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green>",
+            "<magenta>{elapsed}</magenta>",
+            "<level>{level: <8}</level>",
+            "<level>{message}</level>",
+        ],
+    )
 
     logger.add(sys.stdout, format=logger_format)
 
@@ -46,16 +51,51 @@ def main() -> None:
         logger.error("Configuration file not found")
         sys.exit(1)
 
-    # Test with some random numbers for now.
-    import random  # noqa: PLC0415
-    test_numbers: list[Number] = []
     stats = FactoringStats(config.stats_path)
-
-    for digits in range(60, 65):
-        test_numbers.extend([Number(random.randint(10 ** (digits - 1), 10 ** digits), config, stats) for _ in range(2)])  # noqa: S311
-
+    factordb = FactorDB(config, stats)
     engine = FactorEngine(config)
-    engine.run(test_numbers)
 
-    for number in test_numbers:
-        print(number.n, number.methods, number.composite_factors, number.prime_factors)
+    numbers = factordb.fetch(args.min_digits, args.batch_size, args.skip_count)
+
+    engine.run(sorted(numbers))
+
+    factordb.submit(numbers)
+
+    method_counts: dict[str, int] = {}
+    failed_numbers: set[Number] = set()
+
+    for number in numbers:
+        for method in number.methods:
+            if method not in method_counts:
+                method_counts[method] = 0
+
+            method_counts[method] += 1
+
+        if not number.factored:
+            failed_numbers.add(number)
+
+    if len(failed_numbers) > 0:
+        logger.warning(
+            "{} numbers failed to factor: {}",
+            len(failed_numbers),
+            ", ".join(str(x.n) for x in sorted(failed_numbers)),
+        )
+
+    logger.info(
+        "Factored {} numbers and there were {} failures.",
+        len(numbers) - len(failed_numbers),
+        len(failed_numbers),
+    )
+
+    logger.info(
+        "The following methods were used: {}",
+        ", ".join(f"{method} ({count})" for method, count in method_counts.items()),
+    )
+
+    if not config.result_output_path.exists():
+        config.result_output_path.mkdir(parents=True)
+
+    output_filename = f"{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d-%H%M%S')}.txt"
+    output_path = config.result_output_path.joinpath(output_filename)
+    with output_path.open("w", encoding="utf-8") as f:
+        f.write(format_results(numbers) + "\n")

@@ -11,7 +11,7 @@ import gmpy2
 from loguru import logger
 
 
-def generate_primes(limit: int = 10 ** 6) -> list[int]:
+def generate_primes(limit: int = 10**6) -> list[int]:
     prime_flags = [True for _ in range(limit)]
 
     for i in range(2, limit):

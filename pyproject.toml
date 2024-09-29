@@ -24,6 +24,7 @@ dependencies = [
     "gmpy2",
     "loguru",
     "pydantic",
+    "requests",
     "typed-argument-parser",
 ]
 
@@ -107,7 +108,6 @@ select = [
     "PERF",
     "PIE",
     "PL",
-    "PLR",
     "PT",
     "PTH",
     "PYI",
@@ -129,6 +129,8 @@ select = [
     "YTT",
 ]
 ignore = [
+    "COM812",
+    "ISC001",
     "S404",
     "S603",
 ]
@@ -138,3 +140,6 @@ notice-rgx = "(?i)SPDX-FileCopyrightText: \\d{4}"
 
 [tool.ruff.lint.isort]
 lines-between-types = 1
+
+[tool.ruff.lint.pylint]
+max-args = 6
