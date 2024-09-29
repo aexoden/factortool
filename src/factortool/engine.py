@@ -28,9 +28,9 @@ class FactorEngine:
         self._interrupt_level += 1
 
         if self._interrupt_level == 1:
-            logger.critical("Interrupt received. Finishing current factorization.")
+            logger.critical("Interrupt received. Finishing current factorization")
         else:
-            logger.critical("Second interrupt received. Terminating immediately.")
+            logger.critical("Second interrupt received. Terminating immediately")
             sys.exit(2)
 
     #

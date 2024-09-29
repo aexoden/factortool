@@ -82,7 +82,7 @@ def main() -> None:
         )
 
     logger.info(
-        "Factored {} numbers and there were {} failures.",
+        "Factored {} numbers and there were {} failures",
         len(numbers) - len(failed_numbers),
         len(failed_numbers),
     )

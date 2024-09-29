@@ -211,7 +211,7 @@ class Number:
         # If the run count is non-zero, the other values should never be None. Doing this check will satisfy static type
         # checking tools, however. We'll nonetheless output a log message as this would indicate a bug.
         if nfs_time is None or ecm_time is None or ecm_p_factor is None:
-            logger.warning("Unexpected None value encountered in ecm_needed. This is a bug.")
+            logger.warning("Unexpected None value encountered in ecm_needed. This is a bug")
             return True
 
         # Calculate the expected utility of doing the additional round of ECM.

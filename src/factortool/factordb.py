@@ -74,7 +74,7 @@ class FactorDB:
                     logger.info("Successfully submitted {} results to FactorDB", len(numbers))
                     return True
 
-                logger.error("FactorDB submission response did not contain expected success message.")
+                logger.error("FactorDB submission response did not contain expected success message")
             except requests.RequestException as e:
                 logger.error("FactorDB submission attempt {} failed: {}", attempt + 1, e)
 
@@ -95,20 +95,27 @@ class FactorDB:
         match = re.search(logged_in_pattern, response_text)
         if match:
             logger.info("FactorDB reports logged in as {}", match.group(1))
+        elif self._config.factordb_username:
+            logger.warning("Attemping to relogin as FactorDB reports not logged in")
+            self._login()
         else:
-            logger.warning("FactorDB reports not logged in. Please manually remove session data.")
+            logger.warning("Results were submitted anonymously as no FactorDB username is configured")
 
         success_pattern = r"Found (\d+) factors and \d+ ECM/P-1/P\+1 results."
         match = re.search(success_pattern, response_text)
         if match:
             factors_found = int(match.group(1))
-            logger.info("FactorDB reports {} factors were added to the database.", factors_found)
+            logger.info("FactorDB reports {} factors were added to the database", factors_found)
             return True
 
-        logger.error("Could not find expected success message in FactorDB reponse.")
+        logger.error("Could not find expected success message in FactorDB reponse")
         return False
 
     def _login(self) -> bool:
+        if not self._config.factordb_username:
+            logger.warning("Results will be submitted anonymously as no FactorDB username is set")
+            return False
+
         login_url = "https://factordb.com/login.php"
 
         login_data = {
@@ -116,8 +123,6 @@ class FactorDB:
             "pass": self._config.factordb_password,
             "dlogin": "Login",
         }
-
-        self._session = requests.Session()
 
         try:
             response = self._session.post(login_url, data=login_data)
@@ -138,10 +143,10 @@ class FactorDB:
             if datetime.datetime.now(tz=datetime.UTC) < session_data.expiry - datetime.timedelta(hours=1):
                 self._session = requests.Session()
                 self._session.cookies.update(session_data.cookies)  # type: ignore
-            else:
-                self._login()
-        else:
-            self._login()
+                return
+
+        self._session = requests.Session()
+        self._login()
 
     def _save_session(self) -> None:
         expiry = datetime.datetime.now(tz=datetime.UTC) + datetime.timedelta(days=21)
