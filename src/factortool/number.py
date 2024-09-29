@@ -20,7 +20,7 @@ from factortool.stats import FactoringStats
 from factortool.util import SMALL_PRIMES, format_number, is_prime, log_factor_result
 
 
-class NFSNeededException(Exception):
+class NFSNeeded(Exception):
     pass
 
 
@@ -46,7 +46,7 @@ def factor_ecm(n: int, level: int, max_threads: int, gmp_ecm_path: Path, stats: 
     nfs_run_count, _ = stats.get_nfs_stats(digits, max_threads)
 
     if digits >= CADO_NFS_MIN_DIGITS and nfs_run_count == 0:
-        raise NFSNeededException
+        raise NFSNeeded
 
     # Determine the number of curves for each process.
     curves, b1 = ECM_CURVES[level]
