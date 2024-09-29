@@ -3,6 +3,7 @@
 
 import math
 import multiprocessing
+import random
 import subprocess
 import sys
 import time
@@ -15,12 +16,12 @@ from pathlib import Path
 from loguru import logger
 
 from factortool.config import Config
-from factortool.constants import CADO_NFS_MIN_DIGITS, ECM_CURVES
+from factortool.constants import CADO_NFS_MIN_DIGITS, DECAY_RATE, ECM_CURVES, INITIAL_EPSILON, UTILITY_SCALING_FACTOR
 from factortool.stats import FactoringStats
 from factortool.util import SMALL_PRIMES, format_number, is_prime, log_factor_result
 
 
-class NFSNeeded(Exception):
+class NFSNeeded(Exception):  # noqa: N818
     pass
 
 
@@ -180,11 +181,54 @@ class Number:
         if self.factored:
             return False
 
-        # TODO: Change this to handle reading/writing from the database and adjusting based on digits.
-        digits = len(str(self.n))
+        # Retrieve statistics from the database. We use the largest remaining composite factor, as that's the largest
+        # number we're actually factoring at this point.
+        largest_composite_factor = max(self.composite_factors)
+        digits = len(str(largest_composite_factor))
         smallest_composite_factor_digits = len(str(min(self.composite_factors)))
 
-        return self._ecm_level < digits // 3 or smallest_composite_factor_digits < CADO_NFS_MIN_DIGITS
+        nfs_count, nfs_time = self._stats.get_nfs_stats(digits, self._config.max_threads)
+        ecm_count, ecm_time, ecm_p_factor = self._stats.get_ecm_stats(
+            digits, self._ecm_level + 1, self._config.max_threads,
+        )
+
+        # If either of the run counts is zero, just do the ECM. The actual ECM factoring code will immediately do NFS
+        # when it notices that there is no data.
+        if nfs_count == 0 or ecm_count == 0:
+            return True
+
+        # If the run count is non-zero, the other values should never be None. Doing this check will satisfy static type
+        # checking tools, however. We'll nonetheless output a log message as this would indicate a bug.
+        if nfs_time is None or ecm_time is None or ecm_p_factor is None:
+            logger.warning("Unexpected None value encountered in ecm_needed. This is a bug.")
+            return True
+
+        # Calculate the expected utility of doing the additional round of ECM.
+        ecm_expected_time = ecm_time + (1 - ecm_p_factor) * nfs_time
+        utility = nfs_time - ecm_expected_time
+
+        # Calculate the probability of doing exploration.
+        p_exploration = INITIAL_EPSILON * math.exp(-DECAY_RATE * ecm_count)
+        p_exploration *= math.exp(-abs(utility) * UTILITY_SCALING_FACTOR)
+
+        if smallest_composite_factor_digits < CADO_NFS_MIN_DIGITS:
+            # If the smallest remaining composite factor is too small for CADO-NFS, we have to keep doing ECM.
+            do_ecm = True
+        elif self._ecm_level >= digits // 2 + 10:
+            # If the current ECM level is already well beyond the maximum possible factor size, abort doing ECM.
+            do_ecm = False
+        elif random.random() < p_exploration:  # noqa: S311
+            # Randomly choose to do additional ECM with a probability based on the number of samples we already have and
+            # the calculated utility.
+            do_ecm = True
+        elif utility > 0:
+            # If the expected utility of another round of ECM is positive, do ECM.
+            do_ecm = True
+        else:
+            # Otherwise, move on to NFS.
+            do_ecm = False
+
+        return do_ecm
 
     @property
     def factored(self) -> bool:
@@ -197,7 +241,7 @@ class Number:
         for n in composite_factors:
             try:
                 factors = factor_func(n, *args)
-            except NFSNeededException:
+            except NFSNeeded:
                 logger.info("Immediately doing NFS on {} for statistics", format_number(n))
                 method = "NFS"
                 factors = factor_nfs(n, self._config.max_threads, self._config.cado_nfs_path, self._stats)

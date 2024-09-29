@@ -53,7 +53,8 @@ class FactorEngine:
 
         for ecm_level in range(minimum_ecm_level, maximum_ecm_level + 1):
             overall_number_count = len([x for x in numbers if not x.factored])
-            ecm_number_count = len([x for x in numbers if x.ecm_needed])
+            ecm_numbers = [x for x in numbers if x.ecm_needed]
+            ecm_number_count = len(ecm_numbers)
 
             if ecm_number_count == 0:
                 break
@@ -71,7 +72,7 @@ class FactorEngine:
                 b1,
             )
 
-            for number in [x for x in numbers if x.ecm_needed]:
+            for number in ecm_numbers:
                 number.factor_ecm(ecm_level)
 
                 if self._interrupt_level > 0:

@@ -2,6 +2,9 @@
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
 
 CADO_NFS_MIN_DIGITS = 57
+DECAY_RATE = 0.01
+INITIAL_EPSILON = 0.5
+UTILITY_SCALING_FACTOR = 0.1
 
 ECM_CURVES: dict[int, tuple[int, int]] = {
     2: (5, 340),

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
 
+import json
 import os
 import tempfile
 import time
@@ -75,7 +76,11 @@ class FactoringStats:
         target_path = self._path.parent
 
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False, dir=target_path, suffix=".tmp") as f:
-            f.write(self._data.model_dump_json(indent=2))
+            # Work around pydantic not offering a way to sort keys.
+            # f.write(self._data.model_dump_json(indent=2, so))
+            model_dict = self._data.model_dump()
+            f.write(json.dumps(model_dict, sort_keys=True, indent=2))
+
             temp_path = Path(f.name)
             f.flush()
             os.fsync(f.fileno())
