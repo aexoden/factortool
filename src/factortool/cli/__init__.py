@@ -65,7 +65,7 @@ def main() -> None:
     failed_numbers: set[Number] = set()
 
     for number in numbers:
-        for method in number.methods:
+        for method in set(number.methods):
             if method not in method_counts:
                 method_counts[method] = 0
 

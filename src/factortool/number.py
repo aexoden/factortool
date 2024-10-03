@@ -16,7 +16,15 @@ from pathlib import Path
 from loguru import logger
 
 from factortool.config import Config
-from factortool.constants import CADO_NFS_MIN_DIGITS, DECAY_RATE, ECM_CURVES, INITIAL_EPSILON, UTILITY_SCALING_FACTOR
+from factortool.constants import (
+    CADO_NFS_MIN_DIGITS,
+    DECAY_RATE,
+    ECM_CURVES,
+    INITIAL_EPSILON,
+    P_FACTOR_DECAY_RATE,
+    P_FACTOR_INITIAL,
+    UTILITY_SCALING_FACTOR,
+)
 from factortool.stats import FactoringStats
 from factortool.util import SMALL_PRIMES, format_number, is_prime, log_factor_result
 
@@ -156,7 +164,7 @@ class Number:
     composite_factors: list[int]
     methods: list[str]
 
-    _ecm_level: int
+    _ecm_needed: bool
     _stats: FactoringStats
     _config: Config
 
@@ -165,7 +173,7 @@ class Number:
         self._stats = stats
         self._config = config
 
-        self._ecm_level = 0
+        self._ecm_needed = True
 
         if is_prime(n):
             self.composite_factors = []
@@ -187,8 +195,16 @@ class Number:
 
     @property
     def ecm_needed(self) -> bool:
+        return self._ecm_needed
+
+    @property
+    def factored(self) -> bool:
+        return len(self.composite_factors) == 0
+
+    def _update_ecm_needed(self, level: int) -> None:  # noqa: PLR0911
         if self.factored:
-            return False
+            self._ecm_needed = False
+            return
 
         # Retrieve statistics from the database. We use the largest remaining composite factor, as that's the largest
         # number we're actually factoring at this point.
@@ -199,20 +215,28 @@ class Number:
         nfs_count, nfs_time = self._stats.get_nfs_stats(digits, self._config.max_threads)
         ecm_count, ecm_time, ecm_p_factor = self._stats.get_ecm_stats(
             digits,
-            self._ecm_level + 1,
+            level + 1,
             self._config.max_threads,
         )
 
-        # If either of the run counts is zero, just do the ECM. The actual ECM factoring code will immediately do NFS
-        # when it notices that there is no data.
+        # If either of the run counts is zero, continue doing ECM. The actual ECM factoring code will force an initial
+        # NFS run if the number of digits is compatible.
         if nfs_count == 0 or ecm_count == 0:
-            return True
+            return
 
         # If the run count is non-zero, the other values should never be None. Doing this check will satisfy static type
         # checking tools, however. We'll nonetheless output a log message as this would indicate a bug.
         if nfs_time is None or ecm_time is None or ecm_p_factor is None:
-            logger.warning("Unexpected None value encountered in ecm_needed. This is a bug")
-            return True
+            logger.warning(
+                "Unexpected None value encountered in Number._update_ecm_needed. Please report this as a bug."
+            )
+            return
+
+        # Adjust the probability of finding a factor based on the number of samples. We'll arbitrarily assume a base
+        # probability, and then apply an exponential decay factor. This way, we don't incorrectly make decisions based
+        # on a zero probability that's merely the result in insufficient data.
+        ecm_p_factor_multiplier = math.exp(-P_FACTOR_DECAY_RATE * ecm_count)
+        ecm_p_factor = ecm_p_factor_multiplier * P_FACTOR_INITIAL + (1 - ecm_p_factor_multiplier) * ecm_p_factor
 
         # Calculate the expected utility of doing the additional round of ECM.
         ecm_expected_time = ecm_time + (1 - ecm_p_factor) * nfs_time
@@ -222,28 +246,26 @@ class Number:
         p_exploration = INITIAL_EPSILON * math.exp(-DECAY_RATE * ecm_count)
         p_exploration *= math.exp(-abs(utility) * UTILITY_SCALING_FACTOR)
 
+        # If the smallest remaining composite factor is too small for CADO-NFS, continue doing ECM.
         if smallest_composite_factor_digits < CADO_NFS_MIN_DIGITS:
-            # If the smallest remaining composite factor is too small for CADO-NFS, we have to keep doing ECM.
-            do_ecm = True
-        elif self._ecm_level >= digits // 2 + 10:
-            # If the current ECM level is already well beyond the maximum possible factor size, abort doing ECM.
-            do_ecm = False
-        elif random.random() < p_exploration:  # noqa: S311
-            # Randomly choose to do additional ECM with a probability based on the number of samples we already have and
-            # the calculated utility.
-            do_ecm = True
-        elif utility > 0:
-            # If the expected utility of another round of ECM is positive, do ECM.
-            do_ecm = True
-        else:
-            # Otherwise, move on to NFS.
-            do_ecm = False
+            return
 
-        return do_ecm
+        # If the current ECM level is already well beyond the maximum possible factor size, abort doing ECM.
+        if level >= digits // 2 + 10:
+            self._ecm_needed = False
+            return
 
-    @property
-    def factored(self) -> bool:
-        return len(self.composite_factors) == 0
+        # Randomly choose to do additional ECM with a probability based on the number of samples we already have and the
+        # calculated utility.
+        if random.random() < p_exploration:  # noqa: S311
+            return
+
+        # If the expected utility of another round of ECM is positive, do ECM.
+        if utility > 0:
+            return
+
+        # Otherwise, move on to NFS.
+        self._ecm_needed = False
 
     def _factor_generic(
         self,
@@ -279,7 +301,7 @@ class Number:
 
     def factor_ecm(self, level: int) -> None:
         self._factor_generic("ECM", factor_ecm, level, self._config.max_threads, self._config.gmp_ecm_path, self._stats)
-        self._ecm_level = level
+        self._update_ecm_needed(level)
 
     def factor_nfs(self) -> None:
         self._factor_generic("NFS", factor_nfs, self._config.max_threads, self._config.cado_nfs_path, self._stats)
