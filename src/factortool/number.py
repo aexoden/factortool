@@ -164,6 +164,7 @@ class Number:
     composite_factors: list[int]
     methods: list[str]
 
+    _ecm_overage: float
     _ecm_needed: bool
     _stats: FactoringStats
     _config: Config
@@ -174,6 +175,7 @@ class Number:
         self._config = config
 
         self._ecm_needed = True
+        self._ecm_overage = 0.0
 
         if is_prime(n):
             self.composite_factors = []
@@ -201,10 +203,17 @@ class Number:
     def factored(self) -> bool:
         return len(self.composite_factors) == 0
 
-    def _update_ecm_needed(self, level: int) -> None:  # noqa: PLR0911
+    def _update_ecm_needed(self, level: int) -> None:
+        self._ecm_needed, overage = self._calculate_ecm_needed(level)
+        self._ecm_overage += overage
+
+    # Some of this function is a stopgap until I implement a more global solution. Working level-by-level is not
+    # particularly robust and can never work for certain factor distributions. (It could be that if you look only at the
+    # next level, it's better to do NFS immediately, but that several ECM levels up, there is significant savings to
+    # be had.)
+    def _calculate_ecm_needed(self, level: int) -> tuple[bool, float]:  # noqa: PLR0911
         if self.factored:
-            self._ecm_needed = False
-            return
+            return (False, 0.0)
 
         # Retrieve statistics from the database. We use the largest remaining composite factor, as that's the largest
         # number we're actually factoring at this point.
@@ -222,7 +231,7 @@ class Number:
         # If either of the run counts is zero, continue doing ECM. The actual ECM factoring code will force an initial
         # NFS run if the number of digits is compatible.
         if nfs_count == 0 or ecm_count == 0:
-            return
+            return (True, 0.0)
 
         # If the run count is non-zero, the other values should never be None. Doing this check will satisfy static type
         # checking tools, however. We'll nonetheless output a log message as this would indicate a bug.
@@ -230,7 +239,7 @@ class Number:
             logger.warning(
                 "Unexpected None value encountered in Number._update_ecm_needed. Please report this as a bug."
             )
-            return
+            return (True, 0.0)
 
         # Adjust the probability of finding a factor based on the number of samples. We'll arbitrarily assume a base
         # probability, and then apply an exponential decay factor. This way, we don't incorrectly make decisions based
@@ -241,31 +250,51 @@ class Number:
         # Calculate the expected utility of doing the additional round of ECM.
         ecm_expected_time = ecm_time + (1 - ecm_p_factor) * nfs_time
         utility = nfs_time - ecm_expected_time
+        overage = -utility if utility < 0 else 0.0
 
         # Calculate the probability of doing exploration.
         p_exploration = INITIAL_EPSILON * math.exp(-DECAY_RATE * ecm_count)
         p_exploration *= math.exp(-abs(utility) * UTILITY_SCALING_FACTOR)
 
+        # Temporary logging message for debugging.
+        # logger.info("level: {}  digits: {}  scf_digits: {}  nfs_count: {}  nfs_time: {}  ecm_count: {}  ecm_time: {}  ecm_p_factor: {}  epf_multiplier: {}  ecm_expected: {}  utility: {}  p_exploration: {}",  # noqa: E501
+        #    level, digits, smallest_composite_factor_digits, nfs_count, nfs_time, ecm_count, ecm_time, ecm_p_factor, ecm_p_factor_multiplier, ecm_expected_time, utility, p_exploration)  # noqa: E501
+
         # If the smallest remaining composite factor is too small for CADO-NFS, continue doing ECM.
         if smallest_composite_factor_digits < CADO_NFS_MIN_DIGITS:
-            return
+            # logger.info("factor too small")  # noqa: ERA001
+            return (True, overage)
 
         # If the current ECM level is already well beyond the maximum possible factor size, abort doing ECM.
         if level >= digits // 2 + 10:
             self._ecm_needed = False
-            return
+            # logger.info("level too high for digit count")  # noqa: ERA001
+            return (True, overage)
+
+        # If our current overage is more than 0.25 times the NFS time, just abort and do NFS.
+        if self._ecm_overage > 0.25 * nfs_time:
+            # logger.info("too much overage")  # noqa: ERA001
+            return (False, 0.0)
 
         # Randomly choose to do additional ECM with a probability based on the number of samples we already have and the
         # calculated utility.
         if random.random() < p_exploration:  # noqa: S311
-            return
+            # logger.info("choosing to explore")  # noqa: ERA001
+            return (True, overage)
 
         # If the expected utility of another round of ECM is positive, do ECM.
         if utility > 0:
-            return
+            # logger.info("positive utility")  # noqa: ERA001
+            return (True, overage)
+
+        # If the potential overage is very small, just do ECM. This is one of the stopgaps.
+        if overage < 1.0:
+            # logger.info("limited overage")  # noqa: ERA001
+            return (True, overage)
 
         # Otherwise, move on to NFS.
-        self._ecm_needed = False
+        # logger.info("Moving to NFS")  # noqa: ERA001
+        return (False, 0.0)
 
     def _factor_generic(
         self,
