@@ -78,7 +78,7 @@ def factor_ecm(n: int, level: int, max_threads: int, gmp_ecm_path: Path, stats: 
             factors = factors.union(task.get())
 
     end_time = time.perf_counter_ns()
-    execution_time = (end_time - start_time) / 1_0000_000_000.0
+    execution_time = (end_time - start_time) / 1_000_000_000.0
     stats.update_ecm(len(str(n)), level, thread_count, execution_time, success=len(factors) > 1)
 
     if len(factors) == 0:
