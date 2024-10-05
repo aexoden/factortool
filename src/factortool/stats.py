@@ -45,12 +45,14 @@ class FactoringStats:
     _min_write_interval: float
     _last_write_time: int
     _data_changed: bool
+    _read_only: bool
 
-    def __init__(self, path: Path, min_write_interval: float = 5.0) -> None:
+    def __init__(self, path: Path, min_write_interval: float = 5.0, read_only: bool = False) -> None:
         self._path: Path = path
         self._min_write_interval = int(min_write_interval * 1_000_000_000)
         self._last_write_time = 0
         self._data_changed = False
+        self._read_only = read_only
 
         self._load_data()
 
@@ -65,6 +67,9 @@ class FactoringStats:
             self._data = FactoringData()
 
     def _save_data(self, *, force: bool = False) -> None:
+        if self._read_only:
+            return
+
         current_time = time.monotonic_ns()
 
         if not force and (current_time - self._last_write_time < self._min_write_interval):

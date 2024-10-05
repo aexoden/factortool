@@ -34,6 +34,7 @@ Issues = "https://github.com/aexoden/factortool/issues"
 Source = "https://github.com/aexoden/factortool"
 
 [project.scripts]
+analyzer = "factortool.analyzer:main"
 factortool = "factortool.cli:main"
 
 [tool.hatch.version]

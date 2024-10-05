@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
 
 import math
+import sys
 
 from collections.abc import Iterable
 from functools import cache
@@ -84,3 +85,18 @@ def is_prime(n: int) -> bool:
 
 def log_factor_result(methods: Iterable[str], n: int, factors: list[int]) -> None:
     logger.info("{} -> {} = {}", ", ".join(methods), format_number(n), " * ".join(map(format_number, sorted(factors))))
+
+
+def setup_logger() -> None:
+    logger.remove(0)
+
+    logger_format = " | ".join(
+        [
+            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green>",
+            "<magenta>{elapsed}</magenta>",
+            "<level>{level: <8}</level>",
+            "<level>{message}</level>",
+        ],
+    )
+
+    logger.add(sys.stdout, format=logger_format)
