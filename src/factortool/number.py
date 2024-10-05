@@ -74,8 +74,15 @@ def factor_ecm(n: int, level: int, max_threads: int, gmp_ecm_path: Path, stats: 
             thread_curves = curves_per_thread + (1 if i < remaining_curves else 0)
             tasks.append(pool.apply_async(factor_ecm_single, (n, thread_curves, b1, gmp_ecm_path)))
 
+        # Only accept the factors from one run, as otherwise we may end up with extra factors in some cases. This could
+        # be mitigated by manually checking each factor for divisibility into the composite and producing our own
+        # remaining cofactor, but that may be more effort than is needed.
         for task in tasks:
-            factors = factors.union(task.get())
+            task_factors = task.get()
+
+            if len(task_factors) > 0:
+                factors = factors.union(task_factors)
+                break
 
     end_time = time.perf_counter_ns()
     execution_time = (end_time - start_time) / 1_000_000_000.0
