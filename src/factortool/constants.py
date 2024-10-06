@@ -1,14 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
 
-import math
-
 CADO_NFS_MIN_DIGITS = 57
-DECAY_RATE = math.exp(0.5) / 1024
-P_FACTOR_DECAY_RATE = math.exp(0.5) / 32
-P_FACTOR_INITIAL = 0.1
-INITIAL_EPSILON = 1.0
-UTILITY_SCALING_FACTOR = 0.1
 
 ECM_CURVES: dict[int, tuple[int, int]] = {
     2: (5, 340),

@@ -21,34 +21,6 @@ class Arguments(Tap):
     digits: int  # Digits to analyze
 
 
-def get_average_time(
-        stats: FactoringStats,
-        threads: int,
-        digits: int,
-        nfs_time: float,
-        next_ecm_level: int,
-        maximum_ecm_level: int
-        ) -> float:
-    if next_ecm_level > maximum_ecm_level:
-        return nfs_time
-
-    ecm_threads = min(threads, ECM_CURVES[next_ecm_level][0])
-    ecm_count, ecm_time, ecm_p_factor = stats.get_ecm_stats(digits, next_ecm_level, ecm_threads)
-
-    # It is a bug for any of the following to be violated, and it helps the static type checker.
-    assert ecm_count > 0  # noqa: S101
-    assert ecm_time is not None  # noqa: S101
-    assert ecm_p_factor is not None  # noqa: S101
-
-    # This level of ECM is done unconditionally.
-    average_time = ecm_time
-
-    # If no factor is found, we must recursively check the next level.
-    average_time += (1 - ecm_p_factor) * get_average_time(stats, threads, digits, nfs_time, next_ecm_level + 1, maximum_ecm_level)
-
-    return average_time
-
-
 def main() -> None:
     setup_logger()
 
@@ -91,6 +63,6 @@ def main() -> None:
 
         assert ecm_p_factor is not None  # noqa: S101
 
-        average_time = get_average_time(stats, config.max_threads, args.digits, nfs_time, min_ecm_level, ecm_level)
+        _, average_time = stats.get_average_time(args.digits, ecm_level, config.max_threads)
 
-        print(f'  {ecm_level:3}  {ecm_count:8}  {ecm_time:7.3f}s  {ecm_p_factor * 100:7.3f}%  {average_time:7.3f}s')
+        print(f"  {ecm_level:3}  {ecm_count:8}  {ecm_time:7.3f}s  {ecm_p_factor * 100:7.3f}%  {average_time:7.3f}s")

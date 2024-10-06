@@ -10,6 +10,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from factortool.constants import ECM_CURVES
+
 
 class NFSRunData(BaseModel):
     total_time: float = Field(default=0.0, description="Total time spent on NFS factorization")
@@ -47,7 +49,7 @@ class FactoringStats:
     _data_changed: bool
     _read_only: bool
 
-    def __init__(self, path: Path, min_write_interval: float = 5.0, read_only: bool = False) -> None:
+    def __init__(self, path: Path, *, min_write_interval: float = 5.0, read_only: bool = False) -> None:
         self._path: Path = path
         self._min_write_interval = int(min_write_interval * 1_000_000_000)
         self._last_write_time = 0
@@ -163,3 +165,46 @@ class FactoringStats:
             )
 
         return (0, None, None)
+
+    def get_average_time(self, digits: int, maximum_ecm_level: int, threads: int) -> tuple[int, float | None]:
+        nfs_count, nfs_time = self.get_nfs_stats(digits, threads)
+
+        if nfs_count == 0:
+            return (0, None)
+
+        assert nfs_time is not None  # noqa: S101
+
+        return self._get_average_time_internal(digits, threads, nfs_time, min(ECM_CURVES.keys()), maximum_ecm_level)
+
+    def _get_average_time_internal(
+        self, digits: int, threads: int, nfs_time: float, next_ecm_level: int, maximum_ecm_level: int
+    ) -> tuple[int, float | None]:
+        ecm_threads = min(threads, ECM_CURVES[next_ecm_level][0])
+        ecm_count, ecm_time, ecm_p_factor = self.get_ecm_stats(digits, next_ecm_level, ecm_threads)
+
+        # If there is no ECM data at this level, we're stuck.
+        if ecm_count == 0:
+            return (0, None)
+
+        # It is a bug for any of the following to be violated, and it helps the static type checker.
+        assert ecm_time is not None  # noqa: S101
+        assert ecm_p_factor is not None  # noqa: S101
+
+        # This level of ECM is done unconditionally.
+        average_time = ecm_time
+
+        # If no factor is found, we must recursively check the next level.
+        if next_ecm_level == maximum_ecm_level:
+            final_ecm_count = ecm_count
+            average_time += (1 - ecm_p_factor) * nfs_time
+        else:
+            final_ecm_count, extra_time = self._get_average_time_internal(
+                digits, threads, nfs_time, next_ecm_level + 1, maximum_ecm_level
+            )
+
+            if extra_time is None:
+                return (0, None)
+
+            average_time += (1 - ecm_p_factor) * extra_time
+
+        return (final_ecm_count, average_time)

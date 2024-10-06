@@ -3,7 +3,6 @@
 
 import math
 import multiprocessing
-import random
 import subprocess
 import sys
 import time
@@ -16,15 +15,7 @@ from pathlib import Path
 from loguru import logger
 
 from factortool.config import Config
-from factortool.constants import (
-    CADO_NFS_MIN_DIGITS,
-    DECAY_RATE,
-    ECM_CURVES,
-    INITIAL_EPSILON,
-    P_FACTOR_DECAY_RATE,
-    P_FACTOR_INITIAL,
-    UTILITY_SCALING_FACTOR,
-)
+from factortool.constants import CADO_NFS_MIN_DIGITS, ECM_CURVES
 from factortool.stats import FactoringStats
 from factortool.util import SMALL_PRIMES, format_number, is_prime, log_factor_result
 
@@ -171,8 +162,8 @@ class Number:
     composite_factors: list[int]
     methods: list[str]
 
-    _ecm_overage: float
-    _ecm_needed: bool
+    _ecm_level: int
+    _maximum_ecm_level: int
     _stats: FactoringStats
     _config: Config
 
@@ -181,8 +172,7 @@ class Number:
         self._stats = stats
         self._config = config
 
-        self._ecm_needed = True
-        self._ecm_overage = 0.0
+        self._ecm_level = 0
 
         if is_prime(n):
             self.composite_factors = []
@@ -191,6 +181,7 @@ class Number:
             self.composite_factors = [n]
             self.prime_factors = []
 
+        self._set_maximum_ecm_level()
         self.methods = []
 
     def __lt__(self, other: object) -> bool:
@@ -204,23 +195,17 @@ class Number:
 
     @property
     def ecm_needed(self) -> bool:
-        return self._ecm_needed
+        return self._ecm_level < self._maximum_ecm_level
 
     @property
     def factored(self) -> bool:
         return len(self.composite_factors) == 0
 
-    def _update_ecm_needed(self, level: int) -> None:
-        self._ecm_needed, overage = self._calculate_ecm_needed(level)
-        self._ecm_overage += overage
-
-    # Some of this function is a stopgap until I implement a more global solution. Working level-by-level is not
-    # particularly robust and can never work for certain factor distributions. (It could be that if you look only at the
-    # next level, it's better to do NFS immediately, but that several ECM levels up, there is significant savings to
-    # be had.)
-    def _calculate_ecm_needed(self, level: int) -> tuple[bool, float]:  # noqa: PLR0911
+    def _set_maximum_ecm_level(self) -> None:
+        # If factored, there is no need for any ECM.
         if self.factored:
-            return (False, 0.0)
+            self._maximum_ecm_level = self._ecm_level
+            return
 
         # Retrieve statistics from the database. We use the largest remaining composite factor, as that's the largest
         # number we're actually factoring at this point.
@@ -228,89 +213,65 @@ class Number:
         digits = len(str(largest_composite_factor))
         smallest_composite_factor_digits = len(str(min(self.composite_factors)))
 
-        nfs_count, nfs_time = self._stats.get_nfs_stats(digits, self._config.max_threads)
-        ecm_count, ecm_time, ecm_p_factor = self._stats.get_ecm_stats(
-            digits,
-            level + 1,
-            self._config.max_threads,
-        )
-
-        # If either of the run counts is zero, continue doing ECM. The actual ECM factoring code will force an initial
-        # NFS run if the number of digits is compatible.
-        if nfs_count == 0 or ecm_count == 0:
-            return (True, 0.0)
-
-        # If the run count is non-zero, the other values should never be None. Doing this check will satisfy static type
-        # checking tools, however. We'll nonetheless output a log message as this would indicate a bug.
-        if nfs_time is None or ecm_time is None or ecm_p_factor is None:
-            logger.warning(
-                "Unexpected None value encountered in Number._update_ecm_needed. Please report this as a bug."
-            )
-            return (True, 0.0)
-
-        # Adjust the probability of finding a factor based on the number of samples. We'll arbitrarily assume a base
-        # probability, and then apply an exponential decay factor. This way, we don't incorrectly make decisions based
-        # on a zero probability that's merely the result in insufficient data.
-        ecm_p_factor_multiplier = math.exp(-P_FACTOR_DECAY_RATE * ecm_count)
-        ecm_p_factor = ecm_p_factor_multiplier * P_FACTOR_INITIAL + (1 - ecm_p_factor_multiplier) * ecm_p_factor
-
-        # Calculate the expected utility of doing the additional round of ECM.
-        ecm_expected_time = ecm_time + (1 - ecm_p_factor) * nfs_time
-        utility = nfs_time - ecm_expected_time
-        overage = -utility if utility < 0 else 0.0
-
-        # Calculate the probability of doing exploration.
-        p_exploration = INITIAL_EPSILON * math.exp(-DECAY_RATE * ecm_count)
-        p_exploration *= math.exp(-abs(utility) * UTILITY_SCALING_FACTOR)
-
-        # Temporary logging message for debugging.
-        # logger.info("level: {}  digits: {}  scf_digits: {}  nfs_count: {}  nfs_time: {}  ecm_count: {}  ecm_time: {}  ecm_p_factor: {}  epf_multiplier: {}  ecm_expected: {}  utility: {}  p_exploration: {}",  # noqa: E501
-        #    level, digits, smallest_composite_factor_digits, nfs_count, nfs_time, ecm_count, ecm_time, ecm_p_factor, ecm_p_factor_multiplier, ecm_expected_time, utility, p_exploration)  # noqa: E501
-
-        # If the smallest remaining composite factor is too small for CADO-NFS, continue doing ECM.
+        # If the smallest composite factor is smaller than supported by CADO-NFS, just use the true maximum since we
+        # can't do NFS anyway.
         if smallest_composite_factor_digits < CADO_NFS_MIN_DIGITS:
-            # logger.info("factor too small")  # noqa: ERA001
-            return (True, overage)
+            self._maximum_ecm_level = max(ECM_CURVES.keys())
+            return
 
-        # If the current ECM level is already well beyond the maximum possible factor size, abort doing ECM.
-        if level >= digits // 2 + 10:
-            self._ecm_needed = False
-            # logger.info("level too high for digit count")  # noqa: ERA001
-            return (True, overage)
+        # Establish a semi-arbitrary limit on our maximum ECM level. The smallest factors should never have more than
+        # about half the digits of the number, so do a few levels beyond that (as ECM may miss factors).
+        self._maximum_ecm_level = digits // 2 + 10
 
-        # If our current overage is more than 0.25 times the NFS time, just abort and do NFS.
-        if self._ecm_overage > 0.25 * nfs_time:
-            # logger.info("too much overage")  # noqa: ERA001
-            return (False, 0.0)
+        # Collect data on the statistics based on stopping ECM at a given level. Once we've reached the first level with
+        # no data, simply abort. Along the way, we'll note which ECM level was fastest on average.
+        ecm_data: dict[int, tuple[int, float | None]] = {}
+        best_maximum_ecm_level = None
+        best_maximum_ecm_level_time = 0.0
 
-        # Randomly choose to do additional ECM with a probability based on the number of samples we already have and the
-        # calculated utility.
-        if random.random() < p_exploration:  # noqa: S311
-            # logger.info("choosing to explore")  # noqa: ERA001
-            return (True, overage)
+        for ecm_level in range(min(ECM_CURVES.keys()), self._maximum_ecm_level + 1):
+            ecm_count, average_time = self._stats.get_average_time(digits, ecm_level, self._config.max_threads)
 
-        # If the expected utility of another round of ECM is positive, do ECM.
-        if utility > 0:
-            # logger.info("positive utility")  # noqa: ERA001
-            return (True, overage)
+            if ecm_count == 0:
+                break
 
-        # If the potential overage is very small, just do ECM. This is one of the stopgaps.
-        if overage < 1.0:
-            # logger.info("limited overage")  # noqa: ERA001
-            return (True, overage)
+            assert average_time is not None  # noqa: S101
 
-        # Otherwise, move on to NFS.
-        # logger.info("Moving to NFS")  # noqa: ERA001
-        return (False, 0.0)
+            if best_maximum_ecm_level is None or average_time < best_maximum_ecm_level_time:
+                best_maximum_ecm_level = ecm_level
+                best_maximum_ecm_level_time = average_time
+
+            ecm_data[ecm_level] = (ecm_count, average_time)
+
+        # If no data at all was collected, just return and use the already set maximum.
+        if best_maximum_ecm_level is None:
+            return
+
+        # If the highest level with data is the fastest, there's no evidence ever doing NFS is useful, so just return,
+        # as we've already set a reasonable maximum ECM level above.
+        if max(ecm_data.keys()) == best_maximum_ecm_level:
+            return
+
+        # Otherwise, we'll balance collecting more data with taking advantage of what we already know, based on how many
+        # samples have been collected. The function as defined here will do an extra number of levels based on the
+        # number of samples for the level following the one with the minimum time. The parameters as chosen here will do
+        # eight extra levels when there are 4 samples, decaying to zero extra levels when 1024 samples are reached.
+        # These numbers are, of course, arbitrary, but should work reasonably well enough.
+        test_ecm_level = best_maximum_ecm_level + 1
+        test_ecm_count, _ = ecm_data.get(test_ecm_level, (0, None))
+        extra_ecm_levels = math.ceil(-math.log2(test_ecm_count) + 10)
+
+        self._maximum_ecm_level = min(best_maximum_ecm_level + extra_ecm_levels, self._maximum_ecm_level)
 
     def _factor_generic(
         self,
         method: str,
         factor_func: Callable[..., list[int]],
         *args: int | Path | FactoringStats,
-    ) -> None:
+    ) -> bool:
         composite_factors = self.composite_factors.copy()
         self.composite_factors = []
+        found_factors = False
 
         for n in composite_factors:
             try:
@@ -322,6 +283,7 @@ class Number:
 
             if len(factors) > 1:
                 self.methods.append(method)
+                found_factors = True
 
             for factor in factors:
                 if is_prime(factor):
@@ -332,12 +294,21 @@ class Number:
         if self.factored and len(self.methods) > 1:
             log_factor_result(set(self.methods), self.n, self.prime_factors)
 
+        return found_factors
+
     def factor_tf(self) -> None:
-        self._factor_generic("TF", factor_tf)
+        if self._factor_generic("TF", factor_tf):
+            self._set_maximum_ecm_level()
 
     def factor_ecm(self, level: int) -> None:
-        self._factor_generic("ECM", factor_ecm, level, self._config.max_threads, self._config.gmp_ecm_path, self._stats)
-        self._update_ecm_needed(level)
+        found_factors = self._factor_generic(
+            "ECM", factor_ecm, level, self._config.max_threads, self._config.gmp_ecm_path, self._stats
+        )
+
+        self._ecm_level = level
+
+        if found_factors:
+            self._set_maximum_ecm_level()
 
     def factor_nfs(self) -> None:
         self._factor_generic("NFS", factor_nfs, self._config.max_threads, self._config.cado_nfs_path, self._stats)
