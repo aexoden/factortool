@@ -3,6 +3,9 @@
 
 CADO_NFS_MIN_DIGITS = 57
 
+ECM_P_FACTOR_DEFAULT = 0.1
+ECM_P_FACTOR_DECAY = pow(0.5, 1 / 16)
+
 ECM_CURVES: dict[int, tuple[int, int]] = {
     2: (5, 340),
     3: (1, 437),

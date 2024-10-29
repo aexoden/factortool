@@ -10,7 +10,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from factortool.constants import ECM_CURVES
+from factortool.constants import ECM_CURVES, ECM_P_FACTOR_DECAY, ECM_P_FACTOR_DEFAULT
 
 
 class NFSRunData(BaseModel):
@@ -189,6 +189,11 @@ class FactoringStats:
         # It is a bug for any of the following to be violated, and it helps the static type checker.
         assert ecm_time is not None  # noqa: S101
         assert ecm_p_factor is not None  # noqa: S101
+
+        # Adjust the probability of finding a factor by applying an exponentially decaying weighted average. This
+        # minimizes the impact of only having a few samples.
+        ecm_p_factor_decay = pow(ECM_P_FACTOR_DECAY, ecm_count)
+        ecm_p_factor = ecm_p_factor_decay * ECM_P_FACTOR_DEFAULT + (1 - ecm_p_factor_decay) * ecm_p_factor
 
         # This level of ECM is done unconditionally.
         average_time = ecm_time

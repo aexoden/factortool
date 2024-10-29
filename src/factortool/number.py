@@ -256,10 +256,22 @@ class Number:
         # samples have been collected. The function as defined here will do an extra number of levels based on the
         # number of samples for the level following the one with the minimum time. The parameters as chosen here will do
         # eight extra levels when there are 4 samples, decaying to zero extra levels when 1024 samples are reached.
-        # These numbers are, of course, arbitrary, but should work reasonably well enough.
+        # These numbers are, of course, arbitrary, but should work reasonably well enough. We need to check each level
+        # from the minimum up to the test level because in certain situations, the numbers won't be monotonically
+        # decreasing.
         test_ecm_level = best_maximum_ecm_level + 1
-        test_ecm_count, _ = ecm_data.get(test_ecm_level, (0, None))
-        extra_ecm_levels = math.ceil(-math.log2(test_ecm_count) + 10)
+        lowest_ecm_count = None
+
+        for ecm_level in range(min(ECM_CURVES.keys()), test_ecm_level + 1):
+            test_ecm_count, _ = ecm_data.get(ecm_level, (0, None))
+
+            if lowest_ecm_count is None or test_ecm_count < lowest_ecm_count:
+                lowest_ecm_count = test_ecm_count
+
+        if lowest_ecm_count is None:
+            lowest_ecm_count = 0
+
+        extra_ecm_levels = math.ceil(-math.log2(lowest_ecm_count) + 10)
 
         self._maximum_ecm_level = min(best_maximum_ecm_level + extra_ecm_levels, self._maximum_ecm_level)
 
