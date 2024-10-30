@@ -76,6 +76,7 @@ class FactorEngine:
                 number.factor_ecm(ecm_level)
 
                 if self._interrupt_level > 0:
+                    logger.info("Not finishing remaining ECM factorizations due to interrupt")
                     return
 
         # Finish the remaining numbers with NFS.
@@ -90,4 +91,5 @@ class FactorEngine:
             number.factor_nfs()
 
             if self._interrupt_level > 0:
+                logger.info("Not finishing remaining NFS factorizations due to interrupt")
                 return

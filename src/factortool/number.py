@@ -1,15 +1,14 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
 
+import concurrent.futures
 import math
-import multiprocessing
 import subprocess
 import sys
 import time
 
 from collections.abc import Callable, Iterable
 from functools import cache
-from multiprocessing.pool import ApplyResult  # noqa: TCH003 (conflicts with isort, which is more useful for the moment)
 from pathlib import Path
 
 from loguru import logger
@@ -58,18 +57,18 @@ def factor_ecm(n: int, level: int, max_threads: int, gmp_ecm_path: Path, stats: 
     factors: set[int] = set()
     start_time = time.perf_counter_ns()
 
-    with multiprocessing.Pool(processes=thread_count) as pool:
-        tasks: list[ApplyResult[list[int]]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count) as executor:
+        tasks: list[concurrent.futures.Future[list[int]]] = []
 
         for i in range(thread_count):
             thread_curves = curves_per_thread + (1 if i < remaining_curves else 0)
-            tasks.append(pool.apply_async(factor_ecm_single, (n, thread_curves, b1, gmp_ecm_path)))
+            tasks.append(executor.submit(factor_ecm_single, n, thread_curves, b1, gmp_ecm_path))
 
         # Only accept the factors from one run, as otherwise we may end up with extra factors in some cases. This could
         # be mitigated by manually checking each factor for divisibility into the composite and producing our own
         # remaining cofactor, but that may be more effort than is needed.
         for task in tasks:
-            task_factors = task.get()
+            task_factors = task.result()
 
             if len(task_factors) > 0:
                 factors = factors.union(task_factors)
