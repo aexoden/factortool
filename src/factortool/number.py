@@ -242,8 +242,12 @@ class Number:
 
             ecm_data[ecm_level] = (ecm_count, average_time)
 
-        # If no data at all was collected, just return and use the already set maximum.
+        # If no data at all was collected, limit the ECM work to one-third the digit count. This is probably too little
+        # for smaller numbers, but it's only for the first run, at which point the other metrics will take over. This
+        # prevents trying to do way too much ECM on the first run, which will be more important with medium and large
+        # numbers.
         if best_maximum_ecm_level is None:
+            self._maximum_ecm_level = digits // 3
             return
 
         # If the highest level with data is the fastest, there's no evidence ever doing NFS is useful, so just return,
