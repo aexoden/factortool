@@ -37,7 +37,7 @@ class FactorEngine:
     # Public Methods
     #
 
-    def run(self, numbers: Collection[Number]) -> None:
+    def run(self, numbers: Collection[Number]) -> bool:
         # Attempt to trial factor each number.
         logger.info("Attempting trial factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
@@ -45,7 +45,7 @@ class FactorEngine:
             number.factor_tf()
 
             if self._interrupt_level > 0:
-                return
+                return True
 
         # Attempt to factor each number via ECM.
         minimum_ecm_level = min(ECM_CURVES.keys())
@@ -77,13 +77,13 @@ class FactorEngine:
 
                 if self._interrupt_level > 0:
                     logger.info("Not finishing remaining ECM factorizations due to interrupt")
-                    return
+                    return True
 
         # Finish the remaining numbers with NFS.
         number_count = len([x for x in numbers if not x.factored])
 
         if number_count == 0:
-            return
+            return False
 
         logger.info("Attempting NFS factoring on {} number{}", number_count, "s" if number_count != 1 else "")
 
@@ -92,4 +92,6 @@ class FactorEngine:
 
             if self._interrupt_level > 0:
                 logger.info("Not finishing remaining NFS factorizations due to interrupt")
-                return
+                return True
+
+        return False

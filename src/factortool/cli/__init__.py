@@ -43,7 +43,7 @@ def main() -> None:
 
     numbers = factordb.fetch(args.min_digits, args.batch_size, args.skip_count)
 
-    engine.run(sorted(numbers))
+    interrupted = engine.run(sorted(numbers))
 
     factordb.submit(numbers)
 
@@ -85,3 +85,6 @@ def main() -> None:
     output_path = config.result_output_path.joinpath(output_filename)
     with output_path.open("w", encoding="utf-8") as f:
         f.write(format_results(numbers) + "\n")
+
+    if interrupted:
+        sys.exit(2)
