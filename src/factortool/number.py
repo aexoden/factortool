@@ -90,13 +90,17 @@ def factor_ecm(n: int, level: int, max_threads: int, gmp_ecm_path: Path, stats: 
 
 @cache
 def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path) -> list[int]:
-    cmd = [str(yafu_path), f"{method}({n})", "-threads", str(max_threads)]
+    cmd = [str(yafu_path), f"{method}({n})"]
+
+    if method not in {"pm1", "rho"}:
+        cmd.extend(["-threads", str(max_threads)])
 
     try:
         result = subprocess.run(
             cmd,
             cwd=yafu_path.parent,
             capture_output=True,
+            env={"OMP_NUM_THREADS": "1"},
             text=True,
             check=True,
             process_group=0,

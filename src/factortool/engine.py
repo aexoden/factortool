@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
 
+import concurrent.futures
 import signal
 import sys
 
@@ -50,20 +51,28 @@ class FactorEngine:
         # Attempt to find factors via the Rho method.
         logger.info("Attempting rho factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
-        for number in [x for x in numbers if not x.factored]:
+        def factor_rho(number: Number) -> None:
             number.factor_rho()
 
-            if self._interrupt_level > 0:
-                return True
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self._config.max_threads) as executor:
+            for number in [x for x in numbers if not x.factored]:
+                executor.submit(factor_rho, number)
+
+        if self._interrupt_level > 0:
+            return True
 
         # Attempt to find factors via P-1.
         logger.info("Attempting P-1 factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
-        for number in [x for x in numbers if not x.factored]:
+        def factor_pm1(number: Number) -> None:
             number.factor_pm1()
 
-            if self._interrupt_level > 0:
-                return True
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self._config.max_threads) as executor:
+            for number in [x for x in numbers if not x.factored]:
+                executor.submit(factor_pm1, number)
+
+        if self._interrupt_level > 0:
+            return True
 
         # Attempt to factor each number via ECM.
         minimum_ecm_level = min(ECM_CURVES.keys())
