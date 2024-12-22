@@ -47,6 +47,15 @@ class FactorEngine:
             if self._interrupt_level > 0:
                 return True
 
+        # Attempt to find factors via the Rho method.
+        logger.info("Attempting rho factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
+
+        for number in numbers:
+            number.factor_rho()
+
+            if self._interrupt_level > 0:
+                return True
+
         # Attempt to factor each number via ECM.
         minimum_ecm_level = min(ECM_CURVES.keys())
         maximum_ecm_level = max(ECM_CURVES.keys())

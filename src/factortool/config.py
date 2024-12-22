@@ -22,6 +22,7 @@ class Config(BaseModel):
     max_threads: int
     result_output_path: Path
     stats_path: Path
+    yafu_path: Path
 
 
 def read_config(path: Path) -> Config:

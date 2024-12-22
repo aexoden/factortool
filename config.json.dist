@@ -8,5 +8,6 @@
 	"gmp_ecm_path": "/usr/bin/ecm",
 	"max_threads": 2,
 	"result_output_path": "results",
-	"stats_path": "stats.json"
+	"stats_path": "stats.json",
+	"yafu_path": "/opt/yafu/yafu"
 }

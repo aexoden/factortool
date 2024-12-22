@@ -3,6 +3,7 @@
 
 import concurrent.futures
 import math
+import re
 import subprocess
 import sys
 import time
@@ -85,6 +86,34 @@ def factor_ecm(n: int, level: int, max_threads: int, gmp_ecm_path: Path, stats: 
         log_factor_result(["ECM"], n, sorted(factors))
 
     return sorted(factors)
+
+
+@cache
+def factor_rho(n: int, max_threads: int, yafu_path: Path) -> list[int]:
+    cmd = [str(yafu_path), f"rho({n})", "-threads", str(max_threads)]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=yafu_path.parent,
+            capture_output=True,
+            text=True,
+            check=True,
+            process_group=0,
+        )
+
+        factors: list[int] = []
+
+        for line in result.stdout.strip().split("\n"):
+            matches = re.match(r"(P|C)([0-9]*) = (?P<factor>[0-9]*)", line)
+
+            if matches:
+                factors.append(int(matches["factor"]))
+    except subprocess.CalledProcessError as e:
+        logger.critical("Rho failed for {}: {}", n, e.stderr)
+        sys.exit(5)
+    else:
+        return sorted(factors)
 
 
 @cache
@@ -313,6 +342,10 @@ class Number:
 
     def factor_tf(self) -> None:
         if self._factor_generic("TF", factor_tf):
+            self._set_maximum_ecm_level()
+
+    def factor_rho(self) -> None:
+        if self._factor_generic("Rho", factor_rho, self._config.max_threads, self._config.yafu_path):
             self._set_maximum_ecm_level()
 
     def factor_ecm(self, level: int) -> None:
