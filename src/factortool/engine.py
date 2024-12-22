@@ -37,7 +37,7 @@ class FactorEngine:
     # Public Methods
     #
 
-    def run(self, numbers: Collection[Number]) -> bool:
+    def run(self, numbers: Collection[Number]) -> bool:  # noqa: PLR0911, PLR0912
         # Attempt to trial factor each number.
         logger.info("Attempting trial factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
@@ -50,8 +50,17 @@ class FactorEngine:
         # Attempt to find factors via the Rho method.
         logger.info("Attempting rho factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
-        for number in numbers:
+        for number in [x for x in numbers if not x.factored]:
             number.factor_rho()
+
+            if self._interrupt_level > 0:
+                return True
+
+        # Attempt to find factors via P-1.
+        logger.info("Attempting P-1 factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
+
+        for number in [x for x in numbers if not x.factored]:
+            number.factor_pm1()
 
             if self._interrupt_level > 0:
                 return True

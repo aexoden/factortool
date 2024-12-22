@@ -89,8 +89,8 @@ def factor_ecm(n: int, level: int, max_threads: int, gmp_ecm_path: Path, stats: 
 
 
 @cache
-def factor_rho(n: int, max_threads: int, yafu_path: Path) -> list[int]:
-    cmd = [str(yafu_path), f"rho({n})", "-threads", str(max_threads)]
+def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path) -> list[int]:
+    cmd = [str(yafu_path), f"{method}({n})", "-threads", str(max_threads)]
 
     try:
         result = subprocess.run(
@@ -110,7 +110,7 @@ def factor_rho(n: int, max_threads: int, yafu_path: Path) -> list[int]:
             if matches:
                 factors.append(int(matches["factor"]))
     except subprocess.CalledProcessError as e:
-        logger.critical("Rho failed for {}: {}", n, e.stderr)
+        logger.critical("YAFU failed for {} with method {}: {}", n, method, e.stderr)
         sys.exit(5)
     else:
         return sorted(factors)
@@ -311,7 +311,7 @@ class Number:
         self,
         method: str,
         factor_func: Callable[..., list[int]],
-        *args: int | Path | FactoringStats,
+        *args: int | str | Path | FactoringStats,
     ) -> bool:
         composite_factors = self.composite_factors.copy()
         self.composite_factors = []
@@ -345,7 +345,11 @@ class Number:
             self._set_maximum_ecm_level()
 
     def factor_rho(self) -> None:
-        if self._factor_generic("Rho", factor_rho, self._config.max_threads, self._config.yafu_path):
+        if self._factor_generic("Rho", factor_yafu, "rho", self._config.max_threads, self._config.yafu_path):
+            self._set_maximum_ecm_level()
+
+    def factor_pm1(self) -> None:
+        if self._factor_generic("P-1", factor_yafu, "pm1", self._config.max_threads, self._config.yafu_path):
             self._set_maximum_ecm_level()
 
     def factor_ecm(self, level: int) -> None:
