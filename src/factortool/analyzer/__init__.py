@@ -9,7 +9,7 @@ from loguru import logger
 from tap import Tap
 
 from factortool.config import read_config
-from factortool.constants import ECM_CURVES
+from factortool.constants import CADO_NFS_MIN_DIGITS, ECM_CURVES
 from factortool.stats import FactoringStats
 from factortool.util import setup_logger
 
@@ -21,7 +21,7 @@ class Arguments(Tap):
     digits: int  # Digits to analyze
 
 
-def main() -> None:
+def main() -> None:  # noqa: PLR0914
     setup_logger()
 
     args = Arguments().parse_args()
@@ -37,9 +37,41 @@ def main() -> None:
     min_ecm_level = min(ECM_CURVES.keys())
     max_ecm_level = max(ECM_CURVES.keys())
 
+    tf_count, tf_time, tf_p_factor = stats.get_probability_stats(args.digits, "tf", 1)
+
+    if tf_count == 0:
+        print(f"No trial factoring data present for {args.digits} digits.")
+    else:
+        assert tf_p_factor is not None  # noqa: S101
+        print(
+            f"Average time for {tf_count} trial factoring runs with a {tf_p_factor * 100:0.3f}% success rate is {tf_time:0.3f}s"  # noqa: E501
+        )
+
+    rho_count, rho_time, rho_p_factor = stats.get_probability_stats(args.digits, "rho", 1)
+
+    if rho_count == 0:
+        print(f"No rho data present for {args.digits} digits.")
+    else:
+        assert rho_p_factor is not None  # noqa: S101
+        print(
+            f"Average time for {rho_count} rho runs with a {rho_p_factor * 100:0.3f}% success rate is {rho_time:0.3f}s"
+        )
+
+    pm1_count, pm1_time, pm1_p_factor = stats.get_probability_stats(args.digits, "pm1", 1)
+
+    if pm1_count == 0:
+        print(f"No P-1 data present for {args.digits} digits.")
+    else:
+        assert pm1_p_factor is not None  # noqa: S101
+        print(
+            f"Average time for {pm1_count} P-1 runs with a {pm1_p_factor * 100:0.3f}% success rate is {pm1_time:0.3f}s"
+        )
+
+    print()
+
     nfs_count, nfs_time = stats.get_nfs_stats(args.digits, config.max_threads)
 
-    if nfs_count == 0:
+    if nfs_count == 0 and args.digits >= CADO_NFS_MIN_DIGITS:
         logger.error("No NFS data present for this digit count.")
         sys.exit(2)
 

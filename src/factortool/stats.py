@@ -22,21 +22,34 @@ class NFSDigitData(BaseModel):
     thread_data: dict[int, NFSRunData] = Field(default_factory=dict, description="NFS data for each thread count")
 
 
-class ECMRunData(BaseModel):
-    total_time: float = Field(default=0.0, description="Total time spent on ECM factorization")
-    run_count: int = Field(default=0, description="Number of ECM factorization runs")
-    success_count: int = Field(default=0, description="Number of successful ECM factorizations")
+class ProbabilityRunData(BaseModel):
+    total_time: float = Field(default=0.0, description="Total time spent on factorization")
+    run_count: int = Field(default=0, description="Number of factorization runs")
+    success_count: int = Field(default=0, description="Number of successful factorizations")
 
 
 class ECMLevelData(BaseModel):
-    thread_data: dict[int, ECMRunData] = Field(default_factory=dict, description="ECM data for each thread count")
+    thread_data: dict[int, ProbabilityRunData] = Field(
+        default_factory=dict, description="ECM data for each thread count"
+    )
 
 
 class ECMDigitData(BaseModel):
     level_data: dict[int, ECMLevelData] = Field(default_factory=dict, description="ECM data for each level")
 
 
+class ProbabilityDigitData(BaseModel):
+    thread_data: dict[int, ProbabilityRunData] = Field(
+        default_factory=dict, description="Factoring data for each thread count"
+    )
+
+
 class FactoringData(BaseModel):
+    tf: dict[int, ProbabilityDigitData] = Field(
+        default_factory=dict, description="Trial factoring data for each digit count"
+    )
+    rho: dict[int, ProbabilityDigitData] = Field(default_factory=dict, description="Rho data for each digit count")
+    pm1: dict[int, ProbabilityDigitData] = Field(default_factory=dict, description="P-1 data for each digit count")
     nfs: dict[int, NFSDigitData] = Field(default_factory=dict, description="NFS data for each digit count")
     ecm: dict[int, ECMDigitData] = Field(default_factory=dict, description="ECM data for each digit count")
 
@@ -97,6 +110,28 @@ class FactoringStats:
         self._last_write_time = current_time
         self._data_changed = False
 
+    def update_probability(
+        self, digits: int, method: str, threads: int, execution_time: float, *, success: bool
+    ) -> None:
+        data = getattr(self._data, method)
+
+        if digits not in data:
+            data[digits] = ProbabilityDigitData()
+
+        if threads not in data[digits].thread_data:
+            data[digits].thread_data[threads] = ProbabilityRunData()
+
+        run_data = data[digits].thread_data[threads]
+
+        run_data.total_time += execution_time
+        run_data.run_count += 1
+
+        if success:
+            run_data.success_count += 1
+
+        self._data_changed = True
+        self._save_data()
+
     def update_nfs(self, digits: int, threads: int, execution_time: float) -> None:
         if digits not in self._data.nfs:
             self._data.nfs[digits] = NFSDigitData()
@@ -120,7 +155,7 @@ class FactoringStats:
             self._data.ecm[digits].level_data[ecm_level] = ECMLevelData()
 
         if threads not in self._data.ecm[digits].level_data[ecm_level].thread_data:
-            self._data.ecm[digits].level_data[ecm_level].thread_data[threads] = ECMRunData()
+            self._data.ecm[digits].level_data[ecm_level].thread_data[threads] = ProbabilityRunData()
 
         run_data = self._data.ecm[digits].level_data[ecm_level].thread_data[threads]
 
@@ -145,6 +180,26 @@ class FactoringStats:
 
         return (0, None)
 
+    def get_probability_stats(self, digits: int, method: str, threads: int) -> tuple[int, float | None, float | None]:
+        data = getattr(self._data, method)
+
+        if digits not in data:
+            return (0, None, None)
+
+        if threads not in data[digits].thread_data:
+            return (0, None, None)
+
+        run_data = data[digits].thread_data[threads]
+
+        if run_data.run_count > 0:
+            return (
+                run_data.run_count,
+                run_data.total_time / run_data.run_count,
+                run_data.success_count / run_data.run_count,
+            )
+
+        return (0, None, None)
+
     def get_ecm_stats(self, digits: int, ecm_level: int, threads: int) -> tuple[int, float | None, float | None]:
         if digits not in self._data.ecm:
             return (0, None, None)
@@ -167,6 +222,30 @@ class FactoringStats:
         return (0, None, None)
 
     def get_average_time(self, digits: int, maximum_ecm_level: int, threads: int) -> tuple[int, float | None]:
+        tf_count, tf_time, tf_p_factor = self.get_probability_stats(digits, "tf", 1)
+
+        if tf_count == 0:
+            return (0, None)
+
+        assert tf_time is not None  # noqa: S101
+        assert tf_p_factor is not None  # noqa: S101
+
+        rho_count, rho_time, rho_p_factor = self.get_probability_stats(digits, "rho", 1)
+
+        if rho_count == 0:
+            return (0, None)
+
+        assert rho_time is not None  # noqa: S101
+        assert rho_p_factor is not None  # noqa: S101
+
+        pm1_count, pm1_time, pm1_p_factor = self.get_probability_stats(digits, "pm1", 1)
+
+        if pm1_count == 0:
+            return (0, None)
+
+        assert pm1_time is not None  # noqa: S101
+        assert pm1_p_factor is not None  # noqa: S101
+
         nfs_count, nfs_time = self.get_nfs_stats(digits, threads)
 
         if nfs_count == 0:
@@ -174,7 +253,19 @@ class FactoringStats:
 
         assert nfs_time is not None  # noqa: S101
 
-        return self._get_average_time_internal(digits, threads, nfs_time, min(ECM_CURVES.keys()), maximum_ecm_level)
+        ecm_count, ecm_nfs_time = self._get_average_time_internal(
+            digits, threads, nfs_time, min(ECM_CURVES.keys()), maximum_ecm_level
+        )
+
+        if ecm_nfs_time is None:
+            return (0, None)
+
+        total_time = tf_time
+        total_time += rho_time * (1 - tf_p_factor)
+        total_time += pm1_time * (1 - tf_p_factor) * (1 - rho_p_factor)
+        total_time += ecm_nfs_time * (1 - tf_p_factor) * (1 - rho_p_factor) * (1 - pm1_p_factor)
+
+        return (ecm_count, total_time)
 
     def _get_average_time_internal(
         self, digits: int, threads: int, nfs_time: float, next_ecm_level: int, maximum_ecm_level: int

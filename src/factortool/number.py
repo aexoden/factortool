@@ -89,13 +89,17 @@ def factor_ecm(n: int, level: int, max_threads: int, gmp_ecm_path: Path, stats: 
 
 
 @cache
-def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path) -> list[int]:
+def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path, stats: FactoringStats) -> list[int]:
     cmd = [str(yafu_path), f"{method}({n})"]
+    threads = 1
 
     if method not in {"pm1", "rho"}:
         cmd.extend(["-threads", str(max_threads)])
+        threads = max_threads
 
     try:
+        start_time = time.perf_counter_ns()
+
         result = subprocess.run(
             cmd,
             cwd=yafu_path.parent,
@@ -113,6 +117,18 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path) -> list[
 
             if matches:
                 factors.append(int(matches["factor"]))
+
+        end_time = time.perf_counter_ns()
+        execution_time = (end_time - start_time) / 1_000_000_000.0
+        stats.update_probability(len(str(n)), method, threads, execution_time, success=len(factors) > 1)
+
+        methods = {
+            "rho": "Rho",
+            "pm1": "P-1",
+        }
+
+        if len(factors) > 1:
+            log_factor_result([methods[method]], n, sorted(factors))
     except subprocess.CalledProcessError as e:
         logger.critical("YAFU failed for {} with method {}: {}", n, method, e.stderr)
         sys.exit(5)
@@ -159,9 +175,11 @@ def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, stats: FactoringSt
 
 
 @cache
-def factor_tf(n: int) -> list[int]:
+def factor_tf(n: int, stats: FactoringStats) -> list[int]:
     original_n = n
     factors: list[int] = []
+
+    start_time = time.perf_counter_ns()
 
     for p in SMALL_PRIMES:
         while n % p == 0:
@@ -184,6 +202,10 @@ def factor_tf(n: int) -> list[int]:
     # Log the factoring result.
     if len(factors) > 1:
         log_factor_result(["TF"], original_n, factors)
+
+    end_time = time.perf_counter_ns()
+    execution_time = (end_time - start_time) / 1_000_000_000.0
+    stats.update_probability(len(str(original_n)), "tf", 1, execution_time, success=len(factors) > 1)
 
     return factors
 
@@ -345,15 +367,19 @@ class Number:
         return found_factors
 
     def factor_tf(self) -> None:
-        if self._factor_generic("TF", factor_tf):
+        if self._factor_generic("TF", factor_tf, self._stats):
             self._set_maximum_ecm_level()
 
     def factor_rho(self) -> None:
-        if self._factor_generic("Rho", factor_yafu, "rho", self._config.max_threads, self._config.yafu_path):
+        if self._factor_generic(
+            "Rho", factor_yafu, "rho", self._config.max_threads, self._config.yafu_path, self._stats
+        ):
             self._set_maximum_ecm_level()
 
     def factor_pm1(self) -> None:
-        if self._factor_generic("P-1", factor_yafu, "pm1", self._config.max_threads, self._config.yafu_path):
+        if self._factor_generic(
+            "P-1", factor_yafu, "pm1", self._config.max_threads, self._config.yafu_path, self._stats
+        ):
             self._set_maximum_ecm_level()
 
     def factor_ecm(self, level: int) -> None:
