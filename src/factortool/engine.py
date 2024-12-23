@@ -106,6 +106,25 @@ class FactorEngine:
                     logger.info("Not finishing remaining ECM factorizations due to interrupt")
                     return True
 
+        # Do SIQS on the remaining numbers that prefer SIQS.
+        overall_number_count = len([x for x in numbers if not x.factored])
+        number_count = len([x for x in numbers if not x.factored and x.prefer_siqs])
+
+        if number_count > 0:
+            logger.info(
+                "Attempting SIQS factoring on {} number{} (of {} total remaining)",
+                number_count,
+                "s" if number_count != 1 else "",
+                overall_number_count,
+            )
+
+            for number in [x for x in numbers if not x.factored and x.prefer_siqs]:
+                number.factor_siqs()
+
+                if self._interrupt_level > 0:
+                    logger.info("Not finishing remaining SIQS factorizations due to interrupt")
+                    return True
+
         # Finish the remaining numbers with NFS.
         number_count = len([x for x in numbers if not x.factored])
 

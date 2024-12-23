@@ -13,13 +13,13 @@ from pydantic import BaseModel, Field
 from factortool.constants import ECM_CURVES, ECM_P_FACTOR_DECAY, ECM_P_FACTOR_DEFAULT
 
 
-class NFSRunData(BaseModel):
-    total_time: float = Field(default=0.0, description="Total time spent on NFS factorization")
-    run_count: int = Field(default=0, description="Number of NFS factorization runs")
+class FinalRunData(BaseModel):
+    total_time: float = Field(default=0.0, description="Total time spent on final factorization of this type")
+    run_count: int = Field(default=0, description="Number of final factorization runs of this type")
 
 
-class NFSDigitData(BaseModel):
-    thread_data: dict[int, NFSRunData] = Field(default_factory=dict, description="NFS data for each thread count")
+class FinalDigitData(BaseModel):
+    thread_data: dict[int, FinalRunData] = Field(default_factory=dict, description="Final data for each thread count")
 
 
 class ProbabilityRunData(BaseModel):
@@ -50,8 +50,9 @@ class FactoringData(BaseModel):
     )
     rho: dict[int, ProbabilityDigitData] = Field(default_factory=dict, description="Rho data for each digit count")
     pm1: dict[int, ProbabilityDigitData] = Field(default_factory=dict, description="P-1 data for each digit count")
-    nfs: dict[int, NFSDigitData] = Field(default_factory=dict, description="NFS data for each digit count")
     ecm: dict[int, ECMDigitData] = Field(default_factory=dict, description="ECM data for each digit count")
+    siqs: dict[int, FinalDigitData] = Field(default_factory=dict, description="SIQS data for each digit count")
+    nfs: dict[int, FinalDigitData] = Field(default_factory=dict, description="NFS data for each digit count")
 
 
 class FactoringStats:
@@ -132,12 +133,27 @@ class FactoringStats:
         self._data_changed = True
         self._save_data()
 
+    def update_siqs(self, digits: int, threads: int, execution_time: float) -> None:
+        if digits not in self._data.siqs:
+            self._data.siqs[digits] = FinalDigitData()
+
+        if threads not in self._data.siqs[digits].thread_data:
+            self._data.siqs[digits].thread_data[threads] = FinalRunData()
+
+        run_data = self._data.siqs[digits].thread_data[threads]
+
+        run_data.total_time += execution_time
+        run_data.run_count += 1
+
+        self._data_changed = True
+        self._save_data()
+
     def update_nfs(self, digits: int, threads: int, execution_time: float) -> None:
         if digits not in self._data.nfs:
-            self._data.nfs[digits] = NFSDigitData()
+            self._data.nfs[digits] = FinalDigitData()
 
         if threads not in self._data.nfs[digits].thread_data:
-            self._data.nfs[digits].thread_data[threads] = NFSRunData()
+            self._data.nfs[digits].thread_data[threads] = FinalRunData()
 
         run_data = self._data.nfs[digits].thread_data[threads]
 
@@ -167,6 +183,18 @@ class FactoringStats:
 
         self._data_changed = True
         self._save_data()
+
+    def get_siqs_stats(self, digits: int, threads: int) -> tuple[int, float | None]:
+        if digits in self._data.siqs and threads in self._data.siqs[digits].thread_data:
+            run_data = self._data.siqs[digits].thread_data[threads]
+
+            if run_data.run_count > 0:
+                return (
+                    run_data.run_count,
+                    run_data.total_time / run_data.run_count,
+                )
+
+        return (0, None)
 
     def get_nfs_stats(self, digits: int, threads: int) -> tuple[int, float | None]:
         if digits in self._data.nfs and threads in self._data.nfs[digits].thread_data:
@@ -221,7 +249,7 @@ class FactoringStats:
 
         return (0, None, None)
 
-    def get_average_time(self, digits: int, maximum_ecm_level: int, threads: int) -> tuple[int, float | None]:
+    def get_average_time(self, digits: int, maximum_ecm_level: int, threads: int) -> tuple[int, float | None]:  # noqa: PLR0914
         tf_count, tf_time, tf_p_factor = self.get_probability_stats(digits, "tf", 1)
 
         if tf_count == 0:
@@ -246,15 +274,22 @@ class FactoringStats:
         assert pm1_time is not None  # noqa: S101
         assert pm1_p_factor is not None  # noqa: S101
 
-        nfs_count, nfs_time = self.get_nfs_stats(digits, threads)
+        _, siqs_time = self.get_siqs_stats(digits, threads)
+        _, nfs_time = self.get_nfs_stats(digits, threads)
 
-        if nfs_count == 0:
+        if siqs_time is not None or nfs_time is not None:
+            if siqs_time is None:
+                assert nfs_time is not None  # noqa: S101
+                final_time = nfs_time
+            elif nfs_time is None:
+                final_time = siqs_time
+            else:
+                final_time = min(siqs_time, nfs_time)
+        else:
             return (0, None)
 
-        assert nfs_time is not None  # noqa: S101
-
         ecm_count, ecm_nfs_time = self._get_average_time_internal(
-            digits, threads, nfs_time, min(ECM_CURVES.keys()), maximum_ecm_level
+            digits, threads, final_time, min(ECM_CURVES.keys()), maximum_ecm_level
         )
 
         if ecm_nfs_time is None:
@@ -268,10 +303,9 @@ class FactoringStats:
         return (ecm_count, total_time)
 
     def _get_average_time_internal(
-        self, digits: int, threads: int, nfs_time: float, next_ecm_level: int, maximum_ecm_level: int
+        self, digits: int, threads: int, final_time: float, next_ecm_level: int, maximum_ecm_level: int
     ) -> tuple[int, float | None]:
-        ecm_threads = min(threads, ECM_CURVES[next_ecm_level][0])
-        ecm_count, ecm_time, ecm_p_factor = self.get_ecm_stats(digits, next_ecm_level, ecm_threads)
+        ecm_count, ecm_time, ecm_p_factor = self.get_ecm_stats(digits, next_ecm_level, threads)
 
         # If there is no ECM data at this level, we're stuck.
         if ecm_count == 0:
@@ -292,10 +326,10 @@ class FactoringStats:
         # If no factor is found, we must recursively check the next level.
         if next_ecm_level == maximum_ecm_level:
             final_ecm_count = ecm_count
-            average_time += (1 - ecm_p_factor) * nfs_time
+            average_time += (1 - ecm_p_factor) * final_time
         else:
             final_ecm_count, extra_time = self._get_average_time_internal(
-                digits, threads, nfs_time, next_ecm_level + 1, maximum_ecm_level
+                digits, threads, final_time, next_ecm_level + 1, maximum_ecm_level
             )
 
             if extra_time is None:

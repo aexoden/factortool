@@ -9,7 +9,7 @@ from loguru import logger
 from tap import Tap
 
 from factortool.config import read_config
-from factortool.constants import CADO_NFS_MIN_DIGITS, ECM_CURVES
+from factortool.constants import ECM_CURVES
 from factortool.stats import FactoringStats
 from factortool.util import setup_logger
 
@@ -69,25 +69,28 @@ def main() -> None:  # noqa: PLR0914
 
     print()
 
+    siqs_count, siqs_time = stats.get_siqs_stats(args.digits, config.max_threads)
     nfs_count, nfs_time = stats.get_nfs_stats(args.digits, config.max_threads)
 
-    if nfs_count == 0 and args.digits >= CADO_NFS_MIN_DIGITS:
-        logger.error("No NFS data present for this digit count.")
+    if siqs_count == 0 and nfs_count == 0:
+        logger.error("No SIQS or NFS data present for this digit count.")
         sys.exit(2)
-
-    # It would be a bug for nfs_time to be None if nfs_count is greater than zero.
-    assert nfs_time is not None  # noqa: S101
 
     print(f"ECM Crossover Analysis for {args.digits} digits:")
     print()
-    print(f"Average time for NFS is {nfs_time:0.3f}s")
-    print()
+
+    if siqs_time is not None:
+        print(f"Average time for SIQS is {siqs_time:0.3f}s")
+        print()
+
+    if nfs_time is not None:
+        print(f"Average time for NFS is {nfs_time:0.3f}s")
+        print()
+
     print("Stopping ECM after doing the given level averages:")
 
     for ecm_level in range(min_ecm_level, max_ecm_level + 1):
-        ecm_threads = min(config.max_threads, ECM_CURVES[ecm_level][0])
-
-        ecm_count, ecm_time, ecm_p_factor = stats.get_ecm_stats(args.digits, ecm_level, ecm_threads)
+        ecm_count, ecm_time, ecm_p_factor = stats.get_ecm_stats(args.digits, ecm_level, config.max_threads)
 
         # If there is no ECM data for this level, we've reached the end and can just exit.
         if ecm_count == 0:

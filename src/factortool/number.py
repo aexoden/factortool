@@ -23,6 +23,10 @@ class NFSNeeded(Exception):  # noqa: N818
     pass
 
 
+class SIQSNeeded(Exception):  # noqa: N818
+    pass
+
+
 @cache
 def factor_ecm(n: int, level: int, max_threads: int, yafu_path: Path, stats: FactoringStats) -> list[int]:
     # If there is no NFS statistics data, signal doing an immediate NFS run.
@@ -31,6 +35,12 @@ def factor_ecm(n: int, level: int, max_threads: int, yafu_path: Path, stats: Fac
 
     if digits >= CADO_NFS_MIN_DIGITS and nfs_run_count == 0:
         raise NFSNeeded
+
+    # If ther eis no SIQS statistics data, signal doing an immediate SIQS run.
+    siqs_run_count, _ = stats.get_siqs_stats(digits, max_threads)
+
+    if siqs_run_count == 0:
+        raise SIQSNeeded
 
     # Determine the number of curves and B1.
     curves, b1 = ECM_CURVES[level]
@@ -103,11 +113,16 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path, stats: F
 
         end_time = time.perf_counter_ns()
         execution_time = (end_time - start_time) / 1_000_000_000.0
-        stats.update_probability(len(str(n)), method, threads, execution_time, success=len(factors) > 1)
+
+        if method == "siqs":
+            stats.update_siqs(len(str(n)), threads, execution_time)
+        else:
+            stats.update_probability(len(str(n)), method, threads, execution_time, success=len(factors) > 1)
 
         methods = {
             "rho": "Rho",
             "pm1": "P-1",
+            "siqs": "SIQS",
         }
 
         if len(factors) > 1:
@@ -210,6 +225,7 @@ class Number:
         self._config = config
 
         self._ecm_level = 0
+        self._prefer_siqs = True
 
         if is_prime(n):
             self.composite_factors = []
@@ -219,6 +235,7 @@ class Number:
             self.prime_factors = []
 
         self._set_maximum_ecm_level()
+        self._set_prefer_siqs()
         self.methods = []
 
     def __lt__(self, other: object) -> bool:
@@ -235,8 +252,29 @@ class Number:
         return self._ecm_level < self._maximum_ecm_level
 
     @property
+    def prefer_siqs(self) -> bool:
+        return self._prefer_siqs
+
+    @property
     def factored(self) -> bool:
         return len(self.composite_factors) == 0
+
+    def _set_prefer_siqs(self) -> None:
+        largest_composite_factor = max(self.composite_factors)
+        digits = len(str(largest_composite_factor))
+
+        _, siqs_time = self._stats.get_siqs_stats(digits, self._config.max_threads)
+        _, nfs_time = self._stats.get_nfs_stats(digits, self._config.max_threads)
+
+        if siqs_time is None:
+            self._prefer_siqs = True
+            return
+
+        if nfs_time is None:
+            self._prefer_siqs = False
+            return
+
+        self._prefer_siqs = siqs_time < nfs_time
 
     def _set_maximum_ecm_level(self) -> None:
         # If factored, there is no need for any ECM.
@@ -329,6 +367,10 @@ class Number:
         for n in composite_factors:
             try:
                 factors = factor_func(n, *args)
+            except SIQSNeeded:
+                logger.info("Immediately doing SIQS on {} for statistics", format_number(n))
+                method = "SIQS"
+                factors = factor_yafu(n, "siqs", self._config.max_threads, self._config.yafu_path, self._stats)
             except NFSNeeded:
                 logger.info("Immediately doing NFS on {} for statistics", format_number(n))
                 method = "NFS"
@@ -374,6 +416,9 @@ class Number:
 
         if found_factors:
             self._set_maximum_ecm_level()
+
+    def factor_siqs(self) -> None:
+        self._factor_generic("SIQS", factor_yafu, "siqs", self._config.max_threads, self._config.yafu_path, self._stats)
 
     def factor_nfs(self) -> None:
         self._factor_generic("NFS", factor_nfs, self._config.max_threads, self._config.cado_nfs_path, self._stats)
