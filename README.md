@@ -18,7 +18,6 @@ The program returns the following non-zero error codes:
 
 | 1 | Configuration error |
 | 2 | Interrupted |
-| 3 | Unexpected GMP-ECM failure |
 | 4 | Unexpected CADO-NFS failure |
 | 5 | Unexpected YAFU failure |
 

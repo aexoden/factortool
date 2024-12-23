@@ -18,7 +18,6 @@ class Config(BaseModel):
     factordb_session_path: Path
     factordb_username: str
     factordb_password: str
-    gmp_ecm_path: Path
     max_threads: int
     result_output_path: Path
     stats_path: Path

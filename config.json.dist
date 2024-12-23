@@ -5,7 +5,6 @@
 	"factordb_password": "",
 	"factordb_response_path": "factordb_response.html",
 	"factordb_session_path": "factordb_session.json",
-	"gmp_ecm_path": "/usr/bin/ecm",
 	"max_threads": 2,
 	"result_output_path": "results",
 	"stats_path": "stats.json",

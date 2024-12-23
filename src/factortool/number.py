@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
 
-import concurrent.futures
 import math
 import re
 import subprocess
@@ -24,23 +23,8 @@ class NFSNeeded(Exception):  # noqa: N818
     pass
 
 
-def factor_ecm_single(n: int, curves: int, b1: int, gmp_ecm_path: Path) -> list[int]:
-    cmd: list[str] = [str(gmp_ecm_path), "-q", "-c", str(curves), str(b1)]
-    result = subprocess.run(cmd, input=str(n), capture_output=True, text=True, check=False, process_group=0)
-
-    if result.returncode & 0x01:
-        logger.critical("ECM failed for {n}: {result.stderr}")  # noqa: RUF027
-        sys.exit(3)
-
-    if result.returncode & 0x02:
-        factors: list[int] = list(map(int, result.stdout.strip().split()))
-        return factors
-
-    return []
-
-
 @cache
-def factor_ecm(n: int, level: int, max_threads: int, gmp_ecm_path: Path, stats: FactoringStats) -> list[int]:
+def factor_ecm(n: int, level: int, max_threads: int, yafu_path: Path, stats: FactoringStats) -> list[int]:
     # If there is no NFS statistics data, signal doing an immediate NFS run.
     digits = len(str(n))
     nfs_run_count, _ = stats.get_nfs_stats(digits, max_threads)
@@ -48,44 +32,43 @@ def factor_ecm(n: int, level: int, max_threads: int, gmp_ecm_path: Path, stats: 
     if digits >= CADO_NFS_MIN_DIGITS and nfs_run_count == 0:
         raise NFSNeeded
 
-    # Determine the number of curves for each process.
+    # Determine the number of curves and B1.
     curves, b1 = ECM_CURVES[level]
-    thread_count = min(max_threads, curves)
-    curves_per_thread = curves // thread_count
-    remaining_curves = curves % thread_count
 
-    # Divide the curve sinto several parallel tasks.
-    factors: set[int] = set()
-    start_time = time.perf_counter_ns()
+    # Perform the ECM using YAFU.
+    try:
+        start_time = time.perf_counter_ns()
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=thread_count) as executor:
-        tasks: list[concurrent.futures.Future[list[int]]] = []
+        cmd: list[str] = [str(yafu_path), f"ecm({n}, {curves})", "-threads", str(max_threads), "-B1ecm", str(b1)]
 
-        for i in range(thread_count):
-            thread_curves = curves_per_thread + (1 if i < remaining_curves else 0)
-            tasks.append(executor.submit(factor_ecm_single, n, thread_curves, b1, gmp_ecm_path))
+        result = subprocess.run(
+            cmd,
+            cwd=yafu_path.parent,
+            capture_output=True,
+            text=True,
+            check=True,
+            process_group=0,
+        )
 
-        # Only accept the factors from one run, as otherwise we may end up with extra factors in some cases. This could
-        # be mitigated by manually checking each factor for divisibility into the composite and producing our own
-        # remaining cofactor, but that may be more effort than is needed.
-        for task in tasks:
-            task_factors = task.result()
+        factors: list[int] = []
 
-            if len(task_factors) > 0:
-                factors = factors.union(task_factors)
-                break
+        for line in result.stdout.strip().split("\n"):
+            matches = re.match(r"(P|C)([0-9]*) = (?P<factor>[0-9]*)", line)
 
-    end_time = time.perf_counter_ns()
-    execution_time = (end_time - start_time) / 1_000_000_000.0
-    stats.update_ecm(len(str(n)), level, thread_count, execution_time, success=len(factors) > 1)
+            if matches:
+                factors.append(int(matches["factor"]))
 
-    if len(factors) == 0:
-        factors.add(n)
+        end_time = time.perf_counter_ns()
+        execution_time = (end_time - start_time) / 1_000_000_000.0
+        stats.update_ecm(len(str(n)), level, max_threads, execution_time, success=len(factors) > 1)
 
-    if len(factors) > 1:
-        log_factor_result(["ECM"], n, sorted(factors))
-
-    return sorted(factors)
+        if len(factors) > 1:
+            log_factor_result(["ECM"], n, sorted(factors))
+    except subprocess.CalledProcessError as e:
+        logger.critical("YAFU ECM failed for {} with method ECM: {}", n, e.stderr)
+        sys.exit(5)
+    else:
+        return sorted(factors)
 
 
 @cache
@@ -384,7 +367,7 @@ class Number:
 
     def factor_ecm(self, level: int) -> None:
         found_factors = self._factor_generic(
-            "ECM", factor_ecm, level, self._config.max_threads, self._config.gmp_ecm_path, self._stats
+            "ECM", factor_ecm, level, self._config.max_threads, self._config.yafu_path, self._stats
         )
 
         self._ecm_level = level
