@@ -21,6 +21,7 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
+    "flask",
     "gmpy2",
     "loguru",
     "pydantic",

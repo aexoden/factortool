@@ -18,6 +18,7 @@ class Config(BaseModel):
     factordb_session_path: Path
     factordb_username: str
     factordb_password: str
+    max_siqs_digits: int
     max_threads: int
     result_output_path: Path
     stats_path: Path

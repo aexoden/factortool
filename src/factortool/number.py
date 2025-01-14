@@ -28,7 +28,9 @@ class SIQSNeeded(Exception):  # noqa: N818
 
 
 @cache
-def factor_ecm(n: int, level: int, max_threads: int, yafu_path: Path, stats: FactoringStats) -> list[int]:
+def factor_ecm(
+    n: int, level: int, max_siqs_digits: int, max_threads: int, yafu_path: Path, stats: FactoringStats
+) -> list[int]:
     # If there is no NFS statistics data, signal doing an immediate NFS run.
     digits = len(str(n))
     nfs_run_count, _ = stats.get_nfs_stats(digits, max_threads)
@@ -36,10 +38,10 @@ def factor_ecm(n: int, level: int, max_threads: int, yafu_path: Path, stats: Fac
     if digits >= CADO_NFS_MIN_DIGITS and nfs_run_count == 0:
         raise NFSNeeded
 
-    # If ther eis no SIQS statistics data, signal doing an immediate SIQS run.
+    # If there is no SIQS statistics data, signal doing an immediate SIQS run.
     siqs_run_count, _ = stats.get_siqs_stats(digits, max_threads)
 
-    if siqs_run_count == 0:
+    if digits <= max_siqs_digits and siqs_run_count == 0:
         raise SIQSNeeded
 
     # Determine the number of curves and B1.
@@ -83,7 +85,7 @@ def factor_ecm(n: int, level: int, max_threads: int, yafu_path: Path, stats: Fac
 
 @cache
 def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path, stats: FactoringStats) -> list[int]:
-    cmd = [str(yafu_path), f"{method}({n})"]
+    cmd = [str(yafu_path), f"{method}({n})", "-inmem", "200"]
     threads = 1
 
     if method not in {"pm1", "rho"}:
@@ -188,7 +190,7 @@ def factor_tf(n: int, stats: FactoringStats) -> list[int]:
 
     # Check if n is a perfect square.
     if n > 1:
-        sqrt_n = int(math.isqrt(n))
+        sqrt_n = math.isqrt(n)
         if sqrt_n * sqrt_n == n:
             factors.extend([sqrt_n, sqrt_n])
             n = 1
@@ -262,6 +264,10 @@ class Number:
     def _set_prefer_siqs(self) -> None:
         largest_composite_factor = max(self.composite_factors)
         digits = len(str(largest_composite_factor))
+
+        if digits > self._config.max_siqs_digits:
+            self._prefer_siqs = False
+            return
 
         _, siqs_time = self._stats.get_siqs_stats(digits, self._config.max_threads)
         _, nfs_time = self._stats.get_nfs_stats(digits, self._config.max_threads)
@@ -409,7 +415,13 @@ class Number:
 
     def factor_ecm(self, level: int) -> None:
         found_factors = self._factor_generic(
-            "ECM", factor_ecm, level, self._config.max_threads, self._config.yafu_path, self._stats
+            "ECM",
+            factor_ecm,
+            level,
+            self._config.max_siqs_digits,
+            self._config.max_threads,
+            self._config.yafu_path,
+            self._stats,
         )
 
         self._ecm_level = level
