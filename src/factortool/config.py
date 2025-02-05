@@ -12,6 +12,7 @@ from pydantic import BaseModel, ValidationError
 
 @dataclass
 class Config(BaseModel):
+    batch_state_path: Path
     cado_nfs_path: Path
     factordb_cooldown_period: float
     factordb_response_path: Path

@@ -2,8 +2,6 @@
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
 
 import json
-import os
-import tempfile
 import time
 
 from pathlib import Path
@@ -11,6 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from factortool.constants import ECM_CURVES, ECM_P_FACTOR_DECAY, ECM_P_FACTOR_DEFAULT
+from factortool.util import safe_write
 
 
 class FinalRunData(BaseModel):
@@ -94,19 +93,11 @@ class FactoringStats:
         if not force and not self._data_changed:
             return
 
-        target_path = self._path.parent
-
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False, dir=target_path, suffix=".tmp") as f:
-            # Work around pydantic not offering a way to sort keys.
-            # f.write(self._data.model_dump_json(indent=2, so))
-            model_dict = self._data.model_dump()
-            f.write(json.dumps(model_dict, sort_keys=True, indent=2))
-
-            temp_path = Path(f.name)
-            f.flush()
-            os.fsync(f.fileno())
-
-        temp_path.rename(self._path)
+        # Work around pydantic not offering a way to sort keys.
+        # data = self._data.model_dump_json(indent=2, so)
+        model_dict = self._data.model_dump()
+        data = json.dumps(model_dict, sort_keys=True, indent=2).encode("utf-8")
+        safe_write(self._path, data)
 
         self._last_write_time = current_time
         self._data_changed = False

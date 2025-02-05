@@ -2,10 +2,13 @@
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
 
 import math
+import os
 import sys
+import tempfile
 
 from collections.abc import Iterable
 from functools import cache
+from pathlib import Path
 
 import gmpy2
 
@@ -100,3 +103,16 @@ def setup_logger() -> None:
     )
 
     logger.add(sys.stdout, format=logger_format)
+
+
+def safe_write(path: Path, data: bytes) -> None:
+    target_path = path.parent
+
+    with tempfile.NamedTemporaryFile(mode="wb", delete=False, dir=target_path, suffix=".tmp") as f:
+        f.write(data)
+
+        temp_path = Path(f.name)
+        f.flush()
+        os.fsync(f.fileno())
+
+    temp_path.rename(path)

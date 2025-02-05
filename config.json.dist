@@ -1,4 +1,5 @@
 {
+	"batch_state_path": "batch_state.json",
 	"cado_nfs_path": "/opt/cado-nfs/cado-nfs.py",
 	"factordb_cooldown_period": 1.0,
 	"factordb_username": "",

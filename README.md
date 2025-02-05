@@ -27,12 +27,12 @@ then run the program. It accepts the following options:
 * `--config_path`: To specify a configuration file other than config.json.
 * `--min_digits`: The minimium number of digits fetched composite numbers should
   have.
-* `--batch_size`: The number of composite numbers to fetch from FactorDB.
+* `--batch_size`: The number of composite numbers to fetch from FactorDB. A value
+  of 0 (default) attempts to use an automatic batch size to meet a target time.
+* `--target-duration`: The number of seconds to target when using an automatic
+  batch size. The default is 600 seconds (ten minutes).
 * `--skip_count`: How many composite numbers to skip on FactorDB. Useful for working
   at an offset to avoid conflicts.
-
-Future versions will likely supplement or replace the `--batch_size` option with
-a somewhat dynamic batch size based on a target time to finish.
 
 Note that the program itself does not loop. Such functionality could be added in
 theory, but this way ensures memory leaks aren't an issue. I find it convenient

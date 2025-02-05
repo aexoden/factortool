@@ -3,12 +3,14 @@
 
 import datetime
 import sys
+import time
 
 from pathlib import Path
 
 from loguru import logger
 from tap import Tap
 
+from factortool.batch import BatchController
 from factortool.config import read_config
 from factortool.engine import FactorEngine
 from factortool.factordb import FactorDB
@@ -22,11 +24,12 @@ class Arguments(Tap):
 
     config_path: Path = Path("config.json")  # Path to the JSON-formatted configuration file
     min_digits: int = 1  # Minimum number of digits fetched composite numbers should have
-    batch_size: int = 50  # Number of composite numbers to work on at a time
+    batch_size: int = 0  # Number of composite numbers to work on at a time (0 for automatic)
+    target_duration: float = 600.0  # Target duration in seconds for each batch (only used when batch_size is 0)
     skip_count: int = 0  # Skip this many numbers when fetching from FactorDB (to hopefully avoid conflict)
 
 
-def main() -> None:
+def main() -> None:  # noqa: PLR0914
     setup_logger()
 
     args = Arguments().parse_args()
@@ -41,9 +44,23 @@ def main() -> None:
     factordb = FactorDB(config, stats)
     engine = FactorEngine(config)
 
-    numbers = factordb.fetch(args.min_digits, args.batch_size, args.skip_count)
+    batch_controller = BatchController(600.0, args.min_digits, args.skip_count, config.batch_state_path)
+    batch_size = args.batch_size if args.batch_size > 0 else batch_controller.batch_size
+
+    logger.info("Fetching {} composite numbers from FactorDB", batch_size)
+
+    numbers = factordb.fetch(args.min_digits, batch_size, args.skip_count)
+
+    start_time = time.monotonic()
 
     interrupted = engine.run(sorted(numbers))
+
+    duration = time.monotonic() - start_time
+    factored_count = len([number for number in numbers if number.factored])
+
+    logger.info("Factored {} numbers in {:.2f} seconds", factored_count, duration)
+
+    batch_controller.record_batch(factored_count, duration)
 
     factordb.submit(numbers)
 
