@@ -13,7 +13,6 @@ from factortool.util import safe_write
 
 BATCH_DECAY_RATE = 2 / 1800
 BATCH_RESET_AGE = 7200
-MAX_BATCH_SIZE = 200
 
 
 class BatchState(BaseModel):
@@ -55,7 +54,7 @@ class BatchController:
 
     @property
     def batch_size(self) -> int:
-        return min(MAX_BATCH_SIZE, max(1, int(self._state.items_per_second * self._target_duration)))
+        return max(1, int(self._state.items_per_second * self._target_duration))
 
     def record_batch(self, batch_size: int, duration: float) -> None:
         items_per_second = batch_size / duration if duration > 0 else 0

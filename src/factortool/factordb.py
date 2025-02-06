@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
 
 import datetime
+import math
 import re
 import time
 
@@ -15,6 +16,8 @@ from pydantic import BaseModel
 from factortool.config import Config
 from factortool.number import Number, format_results
 from factortool.stats import FactoringStats
+
+MAX_SUBMIT_BATCH_SIZE = 200
 
 
 class FactorDBSessionData(BaseModel):
@@ -65,6 +68,30 @@ class FactorDB:
         return numbers
 
     def submit(self, numbers: Collection[Number]) -> bool:
+        factored_numbers = [number for number in numbers if len(number.prime_factors) > 0]
+
+        if len(factored_numbers) == 0:
+            return True
+
+        batch_count = math.ceil(len(factored_numbers) / MAX_SUBMIT_BATCH_SIZE)
+        batch_size = len(factored_numbers) / batch_count
+
+        if batch_count > 1:
+            logger.info("Submitting {} results to FactorDB in {} batches", len(factored_numbers), batch_count)
+
+        success = True
+
+        for i in range(batch_count):
+            batch_base = round(i * batch_size)
+            batch_limit = round((i + 1) * batch_size)
+            batch = factored_numbers[batch_base:batch_limit]
+
+            if not self.submit_batch(batch):
+                success = False
+
+        return success
+
+    def submit_batch(self, numbers: Collection[Number]) -> bool:
         url = "https://factordb.com/report.php"
 
         report = format_results(numbers) + "\n"
