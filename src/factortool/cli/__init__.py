@@ -62,7 +62,8 @@ def main() -> None:  # noqa: PLR0914
 
     batch_controller.record_batch(factored_count, duration)
 
-    factordb.submit(numbers)
+    if factored_count > 0:
+        factordb.submit(numbers)
 
     method_counts: dict[str, int] = {}
     failed_numbers: set[Number] = set()

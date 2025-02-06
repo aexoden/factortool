@@ -33,6 +33,9 @@ class FactorDB:
         self._load_session()
 
     def fetch(self, min_digits: int, number_count: int, skip_count: int) -> set[Number]:
+        if number_count == 0:
+            return set()
+
         params = {
             "t": 3,
             "mindig": min_digits,
@@ -41,14 +44,23 @@ class FactorDB:
             "download": 1,
         }
 
-        try:
-            response = requests.get("https://factordb.com/listtype.php", params=params, timeout=10)
-            response.raise_for_status()
-            numbers = {Number(x, self._config, self._stats) for x in map(int, response.text.strip().split("\n"))}
-            logger.info("Fetched {} numbers from FactorDB", len(numbers))
-        except requests.RequestException as e:
-            logger.error("Failed to fetch numbers from FactorDB: {}", e)
-            numbers: set[Number] = set()
+        numbers: set[Number] = set()
+        delay = self._config.factordb_cooldown_period
+
+        while (len(numbers)) == 0:
+            try:
+                response = requests.get("https://factordb.com/listtype.php", params=params, timeout=3)
+                response.raise_for_status()
+                numbers = {Number(x, self._config, self._stats) for x in map(int, response.text.strip().split("\n"))}
+                logger.info("Fetched {} numbers from FactorDB", len(numbers))
+            except requests.Timeout as e:
+                logger.error("Failed to fetch numbers from FactorDB: {}", e)
+                logger.error("Retrying in {} seconds...", delay)
+                time.sleep(delay)
+                delay *= 2
+            except requests.RequestException as e:
+                logger.error("Failed to fetch numbers from FactorDB: {}", e)
+                return numbers
 
         return numbers
 
@@ -63,11 +75,16 @@ class FactorDB:
         }
 
         # Submit the results.
-        max_retries = 3
+        attempt = 0
+        failures = 0
+        max_failures = 3
+        delay = self._config.factordb_cooldown_period
 
-        for attempt in range(max_retries):
+        while failures < max_failures:
+            attempt += 1
+
             try:
-                response = self._session.post(url, data=data)
+                response = self._session.post(url, data=data, timeout=3)
                 response.raise_for_status()
 
                 if self._check_factordb_response(response.text):
@@ -75,15 +92,21 @@ class FactorDB:
                     return True
 
                 logger.error("FactorDB submission response did not contain expected success message")
+            except requests.Timeout as e:
+                logger.error("FactorDB submission attempt {} failed: {}", attempt, e)
+                logger.info("Retrying in {} seconds...", delay)
+                time.sleep(delay)
+                delay *= 2
             except requests.RequestException as e:
+                failures += 1
                 logger.error("FactorDB submission attempt {} failed: {}", attempt + 1, e)
 
-                if attempt < max_retries - 1:
-                    sleep_time = self._config.factordb_cooldown_period
-                    logger.info("Retrying in {} seconds...", sleep_time)
-                    time.sleep(sleep_time)
+                if failures < max_failures:
+                    logger.info("Retrying in {} seconds...", delay)
+                    time.sleep(delay)
+                    delay *= 2
                 else:
-                    logger.error("Failed to submit results to FactorDB after {} attempts", max_retries)
+                    logger.error("Failed to submit results to FactorDB after {} attempts", attempt)
 
         return False
 
