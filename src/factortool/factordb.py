@@ -20,6 +20,26 @@ from factortool.stats import FactoringStats
 MAX_SUBMIT_BATCH_SIZE = 200
 
 
+def get_too_many_requests_delay(response: requests.Response, default_delay: float = 3600.0) -> float:
+    delay = default_delay
+    retry_after = response.headers.get("Retry-After")
+
+    if retry_after:
+        try:
+            delay = int(retry_after)
+        except ValueError:
+            try:
+                retry_date = datetime.datetime.strptime(retry_after, "%a, %d %b %Y %H:%M:%S GMT").astimezone(
+                    datetime.UTC
+                )
+                delay = (retry_date - datetime.datetime.now(tz=datetime.UTC)).total_seconds()
+                delay = max(1.0, delay)
+            except ValueError:
+                logger.warning("Failed to parse Retry-After header: {}", retry_after)
+
+    return delay
+
+
 class FactorDBSessionData(BaseModel):
     cookies: dict[str, str]
     expiry: datetime.datetime
@@ -51,11 +71,21 @@ class FactorDB:
         delay = self._config.factordb_cooldown_period
 
         while (len(numbers)) == 0:
+            # Limit the delay to a maximum of 1 hour (rate limiting will override this if necessary)
+            delay = min(delay, 3600)
+
             try:
                 response = requests.get("https://factordb.com/listtype.php", params=params, timeout=3)
                 response.raise_for_status()
                 numbers = {Number(x, self._config, self._stats) for x in map(int, response.text.strip().split("\n"))}
                 logger.info("Fetched {} numbers from FactorDB", len(numbers))
+            except requests.HTTPError as e:
+                if e.response.status_code == requests.codes.too_many_requests:
+                    delay = get_too_many_requests_delay(e.response)
+                    logger.error("Rate limited by FactorDB. Retrying in {} seconds...", delay)
+                    time.sleep(delay)
+                else:
+                    raise
             except requests.Timeout as e:
                 logger.error("Failed to fetch numbers from FactorDB: {}", e)
                 logger.error("Retrying in {} seconds...", delay)
@@ -64,6 +94,11 @@ class FactorDB:
             except requests.RequestException as e:
                 logger.error("Failed to fetch numbers from FactorDB: {}", e)
                 return numbers
+            except ValueError as e:
+                logger.error("Failed to parse response from FactorDB: {}", e)
+                logger.error("Retrying in {} seconds...", delay)
+                time.sleep(delay)
+                delay *= 2
 
         return numbers
 
@@ -119,6 +154,13 @@ class FactorDB:
                     return True
 
                 logger.error("FactorDB submission response did not contain expected success message")
+            except requests.HTTPError as e:
+                if e.response.status_code == requests.codes.too_many_requests:
+                    delay = get_too_many_requests_delay(e.response)
+                    logger.error("Rate limited by FactorDB. Retrying in {} seconds...", delay)
+                    time.sleep(delay)
+                else:
+                    raise
             except requests.Timeout as e:
                 logger.error("FactorDB submission attempt {} failed: {}", attempt, e)
                 logger.info("Retrying in {} seconds...", delay)
@@ -177,6 +219,13 @@ class FactorDB:
         try:
             response = self._session.post(login_url, data=login_data)
             response.raise_for_status()
+        except requests.HTTPError as e:
+            if e.response.status_code == requests.codes.too_many_requests:
+                delay = get_too_many_requests_delay(e.response)
+                logger.error("Rate limited by FactorDB. Retrying in {} seconds...", delay)
+                time.sleep(delay)
+            else:
+                raise
         except requests.RequestException as e:
             logger.error("FactorDB login failed: {}", e)
             return False
