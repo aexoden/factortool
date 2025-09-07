@@ -21,7 +21,7 @@ class Arguments(Tap):
     digits: int  # Digits to analyze
 
 
-def main() -> None:  # noqa: PLR0914
+def main() -> None:  # noqa: PLR0912, PLR0914, PLR0915
     setup_logger()
 
     args = Arguments().parse_args()
@@ -73,8 +73,8 @@ def main() -> None:  # noqa: PLR0914
     nfs_count, nfs_time = stats.get_nfs_stats(args.digits, config.max_threads)
     yafu_count, yafu_time = stats.get_yafu_stats(args.digits, config.max_threads)
 
-    if siqs_count == 0 and nfs_count == 0:
-        logger.error("No SIQS or NFS data present for this digit count.")
+    if yafu_count == 0 and siqs_count == 0 and nfs_count == 0:
+        logger.error("No YAFU, SIQS or NFS data present for this digit count.")
         sys.exit(2)
 
     print(f"ECM Crossover Analysis for {args.digits} digits:")
