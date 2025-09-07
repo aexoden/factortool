@@ -71,6 +71,7 @@ def main() -> None:  # noqa: PLR0914
 
     siqs_count, siqs_time = stats.get_siqs_stats(args.digits, config.max_threads)
     nfs_count, nfs_time = stats.get_nfs_stats(args.digits, config.max_threads)
+    yafu_count, yafu_time = stats.get_yafu_stats(args.digits, config.max_threads)
 
     if siqs_count == 0 and nfs_count == 0:
         logger.error("No SIQS or NFS data present for this digit count.")
@@ -85,6 +86,10 @@ def main() -> None:  # noqa: PLR0914
 
     if nfs_time is not None:
         print(f"Average time for NFS is {nfs_time:0.3f}s")
+        print()
+
+    if yafu_time is not None:
+        print(f"Average time for YAFU (direct) is {yafu_time:0.3f}s")
         print()
 
     print("Stopping ECM after doing the given level averages:")

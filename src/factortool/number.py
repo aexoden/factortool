@@ -137,6 +137,47 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path, stats: F
 
 
 @cache
+def factor_yafu_direct(n: int, max_threads: int, yafu_path: Path, stats: FactoringStats) -> list[int]:
+    """Factor a number using YAFU's automatic method selection."""
+    cmd = [str(yafu_path), f"factor({n})", "-threads", str(max_threads)]
+
+    try:
+        start_time = time.perf_counter_ns()
+
+        result = subprocess.run(
+            cmd,
+            cwd=yafu_path.parent,
+            capture_output=True,
+            env={"OMP_NUM_THREADS": "1"},
+            text=True,
+            check=True,
+            process_group=0,
+        )
+
+        factors: list[int] = []
+
+        for line in result.stdout.strip().split("\n"):
+            matches = re.match(r"(P|C)([0-9]*) = (?P<factor>[0-9]*)", line)
+
+            if matches:
+                factors.append(int(matches["factor"]))
+
+        end_time = time.perf_counter_ns()
+        execution_time = (end_time - start_time) / 1_000_000_000.0
+
+        digits = len(str(n))
+        stats.update_probability(digits, "yafu", max_threads, execution_time, success=len(factors) > 1)
+
+        if len(factors) > 1:
+            log_factor_result(["YAFU"], n, sorted(factors))
+    except subprocess.CalledProcessError as e:
+        logger.critical("YAFU direct factoring failed for {}: {}", n, e.stderr)
+        sys.exit(5)
+    else:
+        return sorted(factors)
+
+
+@cache
 def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, stats: FactoringStats) -> list[int]:
     # Abort if the number of digits is too small for CADO-NFS.
     digits = len(str(n))
@@ -396,6 +437,9 @@ class Number:
             log_factor_result(set(self.methods), self.n, self.prime_factors)
 
         return found_factors
+
+    def factor_yafu_direct(self) -> None:
+        self._factor_generic("YAFU", factor_yafu_direct, self._config.max_threads, self._config.yafu_path, self._stats)
 
     def factor_tf(self) -> None:
         if self._factor_generic("TF", factor_tf, self._stats):

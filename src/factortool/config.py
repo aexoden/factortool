@@ -5,6 +5,7 @@ import sys
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from loguru import logger
 from pydantic import BaseModel, ValidationError
@@ -19,6 +20,7 @@ class Config(BaseModel):
     factordb_session_path: Path
     factordb_username: str
     factordb_password: str
+    factoring_mode: Literal["standard", "yafu"]
     max_siqs_digits: int
     max_threads: int
     result_output_path: Path

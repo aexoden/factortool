@@ -38,7 +38,27 @@ class FactorEngine:
     # Public Methods
     #
 
-    def run(self, numbers: Collection[Number]) -> bool:  # noqa: PLR0911, PLR0912
+    def run(self, numbers: Collection[Number]) -> bool:
+        """Run factorization using the configured mode."""
+        if self._config.factoring_mode == "yafu":
+            return self._run_yafu(numbers)
+
+        return self._run_standard(numbers)
+
+    def _run_yafu(self, numbers: Collection[Number]) -> bool:
+        """Factor numbers using direct YAFU calls."""
+        logger.info("Using direct YAFU factoring mode for {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
+
+        for number in sorted(numbers):
+            if self._interrupt_level > 0:
+                return True
+
+            logger.info("Factoring {} using YAFU", number.n)
+            number.factor_yafu_direct()
+
+        return False
+
+    def _run_standard(self, numbers: Collection[Number]) -> bool:  # noqa: PLR0911, PLR0912
         # Attempt to trial factor each number.
         logger.info("Attempting trial factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 

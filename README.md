@@ -10,6 +10,8 @@
   and NFS.
 * Automatically measures duration and success rate to determine the optimal ECM
   crossover threshold and decision between SIQS and NFS.
+* As an alternative to the built-in breadth-first factoring, can also simply
+  directly use YAFU for each fetched number.
 * Automatically fetches composite numbers from FactorDB and submits results.
 
 ## Usage
@@ -51,15 +53,14 @@ will finish the current factorization it is working on, submit any finished resu
 and then exit. The shell script is designed to stop if `factortool` exits due to
 an interrupt (such as Ctrl-C).
 
+If you are using direct YAFU support (by setting `factoring_mode` to `yafu` in
+config.json), I recommend ensuring YAFU's NFS functionality is correctly
+configured. Additionally, I'm inclined to recommend the experimental CADO-NFS support.
+
 ## Notes
 
-I strongly suspect that as far as the actual factoring goes, this program is
-somewhat less efficient than just directly using YAFU. This project was primarily
-for fun, and earlier versions used GMP-ECM.
-
-However, the FactorDB fetch and submission code is reasonable. An interesting
-experiment would be to rip out all of the factoring and replace it with direct
-calls to YAFU. I'm not particularly interested in doing that work myself.
+I suspect using YAFU directly is faster, though I have not done an apples-to-apples
+test. The `standard` mode is left in both for fun and as a historical curiosity.
 
 ## Error Codes
 

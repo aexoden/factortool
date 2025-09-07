@@ -6,6 +6,7 @@
 	"factordb_password": "",
 	"factordb_response_path": "factordb_response.html",
 	"factordb_session_path": "factordb_session.json",
+	"factoring_mode": "standard",
 	"max_siqs_digits": 100,
 	"max_threads": 2,
 	"result_output_path": "results",

@@ -44,6 +44,8 @@ def main() -> None:  # noqa: PLR0914
     factordb = FactorDB(config, stats)
     engine = FactorEngine(config)
 
+    logger.info("Using factoring mode: {}", config.factoring_mode)
+
     batch_controller = BatchController(600.0, args.min_digits, args.skip_count, config.batch_state_path)
     batch_size = args.batch_size if args.batch_size > 0 else batch_controller.batch_size
 

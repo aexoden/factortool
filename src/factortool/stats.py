@@ -49,6 +49,7 @@ class FactoringData(BaseModel):
     )
     rho: dict[int, ProbabilityDigitData] = Field(default_factory=dict, description="Rho data for each digit count")
     pm1: dict[int, ProbabilityDigitData] = Field(default_factory=dict, description="P-1 data for each digit count")
+    yafu: dict[int, ProbabilityDigitData] = Field(default_factory=dict, description="YAFU data for each digit count")
     ecm: dict[int, ECMDigitData] = Field(default_factory=dict, description="ECM data for each digit count")
     siqs: dict[int, FinalDigitData] = Field(default_factory=dict, description="SIQS data for each digit count")
     nfs: dict[int, FinalDigitData] = Field(default_factory=dict, description="NFS data for each digit count")
@@ -190,6 +191,18 @@ class FactoringStats:
     def get_nfs_stats(self, digits: int, threads: int) -> tuple[int, float | None]:
         if digits in self._data.nfs and threads in self._data.nfs[digits].thread_data:
             run_data = self._data.nfs[digits].thread_data[threads]
+
+            if run_data.run_count > 0:
+                return (
+                    run_data.run_count,
+                    run_data.total_time / run_data.run_count,
+                )
+
+        return (0, None)
+
+    def get_yafu_stats(self, digits: int, threads: int) -> tuple[int, float | None]:
+        if digits in self._data.yafu and threads in self._data.yafu[digits].thread_data:
+            run_data = self._data.yafu[digits].thread_data[threads]
 
             if run_data.run_count > 0:
                 return (
