@@ -84,6 +84,11 @@ class FactorDB:
                     delay = get_too_many_requests_delay(e.response)
                     logger.error("Rate limited by FactorDB. Retrying in {} seconds...", delay)
                     time.sleep(delay)
+                elif e.response.status_code == requests.codes.bad_gateway:
+                    logger.error("FactorDB server error ({}). Retrying later...", e.response.status_code)
+                    logger.info("Retrying in {} seconds...", delay)
+                    time.sleep(delay)
+                    delay *= 2
                 else:
                     raise
             except requests.Timeout as e:
@@ -159,6 +164,11 @@ class FactorDB:
                     delay = get_too_many_requests_delay(e.response)
                     logger.error("Rate limited by FactorDB. Retrying in {} seconds...", delay)
                     time.sleep(delay)
+                elif e.response.status_code == requests.codes.bad_gateway:
+                    logger.error("FactorDB server error ({}). Retrying later...", e.response.status_code)
+                    logger.info("Retrying in {} seconds...", delay)
+                    time.sleep(delay)
+                    delay *= 2
                 else:
                     raise
             except requests.Timeout as e:
@@ -224,8 +234,9 @@ class FactorDB:
                 delay = get_too_many_requests_delay(e.response)
                 logger.error("Rate limited by FactorDB. Retrying in {} seconds...", delay)
                 time.sleep(delay)
-            else:
-                raise
+            elif e.response.status_code == requests.codes.bad_gateway:
+                logger.error("FactorDB server error ({}). Retrying later...", e.response.status_code)
+                return False
         except requests.RequestException as e:
             logger.error("FactorDB login failed: {}", e)
             return False
