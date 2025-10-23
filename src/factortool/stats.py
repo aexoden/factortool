@@ -1,10 +1,16 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+"""Factoring statistics data models."""
+
+from __future__ import annotations
 
 import json
 import time
 
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from pydantic import BaseModel, Field
 
@@ -13,49 +19,81 @@ from factortool.util import safe_write
 
 
 class FinalRunData(BaseModel):
+    """Time and run count data for final factorization runs (SIQS, NFS)."""
+
     total_time: float = Field(default=0.0, description="Total time spent on final factorization of this type")
     run_count: int = Field(default=0, description="Number of final factorization runs of this type")
 
 
 class FinalDigitData(BaseModel):
-    thread_data: dict[int, FinalRunData] = Field(default_factory=dict, description="Final data for each thread count")
+    """Data for final factorization runs (SIQS, NFS) for a given digit count, grouped by thread count."""
+
+    thread_data: dict[int, FinalRunData] = Field(
+        default_factory=dict[int, FinalRunData], description="Final data for each thread count"
+    )
 
 
 class ProbabilityRunData(BaseModel):
+    """Time, run count, and success count data for probabilistic factorization runs (TF, Rho, P-1, ECM)."""
+
     total_time: float = Field(default=0.0, description="Total time spent on factorization")
     run_count: int = Field(default=0, description="Number of factorization runs")
     success_count: int = Field(default=0, description="Number of successful factorizations")
 
 
 class ECMLevelData(BaseModel):
+    """Data for ECM runs at a given level, grouped by thread count."""
+
     thread_data: dict[int, ProbabilityRunData] = Field(
-        default_factory=dict, description="ECM data for each thread count"
+        default_factory=dict[int, ProbabilityRunData], description="ECM data for each thread count"
     )
 
 
 class ECMDigitData(BaseModel):
-    level_data: dict[int, ECMLevelData] = Field(default_factory=dict, description="ECM data for each level")
+    """Data for ECM runs for a given digit count, grouped by ECM level."""
+
+    level_data: dict[int, ECMLevelData] = Field(
+        default_factory=dict[int, ECMLevelData], description="ECM data for each level"
+    )
 
 
 class ProbabilityDigitData(BaseModel):
+    """Data for probabilistic factorization runs (TF, Rho, P-1) for a given digit count, grouped by thread count."""
+
     thread_data: dict[int, ProbabilityRunData] = Field(
-        default_factory=dict, description="Factoring data for each thread count"
+        default_factory=dict[int, ProbabilityRunData], description="Factoring data for each thread count"
     )
 
 
 class FactoringData(BaseModel):
+    """All factoring statistics data."""
+
     tf: dict[int, ProbabilityDigitData] = Field(
-        default_factory=dict, description="Trial factoring data for each digit count"
+        default_factory=dict[int, ProbabilityDigitData], description="Trial factoring data for each digit count"
     )
-    rho: dict[int, ProbabilityDigitData] = Field(default_factory=dict, description="Rho data for each digit count")
-    pm1: dict[int, ProbabilityDigitData] = Field(default_factory=dict, description="P-1 data for each digit count")
-    yafu: dict[int, ProbabilityDigitData] = Field(default_factory=dict, description="YAFU data for each digit count")
-    ecm: dict[int, ECMDigitData] = Field(default_factory=dict, description="ECM data for each digit count")
-    siqs: dict[int, FinalDigitData] = Field(default_factory=dict, description="SIQS data for each digit count")
-    nfs: dict[int, FinalDigitData] = Field(default_factory=dict, description="NFS data for each digit count")
+    rho: dict[int, ProbabilityDigitData] = Field(
+        default_factory=dict[int, ProbabilityDigitData], description="Rho data for each digit count"
+    )
+    pm1: dict[int, ProbabilityDigitData] = Field(
+        default_factory=dict[int, ProbabilityDigitData], description="P-1 data for each digit count"
+    )
+    yafu: dict[int, ProbabilityDigitData] = Field(
+        default_factory=dict[int, ProbabilityDigitData], description="YAFU data for each digit count"
+    )
+    ecm: dict[int, ECMDigitData] = Field(
+        default_factory=dict[int, ECMDigitData], description="ECM data for each digit count"
+    )
+    siqs: dict[int, FinalDigitData] = Field(
+        default_factory=dict[int, FinalDigitData], description="SIQS data for each digit count"
+    )
+    nfs: dict[int, FinalDigitData] = Field(
+        default_factory=dict[int, FinalDigitData], description="NFS data for each digit count"
+    )
 
 
 class FactoringStats:
+    """Class for managing factoring statistics data."""
+
     _path: Path
     _data: FactoringData
     _min_write_interval: float
@@ -64,6 +102,7 @@ class FactoringStats:
     _read_only: bool
 
     def __init__(self, path: Path, *, min_write_interval: float = 5.0, read_only: bool = False) -> None:
+        """Initialize the factoring statistics manager."""
         self._path: Path = path
         self._min_write_interval = int(min_write_interval * 1_000_000_000)
         self._last_write_time = 0
@@ -71,9 +110,6 @@ class FactoringStats:
         self._read_only = read_only
 
         self._load_data()
-
-    def __del__(self) -> None:
-        self._save_data(force=True)
 
     def _load_data(self) -> None:
         if self._path.exists():
@@ -103,9 +139,14 @@ class FactoringStats:
         self._last_write_time = current_time
         self._data_changed = False
 
+    def save_data(self) -> None:
+        """Force saving the factoring statistics data."""
+        self._save_data(force=True)
+
     def update_probability(
         self, digits: int, method: str, threads: int, execution_time: float, *, success: bool
     ) -> None:
+        """Update probabilistic factorization data."""
         data = getattr(self._data, method)
 
         if digits not in data:
@@ -126,6 +167,7 @@ class FactoringStats:
         self._save_data()
 
     def update_siqs(self, digits: int, threads: int, execution_time: float) -> None:
+        """Update SIQS factorization data."""
         if digits not in self._data.siqs:
             self._data.siqs[digits] = FinalDigitData()
 
@@ -141,6 +183,7 @@ class FactoringStats:
         self._save_data()
 
     def update_nfs(self, digits: int, threads: int, execution_time: float) -> None:
+        """Update NFS factorization data."""
         if digits not in self._data.nfs:
             self._data.nfs[digits] = FinalDigitData()
 
@@ -156,6 +199,7 @@ class FactoringStats:
         self._save_data()
 
     def update_ecm(self, digits: int, ecm_level: int, threads: int, execution_time: float, *, success: bool) -> None:
+        """Update ECM factorization data."""
         if digits not in self._data.ecm:
             self._data.ecm[digits] = ECMDigitData()
 
@@ -177,6 +221,11 @@ class FactoringStats:
         self._save_data()
 
     def get_siqs_stats(self, digits: int, threads: int) -> tuple[int, float | None]:
+        """Get SIQS factorization statistics.
+
+        Returns:
+            A tuple containing the number of SIQS runs and the average time per run, or None if no data is available.
+        """
         if digits in self._data.siqs and threads in self._data.siqs[digits].thread_data:
             run_data = self._data.siqs[digits].thread_data[threads]
 
@@ -189,6 +238,11 @@ class FactoringStats:
         return (0, None)
 
     def get_nfs_stats(self, digits: int, threads: int) -> tuple[int, float | None]:
+        """Get NFS factorization statistics.
+
+        Returns:
+            A tuple containing the number of NFS runs and the average time per run, or None if no data is available.
+        """
         if digits in self._data.nfs and threads in self._data.nfs[digits].thread_data:
             run_data = self._data.nfs[digits].thread_data[threads]
 
@@ -201,6 +255,11 @@ class FactoringStats:
         return (0, None)
 
     def get_yafu_stats(self, digits: int, threads: int) -> tuple[int, float | None]:
+        """Get YAFU factorization statistics.
+
+        Returns:
+            A tuple containing the number of YAFU runs and the average time per run, or None if no data is available.
+        """
         if digits in self._data.yafu and threads in self._data.yafu[digits].thread_data:
             run_data = self._data.yafu[digits].thread_data[threads]
 
@@ -213,6 +272,12 @@ class FactoringStats:
         return (0, None)
 
     def get_probability_stats(self, digits: int, method: str, threads: int) -> tuple[int, float | None, float | None]:
+        """Get probabilistic factorization statistics.
+
+        Returns:
+            A tuple containing the number of runs, the average time per run, and the success probability,
+            or None values if no data is available.
+        """
         data = getattr(self._data, method)
 
         if digits not in data:
@@ -233,6 +298,12 @@ class FactoringStats:
         return (0, None, None)
 
     def get_ecm_stats(self, digits: int, ecm_level: int, threads: int) -> tuple[int, float | None, float | None]:
+        """Get ECM factorization statistics.
+
+        Returns:
+            A tuple containing the number of ECM runs, the average time per run, and the success probability,
+            or None values if no data is available.
+        """
         if digits not in self._data.ecm:
             return (0, None, None)
 
@@ -254,6 +325,12 @@ class FactoringStats:
         return (0, None, None)
 
     def get_average_time(self, digits: int, maximum_ecm_level: int, threads: int) -> tuple[int, float | None]:  # noqa: PLR0914
+        """Estimate the average time to factor a number with the given digit count.
+
+        Returns:
+            A tuple containing the estimated number of ECM runs and the average time to factor the number,
+            or None if insufficient data is available.
+        """
         tf_count, tf_time, tf_p_factor = self.get_probability_stats(digits, "tf", 1)
 
         if tf_count == 0:

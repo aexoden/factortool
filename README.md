@@ -20,8 +20,8 @@
 [CADO-NFS](https://gitlab.inria.fr/cado-nfs/cado-nfs) to do most of the factoring
 work. As such, you will need a correctly configured installation of both.
 
-The recommended way to install the program is to have [hatch](https://hatch.pypa.io/latest/)
-installed, and to run `hatch env create` and then `hatch shell` to enter the environment.
+The recommended way to install the program is to have [uv](https://docs.astral.sh/uv/)
+installed, and to simply run the program with `uv run factortool`.
 
 Copy the `config.json.dist` to `config.json` and edit it as appropriate. You may
 then run the program. It accepts the following options:
@@ -42,7 +42,7 @@ to use a shell script such as the following:
 
 ```sh
 while true ; do
-    factortool --min_digits 55 --batch_size 60 --skip_count 277 ;
+    uv run factortool --min_digits 55 --batch_size 60 --skip_count 277 ;
     if [ $? -eq 2 ] ; then exit 2 ; fi ; sleep 1 ;
 done
 ```
@@ -55,7 +55,7 @@ an interrupt (such as Ctrl-C).
 
 If you are using direct YAFU support (by setting `factoring_mode` to `yafu` in
 config.json), I recommend ensuring YAFU's NFS functionality is correctly
-configured. Additionally, I'm inclined to recommend the experimental CADO-NFS support.
+configured.
 
 ## Notes
 

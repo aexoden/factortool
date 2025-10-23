@@ -1,26 +1,39 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+"""Interface for interacting with FactorDB."""
+
+from __future__ import annotations
 
 import datetime
 import math
 import re
 import time
 
-from collections.abc import Collection
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Collection
 
 import requests
 
 from loguru import logger
 from pydantic import BaseModel
 
-from factortool.config import Config
 from factortool.number import Number, format_results
-from factortool.stats import FactoringStats
+
+if TYPE_CHECKING:
+    from factortool.config import Config
+    from factortool.stats import FactoringStats
 
 MAX_SUBMIT_BATCH_SIZE = 200
 
 
 def get_too_many_requests_delay(response: requests.Response, default_delay: float = 3600.0) -> float:
+    """Get the delay time from a 429 Too Many Requests response.
+
+    Returns:
+        float: Delay time in seconds.
+    """
     delay = default_delay
     retry_after = response.headers.get("Retry-After")
 
@@ -41,21 +54,34 @@ def get_too_many_requests_delay(response: requests.Response, default_delay: floa
 
 
 class FactorDBSessionData(BaseModel):
+    """Session data for FactorDB login persistence."""
+
     cookies: dict[str, str]
     expiry: datetime.datetime
 
 
 class FactorDB:
+    """Interface for interacting with FactorDB."""
+
     _config: Config
     _session: requests.Session
     _stats: FactoringStats
 
     def __init__(self, config: Config, stats: FactoringStats) -> None:
+        """Initialize the FactorDB interface."""
         self._config = config
         self._stats = stats
         self._load_session()
 
     def fetch(self, min_digits: int, number_count: int, skip_count: int) -> set[Number]:
+        """Fetch composite numbers from FactorDB.
+
+        Returns:
+            set[Number]: Set of fetched numbers.
+
+        Raises:
+            requests.HTTPError: If an unexpected HTTP error occurs during the request.
+        """
         if number_count == 0:
             return set()
 
@@ -108,6 +134,11 @@ class FactorDB:
         return numbers
 
     def submit(self, numbers: Collection[Number]) -> bool:
+        """Submit factored numbers to FactorDB.
+
+        Returns:
+            bool: True if submission was successful, False otherwise.
+        """
         factored_numbers = [number for number in numbers if len(number.prime_factors) > 0]
 
         if len(factored_numbers) == 0:
@@ -132,6 +163,14 @@ class FactorDB:
         return success
 
     def submit_batch(self, numbers: Collection[Number]) -> bool:
+        """Submit a batch of factored numbers to FactorDB.
+
+        Returns:
+            bool: True if submission was successful, False otherwise.
+
+        Raises:
+            requests.HTTPError: If an unexpected HTTP error occurs during the request.
+        """
         url = "https://factordb.com/report.php"
 
         report = format_results(numbers) + "\n"
@@ -252,7 +291,7 @@ class FactorDB:
 
             if datetime.datetime.now(tz=datetime.UTC) < session_data.expiry - datetime.timedelta(hours=1):
                 self._session = requests.Session()
-                self._session.cookies.update(session_data.cookies)  # type: ignore
+                self._session.cookies.update(session_data.cookies)  # type: ignore[arg-type]
                 return
 
         self._session = requests.Session()

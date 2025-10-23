@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+"""Constants for factorization tool."""
+
+from __future__ import annotations
 
 CADO_NFS_MIN_DIGITS = 57
 

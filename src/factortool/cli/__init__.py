@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+"""Utility for factoring numbers using various methods."""
+
+from __future__ import annotations
 
 import datetime
 import sys
@@ -20,7 +23,7 @@ from factortool.util import setup_logger
 
 
 class Arguments(Tap):
-    """Utility for factoring numbers using trial factoring, ECM and NFS methods"""
+    """Utility for factoring numbers using various methods."""
 
     config_path: Path = Path("config.json")  # Path to the JSON-formatted configuration file
     min_digits: int = 1  # Minimum number of digits fetched composite numbers should have
@@ -30,6 +33,7 @@ class Arguments(Tap):
 
 
 def main() -> None:  # noqa: PLR0914
+    """Factor numbers using various methods."""
     setup_logger()
 
     args = Arguments().parse_args()
@@ -105,6 +109,8 @@ def main() -> None:  # noqa: PLR0914
     output_path = config.result_output_path.joinpath(output_filename)
     with output_path.open("w", encoding="utf-8") as f:
         f.write(format_results(numbers) + "\n")
+
+    stats.save_data()
 
     if interrupted:
         sys.exit(2)

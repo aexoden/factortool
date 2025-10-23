@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+"""Configuration for factorization tool."""
+
+from __future__ import annotations
 
 import sys
 
@@ -13,6 +16,8 @@ from pydantic import BaseModel, ValidationError
 
 @dataclass
 class Config(BaseModel):
+    """Configuration for factorization tool."""
+
     batch_state_path: Path
     cado_nfs_path: Path
     factordb_cooldown_period: float
@@ -29,6 +34,11 @@ class Config(BaseModel):
 
 
 def read_config(path: Path) -> Config:
+    """Read configuration from a JSON file.
+
+    Returns:
+        Config: The configuration object.
+    """
     try:
         with path.open("r", encoding="utf-8") as f:
             config = Config.model_validate_json(f.read())

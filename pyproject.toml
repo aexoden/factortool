@@ -1,32 +1,33 @@
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [project]
 name = "factortool"
 dynamic = ["version"]
-description = ''
+description = "A tool to help perform and manage various integer factorization tasks."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13.0"
 license = "MIT"
-keywords = []
-authors = [
-  { name = "Jason Lynch", email = "jason@aexoden.com" },
-]
+authors = [{ name = "Jason Lynch", email = "jason@aexoden.com" }]
 classifiers = [
-  "Development Status :: 4 - Beta",
-  "Programming Language :: Python",
-  "Programming Language :: Python :: 3.12",
-  "Programming Language :: Python :: Implementation :: CPython",
-  "Programming Language :: Python :: Implementation :: PyPy",
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
-    "flask",
-    "gmpy2",
-    "loguru",
-    "pydantic",
-    "requests",
-    "typed-argument-parser",
+    "flask>=3.1.2",
+    "gmpy2>=2.2.1",
+    "loguru>=0.7.3",
+    "pydantic>=2.12.3",
+    "requests>=2.32.5",
+    "typed-argument-parser>=1.11.0",
+]
+
+[dependency-groups]
+dev = [
+    "gmpy2-stubs>=2.2.1.5",
+    "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.14.1",
 ]
 
 [project.urls]
@@ -38,39 +39,15 @@ Source = "https://github.com/aexoden/factortool"
 analyzer = "factortool.analyzer:main"
 factortool = "factortool.cli:main"
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [tool.hatch.version]
 path = "src/factortool/__about__.py"
 
 [tool.hatch.build.targets.sdist]
-exclude = [
-    "/.github",
-]
-
-[tool.hatch.envs.types]
-extra-dependencies = [
-  "mypy>=1.0.0",
-]
-[tool.hatch.envs.types.scripts]
-check = "mypy --install-types --non-interactive {args:src/factortool tests}"
-
-[tool.coverage.run]
-source_pkgs = ["factortool", "tests"]
-branch = true
-parallel = true
-omit = [
-  "src/factortool/__about__.py",
-]
-
-[tool.coverage.paths]
-factortool = ["src/factortool", "*/factortool/src/factortool"]
-tests = ["tests", "*/factortool/tests"]
-
-[tool.coverage.report]
-exclude_lines = [
-  "no cov",
-  "if __name__ == .__main__.:",
-  "if TYPE_CHECKING:",
-]
+exclude = ["/.github"]
 
 [tool.ruff]
 line-length = 120
@@ -80,68 +57,20 @@ line-ending = "lf"
 
 [tool.ruff.lint]
 preview = true
-select = [
-    "A",
-    "ANN",
-    "ARG",
-    "ASYNC",
-    "B",
-    "BLE",
-    "C4",
-    "COM",
-    "CPY",
-    "DTZ",
-    "E",
-    "EM",
-    "ERA",
-    "EXE",
-    "F",
-    "FA",
-    "FBT",
-    "FIX",
-    "FURB",
-    "G",
-    "I",
-    "ICN",
-    "INP",
-    "ISC",
-    "LOG",
-    "N",
-    "PERF",
-    "PIE",
-    "PL",
-    "PT",
-    "PTH",
-    "PYI",
-    "Q",
-    "RET",
-    "RSE",
-    "RUF",
-    "S",
-    "SIM",
-    "SLF",
-    "SLOT",
-    "T10",
-    "TCH",
-    "TD",
-    "TID",
-    "TRY",
-    "UP",
-    "W",
-    "YTT",
-]
-ignore = [
-    "COM812",
-    "ISC001",
-    "S404",
-    "S603",
-]
+select = ["ALL"]
+ignore = ["COM812", "ISC001"]
 
 [tool.ruff.lint.flake8-copyright]
 notice-rgx = "(?i)SPDX-FileCopyrightText: \\d{4}"
 
+[tool.ruff.lint.flake8-type-checking]
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+
 [tool.ruff.lint.isort]
 lines-between-types = 1
 
-[tool.ruff.lint.pylint]
-max-args = 6
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["S101"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

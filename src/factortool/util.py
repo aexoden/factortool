@@ -1,14 +1,20 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+"""Utility functions for factortool."""
+
+from __future__ import annotations
 
 import math
 import os
 import sys
 import tempfile
 
-from collections.abc import Iterable
 from functools import cache
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 import gmpy2
 
@@ -16,6 +22,11 @@ from loguru import logger
 
 
 def generate_primes(limit: int = 10**6) -> list[int]:
+    """Generate a list of prime numbers up to the specified limit.
+
+    Returns:
+        list[int]: List of prime numbers less than the limit.
+    """
     prime_flags = [True for _ in range(limit)]
 
     for i in range(2, limit):
@@ -30,6 +41,11 @@ SMALL_PRIMES: list[int] = generate_primes()
 
 
 def format_number(n: int, max_width: int = 32) -> str:
+    """Format a number for display, truncating if necessary.
+
+    Returns:
+        str: Formatted number string.
+    """
     str_n = str(n)
     digits = len(str_n)
 
@@ -45,6 +61,14 @@ def format_number(n: int, max_width: int = 32) -> str:
 
 @cache
 def is_prime(n: int) -> bool:
+    """Check if a number is prime using trial division and Miller-Rabin tests.
+
+    This function is deterministic for numbers less than 3,317,044,064,679,887,385,961,981. Beyond that, it may be
+    probabilistic.
+
+    Returns:
+        bool: True if n is a probable prime, False otherwise.
+    """
     # Return False for n = 1
     if n < 2:  # noqa: PLR2004
         return False
@@ -87,25 +111,24 @@ def is_prime(n: int) -> bool:
 
 
 def log_factor_result(methods: Iterable[str], n: int, factors: list[int]) -> None:
+    """Log the result of a factorization."""
     logger.info("{} -> {} = {}", ", ".join(methods), format_number(n), " * ".join(map(format_number, sorted(factors))))
 
 
 def setup_logger() -> None:
+    """Set up the logger for the application."""
     logger.remove(0)
 
-    logger_format = " | ".join(
-        [
-            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green>",
-            "<magenta>{elapsed}</magenta>",
-            "<level>{level: <8}</level>",
-            "<level>{message}</level>",
-        ],
+    logger_format = (
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <magenta>{elapsed}</magenta> | "
+        "<level>{level: <8}</level> | <level>{message}</level>"
     )
 
     logger.add(sys.stdout, format=logger_format)
 
 
 def safe_write(path: Path, data: bytes) -> None:
+    """Safely write data to a file by using a temporary file and renaming it."""
     target_path = path.parent
 
     with tempfile.NamedTemporaryFile(mode="wb", delete=False, dir=target_path, suffix=".tmp") as f:

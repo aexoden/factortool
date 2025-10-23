@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+# ruff: noqa: T201
+"""Utility for analyzing factorization statistics."""
+
+from __future__ import annotations
 
 import sys
 
@@ -15,13 +19,14 @@ from factortool.util import setup_logger
 
 
 class Arguments(Tap):
-    """Utility for analyzing statistics gathered by factortool"""
+    """Utility for analyzing statistics gathered by factortool."""
 
     config_path: Path = Path("config.json")  # Path to the JSON-formatted configuration file
     digits: int  # Digits to analyze
 
 
-def main() -> None:  # noqa: PLR0912, PLR0914, PLR0915
+def main() -> None:  # noqa: C901, PLR0912, PLR0914, PLR0915
+    """Analyze factorization statistics."""
     setup_logger()
 
     args = Arguments().parse_args()

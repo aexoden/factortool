@@ -4,8 +4,7 @@ The following is a list of potential TODO items, roughly in my intended order of
 implementation. There is no guarantee I will actually get to any of this.
 
 * Fix the tests in util.py.
-* Change from hatch to uv as the Python manager.
-* Update the linting configuration and fix any issues.
+* Refactor code to eliminate as many lint exceptions as possible.
 * Set up renovate for automatic dependency update notifications.
 * Set up precommit instead of using the home-rolled script.
 * Send factors via the API. This will likely want to be done in a background
@@ -43,4 +42,6 @@ implementation. There is no guarantee I will actually get to any of this.
   weird collection composites FactorDB had (and how they were constructed).
 * Reconsider how to best handle fetching larger batches, especially with FactorDB
   returning a lot of 502 errors right now (which is more likely with larger batches).
+* Add additional tests.
+* Investigate making threads overridable on the command line.
 * Add support for calculating and verifying Aliquot sequences.

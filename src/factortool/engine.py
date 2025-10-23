@@ -1,22 +1,33 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+"""Factorization engine for processing numbers."""
+
+from __future__ import annotations
 
 import concurrent.futures
 import signal
 import sys
 
-from collections.abc import Collection
-from types import FrameType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Collection
+    from types import FrameType
 
 from loguru import logger
 
-from factortool.config import Config
 from factortool.constants import ECM_CURVES
-from factortool.number import Number
+
+if TYPE_CHECKING:
+    from factortool.config import Config
+    from factortool.number import Number
 
 
 class FactorEngine:
+    """Engine for managing factorization tasks."""
+
     def __init__(self, config: Config) -> None:
+        """Initialize the factorization engine."""
         self._config = config
         self._interrupt_level: int = 0
         signal.signal(signal.SIGINT, self._handle_sigint)
@@ -39,14 +50,22 @@ class FactorEngine:
     #
 
     def run(self, numbers: Collection[Number]) -> bool:
-        """Run factorization using the configured mode."""
+        """Run factorization using the configured mode.
+
+        Returns:
+            bool: True if interrupted, False otherwise.
+        """
         if self._config.factoring_mode == "yafu":
             return self._run_yafu(numbers)
 
         return self._run_standard(numbers)
 
     def _run_yafu(self, numbers: Collection[Number]) -> bool:
-        """Factor numbers using direct YAFU calls."""
+        """Factor numbers using direct YAFU calls.
+
+        Returns:
+            bool: True if interrupted, False otherwise.
+        """
         logger.info("Using direct YAFU factoring mode for {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
         for number in sorted(numbers):
@@ -58,7 +77,12 @@ class FactorEngine:
 
         return False
 
-    def _run_standard(self, numbers: Collection[Number]) -> bool:  # noqa: PLR0911, PLR0912
+    def _run_standard(self, numbers: Collection[Number]) -> bool:  # noqa: C901, PLR0911, PLR0912
+        """Factor numbers using the built-in sequence of methods.
+
+        Returns:
+            bool: True if interrupted, False otherwise.
+        """
         # Attempt to trial factor each number.
         logger.info("Attempting trial factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 

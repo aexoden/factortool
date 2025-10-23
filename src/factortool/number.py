@@ -1,36 +1,53 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+"""Number factorization methods for factortool."""
+
+from __future__ import annotations
 
 import math
 import re
-import subprocess
+import subprocess  # noqa: S404
 import sys
 import time
 
-from collections.abc import Callable, Iterable
 from functools import cache
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+    from pathlib import Path
 
 from loguru import logger
 
-from factortool.config import Config
 from factortool.constants import CADO_NFS_MIN_DIGITS, ECM_CURVES
-from factortool.stats import FactoringStats
 from factortool.util import SMALL_PRIMES, format_number, is_prime, log_factor_result
+
+if TYPE_CHECKING:
+    from factortool.config import Config
+    from factortool.stats import FactoringStats
 
 
 class NFSNeeded(Exception):  # noqa: N818
-    pass
+    """Exception indicating that NFS factoring is needed."""
 
 
 class SIQSNeeded(Exception):  # noqa: N818
-    pass
+    """Exception indicating that SIQS factoring is needed."""
 
 
 @cache
-def factor_ecm(
+def factor_ecm(  # noqa: PLR0913, PLR0917
     n: int, level: int, max_siqs_digits: int, max_threads: int, yafu_path: Path, stats: FactoringStats
 ) -> list[int]:
+    """Factor a number using ECM via YAFU.
+
+    Returns:
+        list[int]: List of factors found.
+
+    Raises:
+        NFSNeeded: If NFS factoring is needed for statistics.
+        SIQSNeeded: If SIQS factoring is needed for statistics.
+    """
     # If there is no NFS statistics data, signal doing an immediate NFS run.
     digits = len(str(n))
     nfs_run_count, _ = stats.get_nfs_stats(digits, max_threads)
@@ -53,7 +70,7 @@ def factor_ecm(
 
         cmd: list[str] = [str(yafu_path), f"ecm({n}, {curves})", "-threads", str(max_threads), "-B1ecm", str(b1)]
 
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603
             cmd,
             cwd=yafu_path.parent,
             capture_output=True,
@@ -85,6 +102,11 @@ def factor_ecm(
 
 @cache
 def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path, stats: FactoringStats) -> list[int]:
+    """Factor a number using YAFU with a specified method.
+
+    Returns:
+        list[int]: List of factors found.
+    """
     cmd = [str(yafu_path), f"{method}({n})", "-inmem", "200"]
     threads = 1
 
@@ -95,7 +117,7 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path, stats: F
     try:
         start_time = time.perf_counter_ns()
 
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603
             cmd,
             cwd=yafu_path.parent,
             capture_output=True,
@@ -138,13 +160,17 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path, stats: F
 
 @cache
 def factor_yafu_direct(n: int, max_threads: int, yafu_path: Path, stats: FactoringStats) -> list[int]:
-    """Factor a number using YAFU's automatic method selection."""
+    """Factor a number using YAFU's automatic method selection.
+
+    Returns:
+        list[int]: List of factors found.
+    """
     cmd = [str(yafu_path), f"factor({n})", "-threads", str(max_threads)]
 
     try:
         start_time = time.perf_counter_ns()
 
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603
             cmd,
             cwd=yafu_path.parent,
             capture_output=True,
@@ -179,6 +205,11 @@ def factor_yafu_direct(n: int, max_threads: int, yafu_path: Path, stats: Factori
 
 @cache
 def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, stats: FactoringStats) -> list[int]:
+    """Factor a number using CADO-NFS.
+
+    Returns:
+        list[int]: List of factors found.
+    """
     # Abort if the number of digits is too small for CADO-NFS.
     digits = len(str(n))
 
@@ -191,7 +222,7 @@ def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, stats: FactoringSt
     try:
         start_time = time.perf_counter_ns()
 
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603
             cmd,
             input=str(n),
             capture_output=True,
@@ -217,6 +248,11 @@ def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, stats: FactoringSt
 
 @cache
 def factor_tf(n: int, stats: FactoringStats) -> list[int]:
+    """Factor a number using trial factoring.
+
+    Returns:
+        list[int]: List of factors found.
+    """
     original_n = n
     factors: list[int] = []
 
@@ -252,6 +288,8 @@ def factor_tf(n: int, stats: FactoringStats) -> list[int]:
 
 
 class Number:
+    """Representation of a number to be factored."""
+
     n: int
     prime_factors: list[int]
     composite_factors: list[int]
@@ -263,6 +301,7 @@ class Number:
     _config: Config
 
     def __init__(self, n: int, config: Config, stats: FactoringStats) -> None:
+        """Initialize the number object."""
         self.n = n
         self._stats = stats
         self._config = config
@@ -282,24 +321,42 @@ class Number:
         self.methods = []
 
     def __lt__(self, other: object) -> bool:
+        """Less-than comparison based on the number value.
+
+        Returns:
+            bool: True if self.n < other.n, False otherwise.
+        """
         return isinstance(other, self.__class__) and self.n < other.n
 
     def __eq__(self, other: object) -> bool:
+        """Equality comparison based on the number value.
+
+        Returns:
+            bool: True if self.n == other.n, False otherwise.
+        """
         return isinstance(other, self.__class__) and self.n == other.n
 
     def __hash__(self) -> int:
+        """Hash based on the number value.
+
+        Returns:
+            int: Hash of the number.
+        """
         return self.n.__hash__()
 
     @property
     def ecm_needed(self) -> bool:
+        """Determine if further ECM factoring is needed."""
         return self._ecm_level < self._maximum_ecm_level
 
     @property
     def prefer_siqs(self) -> bool:
+        """Determine if SIQS is preferred over NFS."""
         return self._prefer_siqs
 
     @property
     def factored(self) -> bool:
+        """Determine if the number has been fully factored."""
         return len(self.composite_factors) == 0
 
     def _set_prefer_siqs(self) -> None:
@@ -323,7 +380,7 @@ class Number:
 
         self._prefer_siqs = siqs_time < nfs_time
 
-    def _set_maximum_ecm_level(self) -> None:
+    def _set_maximum_ecm_level(self) -> None:  # noqa: C901
         # If factored, there is no need for any ECM.
         if self.factored:
             self._maximum_ecm_level = self._ecm_level
@@ -439,25 +496,30 @@ class Number:
         return found_factors
 
     def factor_yafu_direct(self) -> None:
+        """Factor using YAFU's automatic method selection."""
         self._factor_generic("YAFU", factor_yafu_direct, self._config.max_threads, self._config.yafu_path, self._stats)
 
     def factor_tf(self) -> None:
+        """Factor using trial factoring."""
         if self._factor_generic("TF", factor_tf, self._stats):
             self._set_maximum_ecm_level()
 
     def factor_rho(self) -> None:
+        """Factor using Pollard's Rho algorithm."""
         if self._factor_generic(
             "Rho", factor_yafu, "rho", self._config.max_threads, self._config.yafu_path, self._stats
         ):
             self._set_maximum_ecm_level()
 
     def factor_pm1(self) -> None:
+        """Factor using Pollard's P-1 algorithm."""
         if self._factor_generic(
             "P-1", factor_yafu, "pm1", self._config.max_threads, self._config.yafu_path, self._stats
         ):
             self._set_maximum_ecm_level()
 
     def factor_ecm(self, level: int) -> None:
+        """Factor using ECM at the specified level."""
         found_factors = self._factor_generic(
             "ECM",
             factor_ecm,
@@ -474,11 +536,18 @@ class Number:
             self._set_maximum_ecm_level()
 
     def factor_siqs(self) -> None:
+        """Factor using the Self-Initializing Quadratic Sieve (SIQS) algorithm."""
         self._factor_generic("SIQS", factor_yafu, "siqs", self._config.max_threads, self._config.yafu_path, self._stats)
 
     def factor_nfs(self) -> None:
+        """Factor using the Number Field Sieve (NFS) algorithm."""
         self._factor_generic("NFS", factor_nfs, self._config.max_threads, self._config.cado_nfs_path, self._stats)
 
 
 def format_results(numbers: Iterable[Number]) -> str:
+    """Format the factoring results for output.
+
+    Returns:
+        str: Formatted factoring results.
+    """
     return "\n".join([f"{x.n}={' '.join(map(str, x.prime_factors + x.composite_factors))}" for x in numbers])

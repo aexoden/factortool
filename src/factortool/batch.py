@@ -1,10 +1,16 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+"""Adaptive batch size controller for factorization tasks."""
+
+from __future__ import annotations
 
 import math
 import time
 
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from loguru import logger
 from pydantic import BaseModel
@@ -16,6 +22,8 @@ BATCH_RESET_AGE = 7200
 
 
 class BatchState(BaseModel):
+    """State information for batch size controller."""
+
     last_update: float
     min_digits: int
     skip_count: int
@@ -23,7 +31,10 @@ class BatchState(BaseModel):
 
 
 class BatchController:
+    """Controller for adaptive batch sizing."""
+
     def __init__(self, target_duration: float, min_digits: int, skip_count: int, state_path: Path) -> None:
+        """Initialize the batch controller."""
         self._target_duration = target_duration
         self._state_path = state_path
 
@@ -54,9 +65,11 @@ class BatchController:
 
     @property
     def batch_size(self) -> int:
+        """Get the current batch size."""
         return max(1, int(self._state.items_per_second * self._target_duration))
 
     def record_batch(self, batch_size: int, duration: float) -> None:
+        """Record the processing of a batch."""
         items_per_second = batch_size / duration if duration > 0 else 0
 
         batch_size_factor = 1 - math.exp(-0.15 * batch_size)

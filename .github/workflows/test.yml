@@ -2,9 +2,9 @@ name: test
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
 
 concurrency:
   group: test-${{ github.head_ref }}
@@ -16,27 +16,29 @@ env:
 
 jobs:
   run:
-    name: Python ${{ matrix.python-version }} on ${{ startsWith(matrix.os, 'macos-') && 'macOS' || startsWith(matrix.os, 'windows-') && 'Windows' || 'Linux' }}
+    name: ${{ startsWith(matrix.os, 'macos-') && 'macOS' || startsWith(matrix.os, 'windows-') && 'Windows' || 'Linux' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ['3.12']
 
     steps:
     - uses: actions/checkout@v3
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+    - name: Install uv
+      uses: astral-sh/setup-uv@v6
       with:
-        python-version: ${{ matrix.python-version }}
+        version: "0.9.5"
 
-    - name: Install Hatch
-      run: pip install --upgrade hatch
+    - name: Set up Python
+      run: uv python install
 
-    - name: Run static analysis
-      run: hatch fmt --check
+    - name: Install dependencies
+      run: uv sync
+
+    - name: Check code formatting
+      run: uv run ruff format --check
 
     - name: Run tests
-      run: hatch test --python ${{ matrix.python-version }} --cover --randomize --parallel --retries 2 --retry-delay 1
+      run: uv run pytest --cov=src/factortool --cov-report=term-missing
