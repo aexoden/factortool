@@ -3,7 +3,6 @@
 The following is a list of potential TODO items, roughly in my intended order of
 implementation. There is no guarantee I will actually get to any of this.
 
-* Fix the tests in util.py.
 * Refactor code to eliminate as many lint exceptions as possible.
 * Set up renovate for automatic dependency update notifications.
 * Set up precommit instead of using the home-rolled script.

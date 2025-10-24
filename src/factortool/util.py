@@ -89,7 +89,7 @@ def is_prime(n: int) -> bool:
         2_152_302_898_747: [2, 3, 5, 7, 11],
         3_474_749_660_383: [2, 3, 5, 7, 11, 13],
         341_550_071_728_321: [2, 3, 5, 7, 11, 13, 17],
-        3_825_123_056_546_413_051: [2, 3, 57, 11, 13, 17, 19, 23],
+        3_825_123_056_546_413_051: [2, 3, 5, 7, 11, 13, 17, 19, 23],
         318_665_857_834_031_151_167_461: [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37],
         3_317_044_064_679_887_385_961_981: [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41],
     }
@@ -105,7 +105,7 @@ def is_prime(n: int) -> bool:
     # matter that much, as FactorDB will ultimately catch the composite factor. Searching for alternate lists of
     # required bases might be useful.
     if not test_bases:
-        test_bases = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 49]
+        test_bases = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53]
 
     return all(gmpy2.is_strong_prp(n, base) for base in test_bases)
 
