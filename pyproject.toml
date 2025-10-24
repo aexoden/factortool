@@ -27,7 +27,7 @@ dev = [
     "gmpy2-stubs>=2.2.1.5",
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
-    "ruff>=0.14.1",
+    "ruff>=0.14.2",
 ]
 
 [project.urls]
