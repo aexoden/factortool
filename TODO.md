@@ -4,7 +4,6 @@ The following is a list of potential TODO items, roughly in my intended order of
 implementation. There is no guarantee I will actually get to any of this.
 
 * Refactor code to eliminate as many lint exceptions as possible.
-* Set up precommit instead of using the home-rolled script.
 * Send factors via the API. This will likely want to be done in a background
   thread as otherwise it could take up a lot of time due to delaying between
   each submission.
