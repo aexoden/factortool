@@ -5,14 +5,15 @@
 from __future__ import annotations
 
 import datetime
-import math
+import queue
 import re
+import threading
 import time
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Collection, Mapping
 
 import requests
 
@@ -24,8 +25,6 @@ from factortool.number import Number, format_results
 if TYPE_CHECKING:
     from factortool.config import Config
     from factortool.stats import FactoringStats
-
-MAX_SUBMIT_BATCH_SIZE = 200
 
 
 def get_too_many_requests_delay(response: requests.Response, default_delay: float = 3600.0) -> float:
@@ -63,24 +62,27 @@ class FactorDBSessionData(BaseModel):
 class FactorDB:
     """Interface for interacting with FactorDB."""
 
-    _config: Config
-    _session: requests.Session
-    _stats: FactoringStats
-
     def __init__(self, config: Config, stats: FactoringStats) -> None:
         """Initialize the FactorDB interface."""
         self._config = config
         self._stats = stats
+        self._submit_queue: queue.Queue[Number] = queue.Queue()
+        self._stop_event = threading.Event()
+        self._successful_submissions = 0
+        self._submission_lock = threading.Lock()
+
         self._load_session()
+
+        self._submit_thread = threading.Thread(
+            target=self._submit_worker, name="FactorDB-Submission-Worker", daemon=True
+        )
+        self._submit_thread.start()
 
     def fetch(self, min_digits: int, number_count: int, skip_count: int) -> set[Number]:
         """Fetch composite numbers from FactorDB.
 
         Returns:
             set[Number]: Set of fetched numbers.
-
-        Raises:
-            requests.HTTPError: If an unexpected HTTP error occurs during the request.
         """
         if number_count == 0:
             return set()
@@ -95,72 +97,149 @@ class FactorDB:
 
         numbers: set[Number] = set()
         delay = self._config.factordb_cooldown_period
+        max_delay = 3600.0
 
         while (len(numbers)) == 0:
-            # Limit the delay to a maximum of 1 hour (rate limiting will override this if necessary)
-            delay = min(delay, 3600)
-
             try:
-                response = requests.get("https://factordb.com/listtype.php", params=params, timeout=3)
-                response.raise_for_status()
-                numbers = {Number(x, self._config, self._stats) for x in map(int, response.text.strip().split("\n"))}
+                response = self._http(
+                    "GET", "https://factordb.com/listtype.php", params=params, timeout=3.0, max_retries=None
+                )
+                numbers = {
+                    Number(x, self._config, self._stats, self) for x in map(int, response.text.strip().split("\n"))
+                }
                 logger.info("Fetched {} numbers from FactorDB", len(numbers))
-            except requests.HTTPError as e:
-                if e.response.status_code == requests.codes.too_many_requests:
-                    delay = get_too_many_requests_delay(e.response)
-                    logger.error("Rate limited by FactorDB. Retrying in {} seconds...", delay)
-                    time.sleep(delay)
-                elif e.response.status_code == requests.codes.bad_gateway:
-                    logger.error("FactorDB server error ({}). Retrying later...", e.response.status_code)
-                    logger.info("Retrying in {} seconds...", delay)
-                    time.sleep(delay)
-                    delay *= 2
-                else:
-                    raise
-            except requests.Timeout as e:
-                logger.error("Failed to fetch numbers from FactorDB: {}", e)
-                logger.error("Retrying in {} seconds...", delay)
-                time.sleep(delay)
-                delay *= 2
-            except requests.RequestException as e:
-                logger.error("Failed to fetch numbers from FactorDB: {}", e)
-                return numbers
             except ValueError as e:
-                logger.error("Failed to parse response from FactorDB: {}", e)
-                logger.error("Retrying in {} seconds...", delay)
+                logger.error("Failed to parse response from FactorDB: {}. Retrying in {} seconds...", e, delay)
                 time.sleep(delay)
-                delay *= 2
+                delay = min(max_delay, delay * 2)
+            except requests.RequestException as e:
+                logger.error("Failed to fetch numbers from FactorDB: {}. Retrying in {} seconds...", e, delay)
+                time.sleep(delay)
+                delay = min(max_delay, delay * 2)
 
         return numbers
 
-    def submit(self, numbers: Collection[Number]) -> bool:
-        """Submit factored numbers to FactorDB.
+    def submit(self, numbers: Collection[Number]) -> None:
+        """Add factored numbers to the submission queue."""
+        for number in numbers:
+            if len(number.prime_factors) > 0:
+                self._submit_queue.put_nowait(number)
+
+    def get_successful_submission_count(self) -> int:
+        """Get the number of successful factor submissions.
 
         Returns:
-            bool: True if submission was successful, False otherwise.
+            int: The number of factors successfully submitted to FactorDB.
         """
-        factored_numbers = [number for number in numbers if len(number.prime_factors) > 0]
+        with self._submission_lock:
+            return self._successful_submissions
 
-        if len(factored_numbers) == 0:
-            return True
+    def close(self) -> None:
+        """Close the FactorDB interface, ensuring all submissions are complete."""
+        self._stop_event.set()
+        self._submit_thread.join()
 
-        batch_count = math.ceil(len(factored_numbers) / MAX_SUBMIT_BATCH_SIZE)
-        batch_size = len(factored_numbers) / batch_count
+        if self._successful_submissions > 0:
+            logger.info("Successfully submitted {} factors to FactorDB", self._successful_submissions)
 
-        if batch_count > 1:
-            logger.info("Submitting {} results to FactorDB in {} batches", len(factored_numbers), batch_count)
+    def _submit_worker(self) -> None:
+        """Background worker that submits factored numbers to FactorDB."""
+        spacing = 0.2
 
-        success = True
+        while not self._stop_event.is_set() or not self._submit_queue.empty():
+            try:
+                number = self._submit_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
 
-        for i in range(batch_count):
-            batch_base = round(i * batch_size)
-            batch_limit = round((i + 1) * batch_size)
-            batch = factored_numbers[batch_base:batch_limit]
+            factors = sorted(set(number.prime_factors))
 
-            if not self.submit_batch(batch):
-                success = False
+            # If there are no composite factors, avoid sending the trivial largest factor.
+            if len(number.composite_factors) == 0:
+                factors.pop()
 
-        return success
+            for factor in factors:
+                self._submit_factor(number.n, factor)
+                time.sleep(spacing)
+
+            self._submit_queue.task_done()
+
+    def _submit_factor(self, number: int, factor: int) -> None:
+        """Submit a single factor to FactorDB."""
+        url = "https://factordb.com/reportfactor.php"
+        payload = {"number": str(number), "factor": str(factor)}
+
+        try:
+            self._http("POST", url, data=payload, timeout=3.0, max_retries=None)
+            logger.debug("Submitted factor {} for n={}", factor, number)
+            with self._submission_lock:
+                self._successful_submissions += 1
+        except requests.RequestException as e:
+            logger.error("Error submitting factor {} for n{}: {}", factor, number, e)
+
+    def _http(  # noqa: PLR0913
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Mapping[str, int | str] | None = None,
+        data: Mapping[str, str] | None = None,
+        json: Mapping[str, str] | None = None,
+        max_retries: int | None = 5,
+        timeout: float = 3.0,
+    ) -> requests.Response:
+        """Centralized HTTP request method with retry, 429 handling, and exponential backoff.
+
+        Returns:
+            requests.Response: The HTTP response object.
+
+        Raises:
+            requests.RequestException: If the request fails after the maximum number of retries.
+        """
+        delay = max(0.1, self._config.factordb_cooldown_period)
+        max_delay = 3600.0
+        attempts = 0
+
+        while True:
+            attempts += 1
+
+            try:
+                response = self._session.request(method, url, params=params, data=data, json=json, timeout=timeout)
+
+                if response.status_code == requests.codes.too_many_requests:
+                    rate_limit_delay = get_too_many_requests_delay(response)
+                    logger.warning("Rate limited by FactorDB (429). Retrying in {} seconds...", rate_limit_delay)
+                    time.sleep(rate_limit_delay)
+                    continue
+
+                if response.status_code in {502, 503, 504}:
+                    logger.warning(
+                        "Transient HTTP {} from FactorDB. Retrying in {} seconds...", response.status_code, delay
+                    )
+                    time.sleep(delay)
+                    delay = min(max_delay, delay * 2)
+                    continue
+
+                response.raise_for_status()
+            except requests.Timeout as e:
+                logger.warning("HTTP timeout contacting FactorDB: {}. Retrying in {} seconds...", e, delay)
+                time.sleep(delay)
+                delay = min(max_delay, delay * 2)
+            except requests.HTTPError as e:
+                status = getattr(e.response, "status_code", None)
+                logger.warning("Unexpected HTTP {} from FactorDB: {}. Retrying in {} seconds...", status, e, delay)
+                time.sleep(delay)
+                delay = min(max_delay, delay * 2)
+            except requests.RequestException as e:
+                logger.warning("HTTP error contacting FactorDB: {}. Retrying in {} seconds...", e, delay)
+                time.sleep(delay)
+                delay = min(max_delay, delay * 2)
+            else:
+                return response
+
+            if max_retries is not None and attempts >= max_retries:
+                msg = f"Exceeded maximum retries ({max_retries}) for HTTP request to FactorDB"
+                raise requests.RequestException(msg)
 
     def submit_batch(self, numbers: Collection[Number]) -> bool:
         """Submit a batch of factored numbers to FactorDB.
@@ -266,16 +345,7 @@ class FactorDB:
         }
 
         try:
-            response = self._session.post(login_url, data=login_data)
-            response.raise_for_status()
-        except requests.HTTPError as e:
-            if e.response.status_code == requests.codes.too_many_requests:
-                delay = get_too_many_requests_delay(e.response)
-                logger.error("Rate limited by FactorDB. Retrying in {} seconds...", delay)
-                time.sleep(delay)
-            elif e.response.status_code == requests.codes.bad_gateway:
-                logger.error("FactorDB server error ({}). Retrying later...", e.response.status_code)
-                return False
+            self._http("POST", login_url, data=login_data, timeout=5.0, max_retries=5)
         except requests.RequestException as e:
             logger.error("FactorDB login failed: {}", e)
             return False

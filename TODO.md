@@ -3,13 +3,9 @@
 The following is a list of potential TODO items, roughly in my intended order of
 implementation. There is no guarantee I will actually get to any of this.
 
+* Revisit how factors are stored. Instead of storing each factor x times,
+  potentially store it once with an exponent.
 * Refactor code to eliminate as many lint exceptions as possible.
-* Send factors via the API. This will likely want to be done in a background
-  thread as otherwise it could take up a lot of time due to delaying between
-  each submission.
-* Improve retry handling, especially with rate limiting in play. After the rate
-  limit expires, the delay should be reset, so an immediate 502 doesn't end up
-  doubling the rate limit delay.
 * Dynamic batch sizes take too long to ramp up, especially because a sample size
   of 1 is heavily deweighted.
 * Investigate integrating the looping process directly into the tool. This needs

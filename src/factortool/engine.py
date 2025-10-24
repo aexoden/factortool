@@ -20,15 +20,17 @@ from factortool.constants import ECM_CURVES
 
 if TYPE_CHECKING:
     from factortool.config import Config
+    from factortool.factordb import FactorDB
     from factortool.number import Number
 
 
 class FactorEngine:
     """Engine for managing factorization tasks."""
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, factordb: FactorDB | None = None) -> None:
         """Initialize the factorization engine."""
         self._config = config
+        self._factordb = factordb
         self._interrupt_level: int = 0
         signal.signal(signal.SIGINT, self._handle_sigint)
 

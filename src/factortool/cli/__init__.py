@@ -46,7 +46,7 @@ def main() -> None:  # noqa: PLR0914
 
     stats = FactoringStats(config.stats_path)
     factordb = FactorDB(config, stats)
-    engine = FactorEngine(config)
+    engine = FactorEngine(config, factordb)
 
     logger.info("Using factoring mode: {}", config.factoring_mode)
 
@@ -67,9 +67,6 @@ def main() -> None:  # noqa: PLR0914
     logger.info("Factored {} numbers in {:.2f} seconds", factored_count, duration)
 
     batch_controller.record_batch(factored_count, duration)
-
-    if factored_count > 0:
-        factordb.submit(numbers)
 
     method_counts: dict[str, int] = {}
     failed_numbers: set[Number] = set()
@@ -111,6 +108,7 @@ def main() -> None:  # noqa: PLR0914
         f.write(format_results(numbers) + "\n")
 
     stats.save_data()
+    factordb.close()
 
     if interrupted:
         sys.exit(2)

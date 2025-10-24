@@ -24,6 +24,7 @@ from factortool.util import SMALL_PRIMES, format_number, is_prime, log_factor_re
 
 if TYPE_CHECKING:
     from factortool.config import Config
+    from factortool.factordb import FactorDB
     from factortool.stats import FactoringStats
 
 
@@ -299,12 +300,15 @@ class Number:
     _maximum_ecm_level: int
     _stats: FactoringStats
     _config: Config
+    _factordb: FactorDB | None
 
-    def __init__(self, n: int, config: Config, stats: FactoringStats) -> None:
+    def __init__(self, n: int, config: Config, stats: FactoringStats, factordb: FactorDB | None) -> None:
         """Initialize the number object."""
         self.n = n
         self._stats = stats
         self._config = config
+        self._factordb = factordb
+        self._submitted = False
 
         self._ecm_level = 0
         self._prefer_siqs = True
@@ -492,6 +496,10 @@ class Number:
 
         if self.factored and len(self.methods) > 1:
             log_factor_result(set(self.methods), self.n, self.prime_factors)
+
+        if not self._submitted and self.factored and self._factordb is not None:
+            self._factordb.submit([self])
+            self._submitted = True
 
         return found_factors
 
