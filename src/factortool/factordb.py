@@ -87,6 +87,10 @@ class FactorDB:
         if number_count == 0:
             return set()
 
+        # Limit to a maximum of 50 numbers per request to avoid overloading FactorDB. This is intended to be a temporary
+        # measure.
+        number_count = min(number_count, 50)
+
         params = {
             "t": 3,
             "mindig": min_digits,
