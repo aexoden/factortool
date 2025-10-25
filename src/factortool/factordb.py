@@ -20,7 +20,7 @@ import requests
 from loguru import logger
 from pydantic import BaseModel
 
-from factortool.number import Number, format_results
+from factortool.number import Number
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -244,72 +244,6 @@ class FactorDB:
             if max_retries is not None and attempts >= max_retries:
                 msg = f"Exceeded maximum retries ({max_retries}) for HTTP request to FactorDB"
                 raise requests.RequestException(msg)
-
-    def submit_batch(self, numbers: Collection[Number]) -> bool:
-        """Submit a batch of factored numbers to FactorDB.
-
-        Returns:
-            bool: True if submission was successful, False otherwise.
-
-        Raises:
-            requests.HTTPError: If an unexpected HTTP error occurs during the request.
-        """
-        url = "https://factordb.com/report.php"
-
-        report = format_results(numbers) + "\n"
-
-        data: dict[str, int | str] = {
-            "report": report,
-            "format": 7,
-        }
-
-        # Submit the results.
-        attempt = 0
-        failures = 0
-        max_failures = 3
-        delay = self._config.factordb_cooldown_period
-
-        while failures < max_failures:
-            attempt += 1
-
-            try:
-                response = self._session.post(url, data=data, timeout=3)
-                response.raise_for_status()
-
-                if self._check_factordb_response(response.text):
-                    logger.info("Successfully submitted {} results to FactorDB", len(numbers))
-                    return True
-
-                logger.error("FactorDB submission response did not contain expected success message")
-            except requests.HTTPError as e:
-                if e.response.status_code == requests.codes.too_many_requests:
-                    delay = get_too_many_requests_delay(e.response)
-                    logger.error("Rate limited by FactorDB. Retrying in {} seconds...", delay)
-                    time.sleep(delay)
-                elif e.response.status_code == requests.codes.bad_gateway:
-                    logger.error("FactorDB server error ({}). Retrying later...", e.response.status_code)
-                    logger.info("Retrying in {} seconds...", delay)
-                    time.sleep(delay)
-                    delay *= 2
-                else:
-                    raise
-            except requests.Timeout as e:
-                logger.error("FactorDB submission attempt {} failed: {}", attempt, e)
-                logger.info("Retrying in {} seconds...", delay)
-                time.sleep(delay)
-                delay *= 2
-            except requests.RequestException as e:
-                failures += 1
-                logger.error("FactorDB submission attempt {} failed: {}", attempt + 1, e)
-
-                if failures < max_failures:
-                    logger.info("Retrying in {} seconds...", delay)
-                    time.sleep(delay)
-                    delay *= 2
-                else:
-                    logger.error("Failed to submit results to FactorDB after {} attempts", attempt)
-
-        return False
 
     def _check_factordb_response(self, response_text: str) -> bool:
         with self._config.factordb_response_path.open(mode="w", encoding="utf-8") as f:
