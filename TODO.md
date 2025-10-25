@@ -8,6 +8,13 @@ implementation. There is no guarantee I will actually get to any of this.
 * Refactor code to eliminate as many lint exceptions as possible.
 * Dynamic batch sizes take too long to ramp up, especially because a sample size
   of 1 is heavily deweighted.
+* CTRL-C during a fetch wait does not gracefully exit. You currently have to do
+  a second one to exit. This might make sense (even if no factoring is occurring)
+  if it's a submission that's being waited on, but if the request is a fetch, it's
+  unnecessary.
+* Before working on a number, consider fetching any existing factors from FactorDB.
+  We'll probably want to keep track of submission by factor at that point. That can
+  go along with changing storage to factor and exponent.
 * Investigate integrating the looping process directly into the tool. This needs
   to change the way login is handled to potentially revalidate the cookie, though
   if submission is largely done via the API, this will be less important. I
