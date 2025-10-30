@@ -31,8 +31,6 @@ implementation. There is no guarantee I will actually get to any of this.
 * Improve the analyzer output. Output the current threshold to move away from ECM.
 * Ensure that the analyzer always prints whatever data it has, rather than printing
   nothing. (This is an old note, and may already be partially or fully fixed.)
-* Ensure that a given ECM level is never done if we know it will take longer than
-  SIQS/NFS, even if early in the data collection phase.
 * It's best to avoid making SIQS/NFS decisions based on a single sample. The user
   may have been using their computer for something else and skewed the data.
   Going along with this, it would be good to add a special tune mode to collect

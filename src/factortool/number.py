@@ -434,10 +434,21 @@ class Number:
             self._maximum_ecm_level = digits // 3
             return
 
-        # If the highest level with data is the fastest, there's no evidence ever doing NFS is useful, so just return,
-        # as we've already set a reasonable maximum ECM level above.
-        if max(ecm_data.keys()) == best_maximum_ecm_level:
-            return
+        # Cap the maximum ECM level based on SIQS and NFS statistics. There's no point doing an ECM level if either of
+        # those are faster. We do apply a fudge factor in case of measurement inaccuracy.
+        siqs_time = self._stats.get_siqs_stats(digits, self._config.max_threads)[1]
+        nfs_time = self._stats.get_nfs_stats(digits, self._config.max_threads)[1]
+
+        for ecm_level in range(min(ECM_CURVES.keys()), self._maximum_ecm_level + 1):
+            test_ecm_time = self._stats.get_ecm_stats(digits, ecm_level, self._config.max_threads)[1]
+
+            if siqs_time is not None and test_ecm_time is not None and siqs_time * 1.25 < test_ecm_time:
+                self._maximum_ecm_level = ecm_level - 1
+                break
+
+            if nfs_time is not None and test_ecm_time is not None and nfs_time * 1.25 < test_ecm_time:
+                self._maximum_ecm_level = ecm_level - 1
+                break
 
         # Otherwise, we'll balance collecting more data with taking advantage of what we already know, based on how many
         # samples have been collected. The function as defined here will do an extra number of levels based on the
@@ -455,8 +466,8 @@ class Number:
             if lowest_ecm_count is None or test_ecm_count < lowest_ecm_count:
                 lowest_ecm_count = test_ecm_count
 
-        if lowest_ecm_count is None:
-            lowest_ecm_count = 0
+        if lowest_ecm_count is None or lowest_ecm_count == 0:
+            lowest_ecm_count = 1
 
         extra_ecm_levels = math.ceil(-math.log2(lowest_ecm_count) + 10)
 
