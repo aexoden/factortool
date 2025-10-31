@@ -3,8 +3,19 @@
 The following is a list of potential TODO items, roughly in my intended order of
 implementation. There is no guarantee I will actually get to any of this.
 
+* Provide options to allow the user to disable the time limit or to tweak how long
+  it is instead of always doing twice the target time.
+* Fix the time limit to only occur if target time is enabled.
 * Revisit how factors are stored. Instead of storing each factor x times,
   potentially store it once with an exponent.
+* Refactor the standard factoring method away from breadth-first. It doesn't
+  really add anything, and if the program is aborted (either manually or because
+  of an expired time limit), the ECM work on any remaining unfactored exponents is
+  effectively lost as it will simply be repeated on another run.
+* Consider exactly when the time limit being exceeded should terminate the
+  program. (That is, should it abort as soon as possible or should it wait for
+  the current factorization to finish?)
+* Make the log level configurable.
 * Refactor code to eliminate as many lint exceptions as possible.
 * Dynamic batch sizes take too long to ramp up, especially because a sample size
   of 1 is heavily deweighted.

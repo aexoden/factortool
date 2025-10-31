@@ -15,7 +15,7 @@ from tap import Tap
 
 from factortool.batch import BatchController
 from factortool.config import read_config
-from factortool.engine import FactorEngine
+from factortool.engine import ExitStatus, FactorEngine
 from factortool.factordb import FactorDB
 from factortool.number import Number, format_results
 from factortool.stats import FactoringStats
@@ -32,7 +32,7 @@ class Arguments(Tap):
     skip_count: int = 0  # Skip this many numbers when fetching from FactorDB (to hopefully avoid conflict)
 
 
-def main() -> None:  # noqa: PLR0914
+def main() -> None:  # noqa: C901, PLR0914
     """Factor numbers using various methods."""
     setup_logger()
 
@@ -46,11 +46,11 @@ def main() -> None:  # noqa: PLR0914
 
     stats = FactoringStats(config.stats_path)
     factordb = FactorDB(config, stats)
-    engine = FactorEngine(config, factordb)
+    engine = FactorEngine(config, factordb, args.target_duration)
 
     logger.info("Using factoring mode: {}", config.factoring_mode)
 
-    batch_controller = BatchController(600.0, args.min_digits, args.skip_count, config.batch_state_path)
+    batch_controller = BatchController(args.target_duration, args.min_digits, args.skip_count, config.batch_state_path)
     batch_size = args.batch_size if args.batch_size > 0 else batch_controller.batch_size
 
     logger.info("Fetching {} composite numbers from FactorDB", batch_size)
@@ -59,7 +59,7 @@ def main() -> None:  # noqa: PLR0914
 
     start_time = time.monotonic()
 
-    interrupted = engine.run(sorted(numbers))
+    status = engine.run(sorted(numbers))
 
     duration = time.monotonic() - start_time
     factored_count = len([number for number in numbers if number.factored])
@@ -110,5 +110,9 @@ def main() -> None:  # noqa: PLR0914
     stats.save_data()
     factordb.close()
 
-    if interrupted:
+    if status == ExitStatus.SUCCESS:
+        sys.exit(0)
+    elif status == ExitStatus.INTERRUPTED:
         sys.exit(2)
+    elif status == ExitStatus.TIME_LIMIT_EXCEEDED:
+        sys.exit(3)

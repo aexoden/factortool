@@ -384,7 +384,7 @@ class Number:
 
         self._prefer_siqs = siqs_time < nfs_time
 
-    def _set_maximum_ecm_level(self) -> None:  # noqa: C901
+    def _set_maximum_ecm_level(self) -> None:  # noqa: C901, PLR0914
         # If factored, there is no need for any ECM.
         if self.factored:
             self._maximum_ecm_level = self._ecm_level

@@ -68,6 +68,7 @@ The program returns the following non-zero error codes:
 
 * 1: Configuration error
 * 2: Interrupted
+* 3: Time limit exceeded
 * 4: Unexpected CADO-NFS failure
 * 5: Unexpected YAFU failure
 
