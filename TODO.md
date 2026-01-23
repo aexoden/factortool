@@ -12,6 +12,9 @@ implementation. There is no guarantee I will actually get to any of this.
   really add anything, and if the program is aborted (either manually or because
   of an expired time limit), the ECM work on any remaining unfactored exponents is
   effectively lost as it will simply be repeated on another run.
+* For the standard factoring method, revisit how the ECM curves and B1 values are
+  determined. At the very least, if still using precomputed values, we need to
+  consider differences if YAFU is internally using AVX-ECM or not.
 * Consider exactly when the time limit being exceeded should terminate the
   program. (That is, should it abort as soon as possible or should it wait for
   the current factorization to finish?)

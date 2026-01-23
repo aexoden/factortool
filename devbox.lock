@@ -1,0 +1,121 @@
+{
+  "lockfile_version": "1",
+  "packages": {
+    "github:NixOS/nixpkgs/nixpkgs-unstable": {
+      "last_modified": "2026-01-02T14:39:32Z",
+      "resolved": "github:NixOS/nixpkgs/16c7794d0a28b5a37904d55bcca36003b9109aaa?lastModified=1767364772&narHash=sha256-fFUnEYMla8b7UKjijLnMe%2BoVFOz6HjijGGNS1l7dYaQ%3D"
+    },
+    "pre-commit@4.5.1": {
+      "last_modified": "2026-01-17T14:47:01Z",
+      "resolved": "github:NixOS/nixpkgs/3327b113f2ef698d380df83fbccefad7e83d7769#pre-commit",
+      "source": "devbox-search",
+      "version": "4.5.1",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/hqp4liqx5x8mv2qyr1hsl5qv5bd33p7i-pre-commit-4.5.1",
+              "default": true
+            },
+            {
+              "name": "dist",
+              "path": "/nix/store/ka8xgfcs4kcw6r6pdqxcyp5yismakg7n-pre-commit-4.5.1-dist"
+            }
+          ],
+          "store_path": "/nix/store/hqp4liqx5x8mv2qyr1hsl5qv5bd33p7i-pre-commit-4.5.1"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/gjpbnhr5bxzh1ngx4mw47zl4gsb3iy9c-pre-commit-4.5.1",
+              "default": true
+            },
+            {
+              "name": "dist",
+              "path": "/nix/store/xplnq33klgsmw31an3ds9lsikl127xsr-pre-commit-4.5.1-dist"
+            }
+          ],
+          "store_path": "/nix/store/gjpbnhr5bxzh1ngx4mw47zl4gsb3iy9c-pre-commit-4.5.1"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/jflhh85nx06kvgiq6h1p9vz31vl4gmzg-pre-commit-4.5.1",
+              "default": true
+            },
+            {
+              "name": "dist",
+              "path": "/nix/store/a2j9ifzbzz3hfyf83qgjadpr9i866r80-pre-commit-4.5.1-dist"
+            }
+          ],
+          "store_path": "/nix/store/jflhh85nx06kvgiq6h1p9vz31vl4gmzg-pre-commit-4.5.1"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/d3cs4k7ps9pxdq8l264s7hijiml10rzm-pre-commit-4.5.1",
+              "default": true
+            },
+            {
+              "name": "dist",
+              "path": "/nix/store/v54bc85lpnnii94mgxqjxv1x5r51ihi5-pre-commit-4.5.1-dist"
+            }
+          ],
+          "store_path": "/nix/store/d3cs4k7ps9pxdq8l264s7hijiml10rzm-pre-commit-4.5.1"
+        }
+      }
+    },
+    "uv@0.9.26": {
+      "last_modified": "2026-01-19T00:39:23Z",
+      "resolved": "github:NixOS/nixpkgs/bde09022887110deb780067364a0818e89258968#uv",
+      "source": "devbox-search",
+      "version": "0.9.26",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/991jgkc1kpg7w14l8bmc20yyp7hnwamd-uv-0.9.26",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/991jgkc1kpg7w14l8bmc20yyp7hnwamd-uv-0.9.26"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/y35q55agb16ydq6496s01mqmjwrgqgk6-uv-0.9.26",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/y35q55agb16ydq6496s01mqmjwrgqgk6-uv-0.9.26"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/d4i7k54k1sk7f6wnsq31700j6mfch39q-uv-0.9.26",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/d4i7k54k1sk7f6wnsq31700j6mfch39q-uv-0.9.26"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/arj23552j8w9k5wqhbs1gn2m4pd7skbm-uv-0.9.26",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/arj23552j8w9k5wqhbs1gn2m4pd7skbm-uv-0.9.26"
+        }
+      }
+    }
+  }
+}

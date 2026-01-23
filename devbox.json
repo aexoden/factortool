@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.16.0/.schema/devbox.schema.json",
+  "packages": ["uv@0.9.26", "pre-commit@4.5.1"],
+  "shell": {
+    "init_hook": ["uv sync", "pre-commit install"],
+    "scripts": {
+      "format": "uv run ruff format --diff",
+      "lint": "uv run ruff check && uv run mypy ."
+    }
+  }
+}
