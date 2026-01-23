@@ -15,9 +15,9 @@ classifiers = [
 ]
 dependencies = [
     "flask>=3.1.2",
-    "gmpy2>=2.2.1",
+    "gmpy2>=2.2.2",
     "loguru>=0.7.3",
-    "pydantic>=2.12.3",
+    "pydantic>=2.12.5",
     "requests>=2.32.5",
     "typed-argument-parser>=1.11.0",
 ]
@@ -27,7 +27,7 @@ dev = [
     "gmpy2-stubs>=2.2.1.5",
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
-    "ruff>=0.14.2",
+    "ruff>=0.14.14",
 ]
 
 [project.urls]
