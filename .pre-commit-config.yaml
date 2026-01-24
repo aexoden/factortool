@@ -1,27 +1,46 @@
+# Pre-commit configuration
+# Install: pre-commit install
+# Update: pre-commit autoupdate
+
 repos:
-- repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v5.0.0
-  hooks:
-  - id: check-yaml
-  - id: end-of-file-fixer
-  - id: trailing-whitespace
-- repo: local
-  hooks:
-  - id: ruff-check
-    name: ruff check
-    description: Run ruff linter
-    entry: uv run ruff check
-    language: system
-    pass_filenames: false
-  - id: ruff-format
-    name: ruff format
-    description: Run ruff formatter
-    entry: uv run ruff format --check
-    language: system
-    pass_filenames: false
-  - id: test
-    name: test
-    description: Run all tests
-    entry: uv run pytest --cov=src/factortool --cov-report=term-missing
-    language: system
-    pass_filenames: false
+  # General hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-vcs-permalinks
+      - id: check-yaml
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  # Conventional commits
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.3.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+
+  # Python formatting and linting
+  # `pass_filenames: false` is necessary because changing a file can cause an unmodified file to have new issues.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.10
+    hooks:
+      - id: ruff-check
+        pass_filenames: false
+      - id: ruff-format
+        pass_filenames: false
+        args: [--check]
+
+  # Run tests
+  - repo: local
+    hooks:
+      - id: test
+        name: pytest with coverage
+        description: Run pytest and generate coverage report
+        entry: uv run pytest --cov=src/factortool --cov-report=term-missing
+        language: system
+        pass_filenames: false
