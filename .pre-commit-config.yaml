@@ -24,6 +24,12 @@ repos:
       - id: conventional-pre-commit
         stages: [commit-msg]
 
+  # uv
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.9.26
+    hooks:
+      - id: uv-lock
+
   # Python formatting and linting
   # `pass_filenames: false` is necessary because changing a file can cause an unmodified file to have new issues.
   - repo: https://github.com/astral-sh/ruff-pre-commit
