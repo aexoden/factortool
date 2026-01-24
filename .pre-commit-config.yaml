@@ -35,6 +35,18 @@ repos:
         pass_filenames: false
         args: [--check]
 
+  # Type checking
+  # The official pre-commit hook does not use the uv-created environment.
+  # `pass_filenames: false` is necessary because changing a file can cause an unmodified file to have new issues.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy type checker
+        description: Type check Python files using mypy
+        entry: uv run mypy .
+        language: system
+        pass_filenames: false
+
   # Run tests
   - repo: local
     hooks:

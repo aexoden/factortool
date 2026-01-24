@@ -34,9 +34,11 @@ factortool = "factortool.cli:main"
 [dependency-groups]
 dev = [
   "gmpy2-stubs>=2.2.1.5",
+  "mypy>=1.19.1",
   "pytest>=8.4.2",
   "pytest-cov>=7.0.0",
   "ruff>=0.14.2",
+  "types-requests>=2.32.4.20260107",
 ]
 
 [build-system]
@@ -48,6 +50,13 @@ path = "src/factortool/__about__.py"
 
 [tool.hatch.build.targets.sdist]
 exclude = ["/.github"]
+
+#
+# Mypy
+#
+
+[tool.mypy]
+strict = true
 
 #
 # Ruff

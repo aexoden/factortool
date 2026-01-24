@@ -299,7 +299,7 @@ class FactorDB:
 
             if datetime.datetime.now(tz=datetime.UTC) < session_data.expiry - datetime.timedelta(hours=1):
                 self._session = requests.Session()
-                self._session.cookies.update(session_data.cookies)  # type: ignore[arg-type]
+                self._session.cookies.update(session_data.cookies)  # pyright: ignore[reportUnknownMemberType] (return type is Unknown, but irrelevant here)
                 return
 
         self._session = requests.Session()
