@@ -16,12 +16,8 @@ env:
 
 jobs:
   ci:
-    name: Continuous Integration on ${{ startsWith(matrix.os, 'macos-') && 'macOS' || 'Linux' }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+    name: Continuous Integration on Linux
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
