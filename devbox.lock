@@ -2,8 +2,8 @@
   "lockfile_version": "1",
   "packages": {
     "github:NixOS/nixpkgs/nixpkgs-unstable": {
-      "last_modified": "2026-02-08T07:51:33Z",
-      "resolved": "github:NixOS/nixpkgs/fef9403a3e4d31b0a23f0bacebbec52c248fbb51?lastModified=1770537093&narHash=sha256-pF1quXG5wsgtyuPOHcLfYg%2Fft%2FQMr8NnX0i6tW2187s%3D"
+      "last_modified": "2026-02-16T02:09:13Z",
+      "resolved": "github:NixOS/nixpkgs/d1c15b7d5806069da59e819999d70e1cec0760bf?lastModified=1771207753&narHash=sha256-b9uG8yN50DRQ6A7JdZBfzq718ryYrlmGgqkRm9OOwCE%3D"
     },
     "pre-commit@4.5.1": {
       "last_modified": "2026-01-27T15:18:14Z",
@@ -15,15 +15,15 @@
           "outputs": [
             {
               "name": "out",
-              "path": "/nix/store/j5pi70fd5x4qjcvdvk2bac03zl9wwims-pre-commit-4.5.1",
+              "path": "/nix/store/yw4pv0209wm32b5y2xnn1x9njp301hyy-pre-commit-4.5.1",
               "default": true
             },
             {
               "name": "dist",
-              "path": "/nix/store/vcixf2jrwjq8b97aws4l51fliwbb2lfl-pre-commit-4.5.1-dist"
+              "path": "/nix/store/0lahzic7js6j7iv4xz0iq8bl08wazjgy-pre-commit-4.5.1-dist"
             }
           ],
-          "store_path": "/nix/store/j5pi70fd5x4qjcvdvk2bac03zl9wwims-pre-commit-4.5.1"
+          "store_path": "/nix/store/yw4pv0209wm32b5y2xnn1x9njp301hyy-pre-commit-4.5.1"
         },
         "aarch64-linux": {
           "outputs": [
