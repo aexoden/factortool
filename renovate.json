@@ -1,11 +1,4 @@
 {
-    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-    "extends": [
-        "config:best-practices",
-        "group:allNonMajor"
-    ],
-    "lockFileMaintenance": {
-        "enabled": true
-    },
-    "rangeStrategy": "bump"
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:best-practices", "group:allNonMajor"]
 }
