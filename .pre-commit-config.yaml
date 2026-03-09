@@ -24,41 +24,40 @@ repos:
       - id: conventional-pre-commit
         stages: [commit-msg]
 
-  # uv
-  - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.9.26
-    hooks:
-      - id: uv-lock
-
-  # Python formatting and linting
-  # `pass_filenames: false` is necessary because changing a file can cause an unmodified file to have new issues.
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.10
-    hooks:
-      - id: ruff-check
-        pass_filenames: false
-      - id: ruff-format
-        pass_filenames: false
-        args: [--check]
-
-  # Type checking
-  # The official pre-commit hook does not use the uv-created environment.
-  # `pass_filenames: false` is necessary because changing a file can cause an unmodified file to have new issues.
+  # Python
   - repo: local
     hooks:
-      - id: mypy
-        name: mypy type checker
-        description: Type check Python files using mypy
-        entry: uv run mypy .
+      - id: uv-lock
+        name: uv lockfile check
+        description: Check that the uv lockfile is up to date
+        entry: devbox run -- uv lock --check
         language: system
         pass_filenames: false
 
-  # Run tests
-  - repo: local
-    hooks:
+      - id: ruff-check
+        name: ruff check
+        description: Lint Python files using ruff
+        entry: devbox run -- uv run ruff check
+        language: system
+        pass_filenames: false
+
+      - id: ruff-format
+        name: ruff format check
+        description: Check Python file formatting using ruff
+        entry: devbox run -- uv run ruff format --check
+        language: system
+        pass_filenames: false
+
+      - id: mypy
+        name: mypy type checker
+        description: Type check Python files using mypy
+        entry: devbox run -- uv run mypy .
+        language: system
+        pass_filenames: false
+
       - id: test
         name: pytest with coverage
         description: Run pytest and generate coverage report
-        entry: uv run pytest --cov=src/factortool --cov-report=term-missing
+        entry: devbox run -- uv run pytest --cov=src/factortool --cov-report=term-missing
         language: system
         pass_filenames: false
