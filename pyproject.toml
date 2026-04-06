@@ -2,7 +2,7 @@
 name = "factortool"
 description = "A tool to help perform and manage various integer factorization tasks."
 readme = "README.md"
-requires-python = ">=3.14.3"
+requires-python = "==3.14.3"
 license = "MIT"
 authors = [{ name = "Jason Lynch", email = "jason@aexoden.com" }]
 classifiers = [
