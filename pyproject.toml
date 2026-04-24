@@ -16,7 +16,7 @@ dependencies = [
   "gmpy2==2.3.0",
   "loguru==0.7.3",
   "pydantic==2.12.5",
-  "requests==2.33.0",
+  "requests==2.33.1",
   "typed-argument-parser==1.11.0",
 ]
 dynamic = ["version"]
