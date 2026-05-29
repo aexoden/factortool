@@ -66,11 +66,10 @@ def factor_ecm(  # noqa: PLR0913, PLR0917
     curves, b1 = ECM_CURVES[level]
 
     # Perform the ECM using YAFU.
+    start_time = time.perf_counter_ns()
+    cmd: list[str] = [str(yafu_path), f"ecm({n}, {curves})", "-threads", str(max_threads), "-B1ecm", str(b1)]
+
     try:
-        start_time = time.perf_counter_ns()
-
-        cmd: list[str] = [str(yafu_path), f"ecm({n}, {curves})", "-threads", str(max_threads), "-B1ecm", str(b1)]
-
         result = subprocess.run(  # noqa: S603
             cmd,
             cwd=yafu_path.parent,
@@ -79,26 +78,26 @@ def factor_ecm(  # noqa: PLR0913, PLR0917
             check=True,
             process_group=0,
         )
-
-        factors: list[int] = []
-
-        for line in result.stdout.strip().split("\n"):
-            matches = re.match(r"(P|C)([0-9]*) = (?P<factor>[0-9]*)", line)
-
-            if matches:
-                factors.append(int(matches["factor"]))
-
-        end_time = time.perf_counter_ns()
-        execution_time = (end_time - start_time) / 1_000_000_000.0
-        stats.update_ecm(len(str(n)), level, max_threads, execution_time, success=len(factors) > 1)
-
-        if len(factors) > 1:
-            log_factor_result(["ECM"], n, sorted(factors))
     except subprocess.CalledProcessError as e:
         logger.critical("YAFU ECM failed for {} with method ECM: {}", n, e.stderr)
         sys.exit(5)
-    else:
-        return sorted(factors)
+
+    factors: list[int] = []
+
+    for line in result.stdout.strip().split("\n"):
+        matches = re.match(r"(P|C)([0-9]*) = (?P<factor>[0-9]*)", line)
+
+        if matches:
+            factors.append(int(matches["factor"]))
+
+    end_time = time.perf_counter_ns()
+    execution_time = (end_time - start_time) / 1_000_000_000.0
+    stats.update_ecm(len(str(n)), level, max_threads, execution_time, success=len(factors) > 1)
+
+    if len(factors) > 1:
+        log_factor_result(["ECM"], n, sorted(factors))
+
+    return sorted(factors)
 
 
 @cache
@@ -115,9 +114,9 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path, stats: F
         cmd.extend(["-threads", str(max_threads)])
         threads = max_threads
 
-    try:
-        start_time = time.perf_counter_ns()
+    start_time = time.perf_counter_ns()
 
+    try:
         result = subprocess.run(  # noqa: S603
             cmd,
             cwd=yafu_path.parent,
@@ -127,36 +126,36 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path, stats: F
             check=True,
             process_group=0,
         )
-
-        factors: list[int] = []
-
-        for line in result.stdout.strip().split("\n"):
-            matches = re.match(r"(P|C)([0-9]*) = (?P<factor>[0-9]*)", line)
-
-            if matches:
-                factors.append(int(matches["factor"]))
-
-        end_time = time.perf_counter_ns()
-        execution_time = (end_time - start_time) / 1_000_000_000.0
-
-        if method == "siqs":
-            stats.update_siqs(len(str(n)), threads, execution_time)
-        else:
-            stats.update_probability(len(str(n)), method, threads, execution_time, success=len(factors) > 1)
-
-        methods = {
-            "rho": "Rho",
-            "pm1": "P-1",
-            "siqs": "SIQS",
-        }
-
-        if len(factors) > 1:
-            log_factor_result([methods[method]], n, sorted(factors))
     except subprocess.CalledProcessError as e:
         logger.critical("YAFU failed for {} with method {}: {}", n, method, e.stderr)
         sys.exit(5)
+
+    factors: list[int] = []
+
+    for line in result.stdout.strip().split("\n"):
+        matches = re.match(r"(P|C)([0-9]*) = (?P<factor>[0-9]*)", line)
+
+        if matches:
+            factors.append(int(matches["factor"]))
+
+    end_time = time.perf_counter_ns()
+    execution_time = (end_time - start_time) / 1_000_000_000.0
+
+    if method == "siqs":
+        stats.update_siqs(len(str(n)), threads, execution_time)
     else:
-        return sorted(factors)
+        stats.update_probability(len(str(n)), method, threads, execution_time, success=len(factors) > 1)
+
+    methods = {
+        "rho": "Rho",
+        "pm1": "P-1",
+        "siqs": "SIQS",
+    }
+
+    if len(factors) > 1:
+        log_factor_result([methods[method]], n, sorted(factors))
+
+    return sorted(factors)
 
 
 @cache
@@ -168,9 +167,9 @@ def factor_yafu_direct(n: int, max_threads: int, yafu_path: Path, stats: Factori
     """
     cmd = [str(yafu_path), f"factor({n})", "-threads", str(max_threads)]
 
-    try:
-        start_time = time.perf_counter_ns()
+    start_time = time.perf_counter_ns()
 
+    try:
         result = subprocess.run(  # noqa: S603
             cmd,
             cwd=yafu_path.parent,
@@ -180,28 +179,28 @@ def factor_yafu_direct(n: int, max_threads: int, yafu_path: Path, stats: Factori
             check=True,
             process_group=0,
         )
-
-        factors: list[int] = []
-
-        for line in result.stdout.strip().split("\n"):
-            matches = re.match(r"(P|C)([0-9]*) = (?P<factor>[0-9]*)", line)
-
-            if matches:
-                factors.append(int(matches["factor"]))
-
-        end_time = time.perf_counter_ns()
-        execution_time = (end_time - start_time) / 1_000_000_000.0
-
-        digits = len(str(n))
-        stats.update_probability(digits, "yafu", max_threads, execution_time, success=len(factors) > 1)
-
-        if len(factors) > 1:
-            log_factor_result(["YAFU"], n, sorted(factors))
     except subprocess.CalledProcessError as e:
         logger.critical("YAFU direct factoring failed for {}: {}", n, e.stderr)
         sys.exit(5)
-    else:
-        return sorted(factors)
+
+    factors: list[int] = []
+
+    for line in result.stdout.strip().split("\n"):
+        matches = re.match(r"(P|C)([0-9]*) = (?P<factor>[0-9]*)", line)
+
+        if matches:
+            factors.append(int(matches["factor"]))
+
+    end_time = time.perf_counter_ns()
+    execution_time = (end_time - start_time) / 1_000_000_000.0
+
+    digits = len(str(n))
+    stats.update_probability(digits, "yafu", max_threads, execution_time, success=len(factors) > 1)
+
+    if len(factors) > 1:
+        log_factor_result(["YAFU"], n, sorted(factors))
+
+    return sorted(factors)
 
 
 @cache
@@ -220,9 +219,9 @@ def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, stats: FactoringSt
     # Factor the number using CADO-NFS.
     cmd = [str(cado_nfs_path), str(n), "-t", str(max_threads)]
 
-    try:
-        start_time = time.perf_counter_ns()
+    start_time = time.perf_counter_ns()
 
+    try:
         result = subprocess.run(  # noqa: S603
             cmd,
             input=str(n),
@@ -231,20 +230,20 @@ def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, stats: FactoringSt
             check=True,
             process_group=0,
         )
-
-        end_time = time.perf_counter_ns()
-        execution_time = (end_time - start_time) / 1_000_000_000.0
-        stats.update_nfs(digits, max_threads, execution_time)
-
-        factors = list(map(int, result.stdout.strip().split()))
-
-        if len(factors) > 1:
-            log_factor_result(["NFS"], n, sorted(factors))
     except subprocess.CalledProcessError as e:
         logger.critical("NFS failed for {}: {}", n, e.stderr)
         sys.exit(4)
-    else:
-        return sorted(factors)
+
+    end_time = time.perf_counter_ns()
+    execution_time = (end_time - start_time) / 1_000_000_000.0
+    stats.update_nfs(digits, max_threads, execution_time)
+
+    factors = list(map(int, result.stdout.strip().split()))
+
+    if len(factors) > 1:
+        log_factor_result(["NFS"], n, sorted(factors))
+
+    return sorted(factors)
 
 
 @cache

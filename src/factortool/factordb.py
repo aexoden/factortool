@@ -207,7 +207,7 @@ class FactorDB:
         while True:
             attempts += 1
 
-            try:
+            try:  # noqa: PLW0717
                 response = self._session.request(method, url, params=params, data=data, json=json, timeout=timeout)
 
                 if response.status_code == requests.codes.too_many_requests:
