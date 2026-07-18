@@ -65,7 +65,7 @@ class BatchController:
 
     @property
     def batch_size(self) -> int:
-        """Get the current batch size."""
+        """Current batch size."""
         return max(1, int(self._state.items_per_second * self._target_duration))
 
     def record_batch(self, batch_size: int, duration: float) -> None:
