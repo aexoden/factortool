@@ -65,7 +65,7 @@ line-ending = "lf"
 [tool.ruff.lint]
 preview = true
 select = ["ALL"]
-ignore = ["COM812", "ISC001"]
+ignore = ["missing-trailing-comma", "single-line-implicit-string-concatenation"]
 
 [tool.ruff.lint.flake8-copyright]
 notice-rgx = "(?i)SPDX-FileCopyrightText: \\d{4}"
@@ -77,7 +77,7 @@ runtime-evaluated-base-classes = ["pydantic.BaseModel"]
 lines-between-types = 1
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*.py" = ["S101"]
+"tests/*.py" = ["assert"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

@@ -324,7 +324,7 @@ class FactoringStats:
 
         return (0, None, None)
 
-    def get_average_time(self, digits: int, maximum_ecm_level: int, threads: int) -> tuple[int, float | None]:  # noqa: PLR0914
+    def get_average_time(self, digits: int, maximum_ecm_level: int, threads: int) -> tuple[int, float | None]:  # ruff:ignore[too-many-locals]
         """Estimate the average time to factor a number with the given digit count.
 
         Returns:
@@ -336,31 +336,31 @@ class FactoringStats:
         if tf_count == 0:
             return (0, None)
 
-        assert tf_time is not None  # noqa: S101
-        assert tf_p_factor is not None  # noqa: S101
+        assert tf_time is not None  # ruff:ignore[assert]
+        assert tf_p_factor is not None  # ruff:ignore[assert]
 
         rho_count, rho_time, rho_p_factor = self.get_probability_stats(digits, "rho", 1)
 
         if rho_count == 0:
             return (0, None)
 
-        assert rho_time is not None  # noqa: S101
-        assert rho_p_factor is not None  # noqa: S101
+        assert rho_time is not None  # ruff:ignore[assert]
+        assert rho_p_factor is not None  # ruff:ignore[assert]
 
         pm1_count, pm1_time, pm1_p_factor = self.get_probability_stats(digits, "pm1", 1)
 
         if pm1_count == 0:
             return (0, None)
 
-        assert pm1_time is not None  # noqa: S101
-        assert pm1_p_factor is not None  # noqa: S101
+        assert pm1_time is not None  # ruff:ignore[assert]
+        assert pm1_p_factor is not None  # ruff:ignore[assert]
 
         _, siqs_time = self.get_siqs_stats(digits, threads)
         _, nfs_time = self.get_nfs_stats(digits, threads)
 
         if siqs_time is not None or nfs_time is not None:
             if siqs_time is None:
-                assert nfs_time is not None  # noqa: S101
+                assert nfs_time is not None  # ruff:ignore[assert]
                 final_time = nfs_time
             elif nfs_time is None:
                 final_time = siqs_time
@@ -393,8 +393,8 @@ class FactoringStats:
             return (0, None)
 
         # It is a bug for any of the following to be violated, and it helps the static type checker.
-        assert ecm_time is not None  # noqa: S101
-        assert ecm_p_factor is not None  # noqa: S101
+        assert ecm_time is not None  # ruff:ignore[assert]
+        assert ecm_p_factor is not None  # ruff:ignore[assert]
 
         # Adjust the probability of finding a factor by applying an exponentially decaying weighted average. This
         # minimizes the impact of only having a few samples.
