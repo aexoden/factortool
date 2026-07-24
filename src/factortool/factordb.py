@@ -181,7 +181,7 @@ class FactorDB:
         except requests.RequestException as e:
             logger.error("Error submitting factor {} for n{}: {}", factor, number, e)
 
-    def _http(  # noqa: PLR0913
+    def _http(  # ruff:ignore[too-many-arguments]
         self,
         method: str,
         url: str,
@@ -207,7 +207,7 @@ class FactorDB:
         while True:
             attempts += 1
 
-            try:  # noqa: PLW0717
+            try:  # ruff:ignore[too-many-statements-in-try-clause]
                 response = self._session.request(method, url, params=params, data=data, json=json, timeout=timeout)
 
                 if response.status_code == requests.codes.too_many_requests:

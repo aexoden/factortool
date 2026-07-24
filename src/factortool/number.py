@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 import re
-import subprocess  # noqa: S404
+import subprocess  # ruff:ignore[suspicious-subprocess-import]
 import sys
 import time
 
@@ -28,16 +28,16 @@ if TYPE_CHECKING:
     from factortool.stats import FactoringStats
 
 
-class NFSNeeded(Exception):  # noqa: N818
+class NFSNeeded(Exception):  # ruff:ignore[error-suffix-on-exception-name]
     """Exception indicating that NFS factoring is needed."""
 
 
-class SIQSNeeded(Exception):  # noqa: N818
+class SIQSNeeded(Exception):  # ruff:ignore[error-suffix-on-exception-name]
     """Exception indicating that SIQS factoring is needed."""
 
 
 @cache
-def factor_ecm(  # noqa: PLR0913, PLR0917
+def factor_ecm(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
     n: int, level: int, max_siqs_digits: int, max_threads: int, yafu_path: Path, stats: FactoringStats
 ) -> list[int]:
     """Factor a number using ECM via YAFU.
@@ -70,7 +70,7 @@ def factor_ecm(  # noqa: PLR0913, PLR0917
     cmd: list[str] = [str(yafu_path), f"ecm({n}, {curves})", "-threads", str(max_threads), "-B1ecm", str(b1)]
 
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
             cmd,
             cwd=yafu_path.parent,
             capture_output=True,
@@ -117,7 +117,7 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path, stats: F
     start_time = time.perf_counter_ns()
 
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
             cmd,
             cwd=yafu_path.parent,
             capture_output=True,
@@ -170,7 +170,7 @@ def factor_yafu_direct(n: int, max_threads: int, yafu_path: Path, stats: Factori
     start_time = time.perf_counter_ns()
 
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
             cmd,
             cwd=yafu_path.parent,
             capture_output=True,
@@ -222,7 +222,7 @@ def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, stats: FactoringSt
     start_time = time.perf_counter_ns()
 
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
             cmd,
             input=str(n),
             capture_output=True,
@@ -383,7 +383,7 @@ class Number:
 
         self._prefer_siqs = siqs_time < nfs_time
 
-    def _set_maximum_ecm_level(self) -> None:  # noqa: C901, PLR0914
+    def _set_maximum_ecm_level(self) -> None:  # ruff:ignore[complex-structure, too-many-locals]
         # If factored, there is no need for any ECM.
         if self.factored:
             self._maximum_ecm_level = self._ecm_level
@@ -417,7 +417,7 @@ class Number:
             if ecm_count == 0:
                 break
 
-            assert average_time is not None  # noqa: S101
+            assert average_time is not None  # ruff:ignore[assert]
 
             if best_maximum_ecm_level is None or average_time < best_maximum_ecm_level_time:
                 best_maximum_ecm_level = ecm_level

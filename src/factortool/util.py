@@ -70,7 +70,7 @@ def is_prime(n: int) -> bool:
         bool: True if n is a probable prime, False otherwise.
     """
     # Return False for n = 1
-    if n < 2:  # noqa: PLR2004
+    if n < 2:  # ruff:ignore[magic-value-comparison]
         return False
 
     # Check for small prime factors.

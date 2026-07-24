@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024-2026 Jason Lynch <jason@aexoden.com>
-# ruff: noqa: T201  (print() used for output)
+# ruff:file-ignore[print] (print() used for output)
 """Utility for analyzing factorization statistics."""
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ class Arguments(Tap):
     digits: int  # Digits to analyze
 
 
-def main() -> None:  # noqa: C901, PLR0912, PLR0914, PLR0915
+def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-many-locals, too-many-statements]
     """Analyze factorization statistics."""
     setup_logger()
 
@@ -47,9 +47,10 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0914, PLR0915
     if tf_count == 0:
         print(f"No trial factoring data present for {args.digits} digits.")
     else:
-        assert tf_p_factor is not None  # noqa: S101
+        assert tf_p_factor is not None  # ruff:ignore[assert]
         print(
-            f"Average time for {tf_count} trial factoring runs with a {tf_p_factor * 100:0.3f}% success rate is {tf_time:0.3f}s"  # noqa: E501
+            f"Average time for {tf_count} trial factoring runs with a"
+            f" {tf_p_factor * 100:0.3f}% success rate is {tf_time:0.3f}s"
         )
 
     rho_count, rho_time, rho_p_factor = stats.get_probability_stats(args.digits, "rho", 1)
@@ -57,7 +58,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0914, PLR0915
     if rho_count == 0:
         print(f"No rho data present for {args.digits} digits.")
     else:
-        assert rho_p_factor is not None  # noqa: S101
+        assert rho_p_factor is not None  # ruff:ignore[assert]
         print(
             f"Average time for {rho_count} rho runs with a {rho_p_factor * 100:0.3f}% success rate is {rho_time:0.3f}s"
         )
@@ -67,7 +68,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0914, PLR0915
     if pm1_count == 0:
         print(f"No P-1 data present for {args.digits} digits.")
     else:
-        assert pm1_p_factor is not None  # noqa: S101
+        assert pm1_p_factor is not None  # ruff:ignore[assert]
         print(
             f"Average time for {pm1_count} P-1 runs with a {pm1_p_factor * 100:0.3f}% success rate is {pm1_time:0.3f}s"
         )
@@ -106,7 +107,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0914, PLR0915
         if ecm_count == 0:
             sys.exit(0)
 
-        assert ecm_p_factor is not None  # noqa: S101
+        assert ecm_p_factor is not None  # ruff:ignore[assert]
 
         _, average_time = stats.get_average_time(args.digits, ecm_level, config.max_threads)
 

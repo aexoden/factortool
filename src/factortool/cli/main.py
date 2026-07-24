@@ -32,7 +32,7 @@ class Arguments(Tap):
     skip_count: int = 0  # Skip this many numbers when fetching from FactorDB (to hopefully avoid conflict)
 
 
-def main() -> None:  # noqa: C901, PLR0914
+def main() -> None:  # ruff:ignore[complex-structure, too-many-locals]
     """Factor numbers using various methods."""
     setup_logger()
 

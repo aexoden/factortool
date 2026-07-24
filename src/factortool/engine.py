@@ -109,7 +109,7 @@ class FactorEngine:
 
         return ExitStatus.SUCCESS
 
-    def _run_standard(self, numbers: Collection[Number]) -> ExitStatus:  # noqa: C901, PLR0911, PLR0912
+    def _run_standard(self, numbers: Collection[Number]) -> ExitStatus:  # ruff:ignore[complex-structure, too-many-branches, too-many-return-statements]
         """Factor numbers using the built-in sequence of methods.
 
         Returns:
@@ -174,7 +174,8 @@ class FactorEngine:
             curves, b1 = ECM_CURVES[ecm_level]
 
             logger.info(
-                "Attempting ECM factoring on {} number{} (of {} total remaining) at t-level {} with {} curve{} of B1 = {}",  # noqa: E501
+                "Attempting ECM factoring on {} number{} (of {} total remaining)"
+                " at t-level {} with {} curve{} of B1 = {}",
                 ecm_number_count,
                 "s" if ecm_number_count != 1 else "",
                 overall_number_count,
