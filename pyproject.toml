@@ -83,4 +83,5 @@ lines-between-types = 1
 convention = "google"
 
 [tool.uv]
+exclude-newer = "7 days"
 required-version = ">=0.12.0"
