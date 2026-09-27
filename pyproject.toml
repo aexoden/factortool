@@ -81,3 +81,6 @@ lines-between-types = 1
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+[tool.uv]
+required-version = ">=0.12.0"
