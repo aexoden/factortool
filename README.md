@@ -23,7 +23,7 @@ work. As such, you will need a correctly configured installation of both.
 The recommended way to install the program is to have [uv](https://docs.astral.sh/uv/)
 installed, and to simply run the program with `uv run factortool`.
 
-Copy the `config.json.dist` to `config.json` and edit it as appropriate. You may
+Copy the `config.dist.json` to `config.json` and edit it as appropriate. You may
 then run the program. It accepts the following options:
 
 * `--config_path`: To specify a configuration file other than config.json.
