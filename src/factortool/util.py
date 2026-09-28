@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import sys
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Generator, Iterable
 
 import gmpy2
 
@@ -125,6 +126,75 @@ def setup_logger() -> None:
     )
 
     logger.add(sys.stdout, format=logger_format)
+
+
+# Options in yafu.ini that represent file or directory paths.
+YAFU_INI_PATH_OPTIONS = frozenset({"cado_dir", "convert_poly_path", "ecm_path", "ggnfs_dir"})
+
+
+def rewrite_yafu_ini(ini_text: str, ini_dir: Path) -> str:
+    """Rewrite relative path options in a yafu.ini file to still be valid from a different working directory.
+
+    Returns:
+        str: The rewritten ini text with updated relative paths.
+    """
+    lines: list[str] = []
+
+    for line in ini_text.splitlines():
+        key, separator, raw_value = line.partition("=")
+        value = raw_value.strip()
+
+        # Paths with an anchor are left alone, even on Windows.
+        if separator and key.strip() in YAFU_INI_PATH_OPTIONS and value and not Path(value).anchor:
+            # YAFU requires directory options to retain their trailing separator.
+            trailing = os.sep if value.endswith(("/", "\\")) else ""
+            lines.append(f"{key}={(ini_dir / value).resolve()}{trailing}")
+        else:
+            lines.append(line)
+
+    return "\n".join(lines) + "\n"
+
+
+def _place_yafu_ini(ini_path: Path, work_dir: Path) -> None:
+    """Write a working-directory-independent copy of yafu.ini into a YAFU working directory.
+
+    The ini is rewritten rather than symlinked because its relative path options are only meaningful in the original
+    location.
+    """
+    try:
+        ini_text = ini_path.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning("Failed to read {}: {}. YAFU will use its built-in defaults", ini_path, e)
+        return
+
+    try:
+        (work_dir / "yafu.ini").write_text(rewrite_yafu_ini(ini_text, ini_path.parent), encoding="utf-8")
+    except OSError as e:
+        logger.warning("Failed to write yafu.ini in {}: {}. YAFU will use its built-in defaults", work_dir, e)
+
+
+@contextlib.contextmanager
+def get_work_dir(base_path: Path, ini_path: Path | None, prefix: str) -> Generator[Path]:
+    """Provide an isolated working directory for a single YAFU or CADO-NFS invocation.
+
+    YAFU writes session.log, factor.log, factor.json, siqs.dat and assorted NFS artifacts into its current working
+    directory. Giving every invocation its own directory keeps those out of the YAFU installation and, because
+    factortool can run several YAFU processes concurrently, prevents them from clobbering each other's files.
+
+    CADO-NFS also writes artifacts into its working directory, but it doesn't need yafu.ini.
+
+    Yields:
+        Path: The working directory, removed once the context exits.
+    """
+    base_path.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory(dir=base_path, prefix=prefix) as name:
+        work_dir = Path(name)
+
+        if ini_path is not None and ini_path.is_file():
+            _place_yafu_ini(ini_path, work_dir)
+
+        yield work_dir
 
 
 def safe_write(path: Path, data: bytes) -> None:

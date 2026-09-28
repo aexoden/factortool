@@ -11,5 +11,7 @@
   "max_threads": 2,
   "result_output_path": "results",
   "stats_path": "stats.json",
-  "yafu_path": "/opt/yafu/yafu"
+  "work_path": "work",
+  "yafu_path": "/opt/yafu/yafu",
+  "yafu_ini_path": null
 }
