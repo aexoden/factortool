@@ -34,8 +34,8 @@ def get_too_many_requests_delay(response: requests.Response, default_delay: floa
             delay = int(retry_after)
         except ValueError:
             try:
-                retry_date = datetime.datetime.strptime(retry_after, "%a, %d %b %Y %H:%M:%S GMT").astimezone(
-                    datetime.UTC
+                retry_date = datetime.datetime.strptime(retry_after, "%a, %d %b %Y %H:%M:%S GMT").replace(
+                    tzinfo=datetime.UTC
                 )
                 delay = (retry_date - datetime.datetime.now(tz=datetime.UTC)).total_seconds()
                 delay = max(1.0, delay)
