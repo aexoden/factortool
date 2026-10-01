@@ -82,7 +82,7 @@ class FactorDB:
         while (len(numbers)) == 0:
             try:
                 response = self._http_client.request(
-                    "GET", "https://factordb.com/listtype.php", params=params, timeout=3.0, max_retries=None
+                    "GET", "https://factordb.com/listtype.php", params=params, timeout=3.0, max_attempts=None
                 )
                 numbers = {
                     Number(x, self._config, self._stats, self) for x in map(int, response.text.strip().split("\n"))
@@ -150,7 +150,7 @@ class FactorDB:
         payload = {"number": str(number), "factor": str(factor)}
 
         try:
-            self._http_client.request("POST", url, data=payload, timeout=3.0, max_retries=None)
+            self._http_client.request("POST", url, data=payload, timeout=3.0, max_attempts=None)
             logger.debug("Submitted factor {} for n={}", factor, number)
             with self._submission_lock:
                 self._successful_submissions += 1
@@ -195,7 +195,7 @@ class FactorDB:
         }
 
         try:
-            self._http_client.request("POST", login_url, data=login_data, timeout=5.0, max_retries=5)
+            self._http_client.request("POST", login_url, data=login_data, timeout=5.0, max_attempts=5)
         except requests.RequestException as e:
             logger.error("FactorDB login failed: {}", e)
             return False
