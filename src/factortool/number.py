@@ -20,10 +20,10 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from factortool.constants import CADO_NFS_MIN_DIGITS, ECM_CURVES
-from factortool.util import SMALL_PRIMES, format_number, is_prime, log_factor_result
+from factortool.util import SMALL_PRIMES, format_number, get_work_dir, is_prime, log_factor_result
 
 if TYPE_CHECKING:
-    from factortool.config import Config
+    from factortool.config import Config, YafuPaths
     from factortool.factordb import FactorDB
     from factortool.stats import FactoringStats
 
@@ -38,7 +38,7 @@ class SIQSNeeded(Exception):  # ruff:ignore[error-suffix-on-exception-name]
 
 @cache
 def factor_ecm(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
-    n: int, level: int, max_siqs_digits: int, max_threads: int, yafu_path: Path, stats: FactoringStats
+    n: int, level: int, max_siqs_digits: int, max_threads: int, yafu: YafuPaths, stats: FactoringStats
 ) -> list[int]:
     """Factor a number using ECM via YAFU.
 
@@ -67,17 +67,18 @@ def factor_ecm(  # ruff:ignore[too-many-arguments, too-many-positional-arguments
 
     # Perform the ECM using YAFU.
     start_time = time.perf_counter_ns()
-    cmd: list[str] = [str(yafu_path), f"ecm({n}, {curves})", "-threads", str(max_threads), "-B1ecm", str(b1)]
+    cmd: list[str] = [str(yafu.binary), f"ecm({n}, {curves})", "-threads", str(max_threads), "-B1ecm", str(b1)]
 
     try:
-        result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
-            cmd,
-            cwd=yafu_path.parent,
-            capture_output=True,
-            text=True,
-            check=True,
-            process_group=0,
-        )
+        with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
+            result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
+                cmd,
+                cwd=work_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+                process_group=0,
+            )
     except subprocess.CalledProcessError as e:
         logger.critical("YAFU ECM failed for {} with method ECM: {}", n, e.stderr)
         sys.exit(5)
@@ -101,13 +102,13 @@ def factor_ecm(  # ruff:ignore[too-many-arguments, too-many-positional-arguments
 
 
 @cache
-def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path, stats: FactoringStats) -> list[int]:
+def factor_yafu(n: int, method: str, max_threads: int, yafu: YafuPaths, stats: FactoringStats) -> list[int]:
     """Factor a number using YAFU with a specified method.
 
     Returns:
         list[int]: List of factors found.
     """
-    cmd = [str(yafu_path), f"{method}({n})", "-inmem", "200"]
+    cmd = [str(yafu.binary), f"{method}({n})", "-inmem", "200"]
     threads = 1
 
     if method not in {"pm1", "rho"}:
@@ -117,15 +118,16 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path, stats: F
     start_time = time.perf_counter_ns()
 
     try:
-        result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
-            cmd,
-            cwd=yafu_path.parent,
-            capture_output=True,
-            env={"OMP_NUM_THREADS": "1"},
-            text=True,
-            check=True,
-            process_group=0,
-        )
+        with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
+            result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
+                cmd,
+                cwd=work_dir,
+                capture_output=True,
+                env={"OMP_NUM_THREADS": "1"},
+                text=True,
+                check=True,
+                process_group=0,
+            )
     except subprocess.CalledProcessError as e:
         logger.critical("YAFU failed for {} with method {}: {}", n, method, e.stderr)
         sys.exit(5)
@@ -159,26 +161,27 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu_path: Path, stats: F
 
 
 @cache
-def factor_yafu_direct(n: int, max_threads: int, yafu_path: Path, stats: FactoringStats) -> list[int]:
+def factor_yafu_direct(n: int, max_threads: int, yafu: YafuPaths, stats: FactoringStats) -> list[int]:
     """Factor a number using YAFU's automatic method selection.
 
     Returns:
         list[int]: List of factors found.
     """
-    cmd = [str(yafu_path), f"factor({n})", "-threads", str(max_threads)]
+    cmd = [str(yafu.binary), f"factor({n})", "-threads", str(max_threads)]
 
     start_time = time.perf_counter_ns()
 
     try:
-        result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
-            cmd,
-            cwd=yafu_path.parent,
-            capture_output=True,
-            env={"OMP_NUM_THREADS": "1"},
-            text=True,
-            check=True,
-            process_group=0,
-        )
+        with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
+            result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
+                cmd,
+                cwd=work_dir,
+                capture_output=True,
+                env={"OMP_NUM_THREADS": "1"},
+                text=True,
+                check=True,
+                process_group=0,
+            )
     except subprocess.CalledProcessError as e:
         logger.critical("YAFU direct factoring failed for {}: {}", n, e.stderr)
         sys.exit(5)
@@ -204,7 +207,7 @@ def factor_yafu_direct(n: int, max_threads: int, yafu_path: Path, stats: Factori
 
 
 @cache
-def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, stats: FactoringStats) -> list[int]:
+def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, work_path: Path, stats: FactoringStats) -> list[int]:
     """Factor a number using CADO-NFS.
 
     Returns:
@@ -217,19 +220,21 @@ def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, stats: FactoringSt
         return [n]
 
     # Factor the number using CADO-NFS.
-    cmd = [str(cado_nfs_path), str(n), "-t", str(max_threads)]
+    cmd = [str(cado_nfs_path.absolute()), str(n), "-t", str(max_threads)]
 
     start_time = time.perf_counter_ns()
 
     try:
-        result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
-            cmd,
-            input=str(n),
-            capture_output=True,
-            text=True,
-            check=True,
-            process_group=0,
-        )
+        with get_work_dir(work_path, None, "nfs-") as work_dir:
+            result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
+                cmd,
+                cwd=work_dir,
+                input=str(n),
+                capture_output=True,
+                text=True,
+                check=True,
+                process_group=0,
+            )
     except subprocess.CalledProcessError as e:
         logger.critical("NFS failed for {}: {}", n, e.stderr)
         sys.exit(4)
@@ -472,11 +477,21 @@ class Number:
 
         self._maximum_ecm_level = min(best_maximum_ecm_level + extra_ecm_levels, self._maximum_ecm_level)
 
+    @property
+    def _yafu_args(self) -> tuple[int, YafuPaths, FactoringStats]:
+        """Trailing arguments shared by every YAFU-backed factoring function."""
+        return (self._config.max_threads, self._config.yafu_paths, self._stats)
+
+    @property
+    def _nfs_args(self) -> tuple[int, Path, Path, FactoringStats]:
+        """Trailing arguments for the CADO-NFS factoring function."""
+        return (self._config.max_threads, self._config.cado_nfs_path, self._config.work_path, self._stats)
+
     def _factor_generic(
         self,
         method: str,
         factor_func: Callable[..., list[int]],
-        *args: int | str | Path | FactoringStats,
+        *args: int | str | Path | YafuPaths | FactoringStats,
     ) -> bool:
         composite_factors = self.composite_factors.copy()
         self.composite_factors = []
@@ -488,11 +503,11 @@ class Number:
             except SIQSNeeded:
                 logger.info("Immediately doing SIQS on {} for statistics", format_number(n))
                 method = "SIQS"
-                factors = factor_yafu(n, "siqs", self._config.max_threads, self._config.yafu_path, self._stats)
+                factors = factor_yafu(n, "siqs", *self._yafu_args)
             except NFSNeeded:
                 logger.info("Immediately doing NFS on {} for statistics", format_number(n))
                 method = "NFS"
-                factors = factor_nfs(n, self._config.max_threads, self._config.cado_nfs_path, self._stats)
+                factors = factor_nfs(n, *self._nfs_args)
 
             if len(factors) > 1:
                 self.methods.append(method)
@@ -515,7 +530,7 @@ class Number:
 
     def factor_yafu_direct(self) -> None:
         """Factor using YAFU's automatic method selection."""
-        self._factor_generic("YAFU", factor_yafu_direct, self._config.max_threads, self._config.yafu_path, self._stats)
+        self._factor_generic("YAFU", factor_yafu_direct, *self._yafu_args)
 
     def factor_tf(self) -> None:
         """Factor using trial factoring."""
@@ -524,29 +539,17 @@ class Number:
 
     def factor_rho(self) -> None:
         """Factor using Pollard's Rho algorithm."""
-        if self._factor_generic(
-            "Rho", factor_yafu, "rho", self._config.max_threads, self._config.yafu_path, self._stats
-        ):
+        if self._factor_generic("Rho", factor_yafu, "rho", *self._yafu_args):
             self._set_maximum_ecm_level()
 
     def factor_pm1(self) -> None:
         """Factor using Pollard's P-1 algorithm."""
-        if self._factor_generic(
-            "P-1", factor_yafu, "pm1", self._config.max_threads, self._config.yafu_path, self._stats
-        ):
+        if self._factor_generic("P-1", factor_yafu, "pm1", *self._yafu_args):
             self._set_maximum_ecm_level()
 
     def factor_ecm(self, level: int) -> None:
         """Factor using ECM at the specified level."""
-        found_factors = self._factor_generic(
-            "ECM",
-            factor_ecm,
-            level,
-            self._config.max_siqs_digits,
-            self._config.max_threads,
-            self._config.yafu_path,
-            self._stats,
-        )
+        found_factors = self._factor_generic("ECM", factor_ecm, level, self._config.max_siqs_digits, *self._yafu_args)
 
         self._ecm_level = level
 
@@ -555,11 +558,11 @@ class Number:
 
     def factor_siqs(self) -> None:
         """Factor using the Self-Initializing Quadratic Sieve (SIQS) algorithm."""
-        self._factor_generic("SIQS", factor_yafu, "siqs", self._config.max_threads, self._config.yafu_path, self._stats)
+        self._factor_generic("SIQS", factor_yafu, "siqs", *self._yafu_args)
 
     def factor_nfs(self) -> None:
         """Factor using the Number Field Sieve (NFS) algorithm."""
-        self._factor_generic("NFS", factor_nfs, self._config.max_threads, self._config.cado_nfs_path, self._stats)
+        self._factor_generic("NFS", factor_nfs, *self._nfs_args)
 
 
 def format_results(numbers: Iterable[Number]) -> str:
