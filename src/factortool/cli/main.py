@@ -13,6 +13,7 @@ from pathlib import Path
 from loguru import logger
 from tap import Tap
 
+from factortool.backend import Backend, FetchCriteria
 from factortool.batch import BatchController
 from factortool.config import read_config
 from factortool.engine import ExitStatus, FactorEngine
@@ -45,8 +46,8 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-locals]
         sys.exit(1)
 
     stats = FactoringStats(config.stats_path)
-    factordb = FactorDB(config, stats)
-    engine = FactorEngine(config, factordb, args.target_duration)
+    backend: Backend = FactorDB(config, stats)
+    engine = FactorEngine(config, args.target_duration)
 
     logger.info("Using factoring mode: {}", config.factoring_mode)
 
@@ -55,7 +56,7 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-locals]
 
     logger.info("Fetching {} composite numbers from FactorDB", batch_size)
 
-    numbers = factordb.fetch(args.min_digits, batch_size, args.skip_count)
+    numbers = backend.fetch(FetchCriteria(count=batch_size, min_digits=args.min_digits, skip_count=args.skip_count))
 
     start_time = time.monotonic()
 
@@ -108,7 +109,7 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-locals]
         f.write(format_results(numbers) + "\n")
 
     stats.save_data()
-    factordb.close()
+    backend.close()
 
     if status == ExitStatus.SUCCESS:
         sys.exit(0)

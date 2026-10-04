@@ -22,7 +22,6 @@ from factortool.constants import ECM_CURVES
 
 if TYPE_CHECKING:
     from factortool.config import Config
-    from factortool.factordb import FactorDB
     from factortool.number import Number
 
 
@@ -37,10 +36,9 @@ class ExitStatus(Enum):
 class FactorEngine:
     """Engine for managing factorization tasks."""
 
-    def __init__(self, config: Config, factordb: FactorDB | None = None, target_duration: float = 600.0) -> None:
+    def __init__(self, config: Config, target_duration: float = 600.0) -> None:
         """Initialize the factorization engine."""
         self._config = config
-        self._factordb = factordb
         self._target_duration = target_duration
         self._interrupt_level: int = 0
         self._start_time = time.monotonic()

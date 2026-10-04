@@ -24,6 +24,7 @@ from factortool.http import MAX_DELAY, HttpClient
 from factortool.number import Number
 
 if TYPE_CHECKING:
+    from factortool.backend import FetchCriteria
     from factortool.config import Config
     from factortool.stats import FactoringStats
 
@@ -37,6 +38,9 @@ class FactorDBSessionData(BaseModel):
 
 class FactorDB:
     """Interface for interacting with FactorDB."""
+
+    # FactorDB does not currently have any sort of reservation system.
+    assigns_work = False
 
     def __init__(self, config: Config, stats: FactoringStats) -> None:
         """Initialize the FactorDB interface."""
@@ -55,39 +59,42 @@ class FactorDB:
         )
         self._submit_thread.start()
 
-    def fetch(self, min_digits: int, number_count: int, skip_count: int) -> set[Number]:
+    def fetch(self, criteria: FetchCriteria) -> set[Number]:
         """Fetch composite numbers from FactorDB.
+
+        Supports all criteria. Requests are capped at 50 numbers. Especially when filtering by max_digits, but feasibly
+        also if FactorDB runs out of work, the number of fetched numbers may be fewer than requested, including zero.
 
         Returns:
             set[Number]: Set of fetched numbers.
         """
-        if number_count == 0:
+        if criteria.count == 0:
             return set()
 
         # Limit to a maximum of 50 numbers per request to avoid overloading FactorDB. This is intended to be a temporary
         # measure.
-        number_count = min(number_count, 50)
+        number_count = min(criteria.count, 50)
 
         params = {
             "t": 3,
-            "mindig": min_digits,
+            "mindig": criteria.min_digits,
             "perpage": number_count,
-            "start": skip_count,
+            "start": criteria.skip_count,
             "download": 1,
         }
 
-        numbers: set[Number] = set()
         delay = self._config.factordb_cooldown_period
 
-        while (len(numbers)) == 0:
+        while True:
             try:
                 response = self._http_client.request(
                     "GET", "https://factordb.com/listtype.php", params=params, timeout=3.0, max_attempts=None
                 )
                 numbers = {
-                    Number(x, self._config, self._stats, self) for x in map(int, response.text.strip().split("\n"))
+                    Number(x, self._config, self._stats, self)
+                    for x in map(int, response.text.strip().split("\n"))
+                    if criteria.max_digits is None or len(str(x)) <= criteria.max_digits
                 }
-                logger.info("Fetched {} numbers from FactorDB", len(numbers))
             except ValueError as e:
                 logger.error("Failed to parse response from FactorDB: {}. Retrying in {} seconds...", e, delay)
                 time.sleep(delay)
@@ -96,8 +103,9 @@ class FactorDB:
                 logger.error("Failed to fetch numbers from FactorDB: {}. Retrying in {} seconds...", e, delay)
                 time.sleep(delay)
                 delay = min(MAX_DELAY, delay * 2)
-
-        return numbers
+            else:
+                logger.info("Fetched {} numbers from FactorDB", len(numbers))
+                return numbers
 
     def submit(self, numbers: Collection[Number]) -> None:
         """Add factored numbers to the submission queue."""
