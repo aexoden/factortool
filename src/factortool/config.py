@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal, NamedTuple
 
 from loguru import logger
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, field_validator
 
 
 class YafuPaths(NamedTuple):
@@ -20,6 +20,9 @@ class YafuPaths(NamedTuple):
     binary: Path
     work: Path
     ini: Path
+
+
+ASCII_RANGE = range(0x20, 0x7F)
 
 
 @dataclass
@@ -42,9 +45,28 @@ class Config(BaseModel):
     mersenne_ca_cooldown_period: float
     result_output_path: Path
     stats_path: Path
+    user_agent: str
     work_path: Path
     yafu_path: Path
     yafu_ini_path: Path | None
+
+    @field_validator("user_agent")
+    @classmethod
+    def validate_user_agent(cls, value: str) -> str:
+        """Require an empty override or printable ASCII header.
+
+        Returns:
+            str: The validated User-Agent string.
+
+        Raises:
+            ValueError: If the User-Agent is not empty and contains non-printable ASCII characters or leading/trailing
+                whitespace.
+        """
+        if value and (value != value.strip() or any(ord(char) not in ASCII_RANGE for char in value)):
+            msg = "user_agent must contain printable ASCII only, with no leading or trailing whitespace"
+            raise ValueError(msg)
+
+        return value
 
     @property
     def yafu_paths(self) -> YafuPaths:

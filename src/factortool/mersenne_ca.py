@@ -50,7 +50,7 @@ class MersenneCA(BaseBackend):
 
     def __init__(self, config: Config, stats: FactoringStats) -> None:
         """Initialize the mersenne.ca interface."""
-        super().__init__(config, stats, config.mersenne_ca_cooldown_period)
+        super().__init__(config, stats, config.mersenne_ca_cooldown_period, config.gimps_login)
 
         if not config.gimps_login:
             logger.error("No GIMPS login is configured; mersenne.ca requires one to assign and accept work")

@@ -13,10 +13,53 @@ from typing import TYPE_CHECKING
 import pytest
 import requests
 
-from factortool.http import HttpClient, get_too_many_requests_delay
+from factortool.__about__ import PROJECT_URL, __version__
+from factortool.http import HttpClient, build_user_agent, get_too_many_requests_delay
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+
+@pytest.mark.parametrize(
+    ("identity", "encoded"),
+    [
+        ("FactorFinder", "FactorFinder"),
+        ("用户", "%E7%94%A8%E6%88%B7"),
+        ("Renée", "Ren%C3%A9e"),
+        ("name(test)", "name%28test%29"),
+        ("name\r\nvalue", "name%0D%0Avalue"),
+    ],
+)
+def test_user_agent_encodes_account_names(identity: str, encoded: str) -> None:
+    """Test that the User-Agent encodes account names correctly."""
+    assert build_user_agent(identity) == (f"factortool/{__version__} ({encoded}; +{PROJECT_URL})")
+
+
+def test_user_agent_identifies_the_tool_and_project() -> None:
+    """Test that the User-Agent names the tool, its version and the project URL."""
+    assert build_user_agent() == f"factortool/{__version__} (+{PROJECT_URL})"
+
+
+def test_user_agent_includes_the_configured_account() -> None:
+    """Test that the User-Agent includes the configured account name."""
+    assert build_user_agent("FactorFinder") == f"factortool/{__version__} (FactorFinder; +{PROJECT_URL})"
+
+
+def test_user_agent_override_wins() -> None:
+    """Test that a configured override replaces the composed User-Agent."""
+    assert build_user_agent("FactorFinder", "custom/1.0") == "custom/1.0"
+
+
+def test_client_sends_the_user_agent() -> None:
+    """Test that the client sends the given User-Agent."""
+    client = HttpClient("test", 1.0, "factortool/test")
+
+    assert client.session.headers["User-Agent"] == "factortool/test"
+
+
+def test_client_defaults_to_the_composed_user_agent() -> None:
+    """Test that the client defaults to the composed User-Agent."""
+    assert HttpClient("test", 1.0).session.headers["User-Agent"] == build_user_agent()
 
 
 def make_response(status_code: int, headers: dict[str, str] | None = None) -> requests.Response:

@@ -22,7 +22,7 @@ import requests
 
 from loguru import logger
 
-from factortool.http import MAX_DELAY, HttpClient
+from factortool.http import MAX_DELAY, HttpClient, build_user_agent
 from factortool.number import Number
 
 if TYPE_CHECKING:
@@ -126,12 +126,19 @@ class BaseBackend(ABC):
     # A descriptive name for a single submission unit, used for logging.
     submission_unit: ClassVar[str]
 
-    def __init__(self, config: Config, stats: FactoringStats, cooldown_period: float) -> None:
-        """Initialize the backend and start its submission worker."""
+    def __init__(self, config: Config, stats: FactoringStats, cooldown_period: float, identity: str) -> None:
+        """Initialize the backend and start its submission worker.
+
+        Args:
+            config (Config): Application configuration.
+            stats (FactoringStats): Factoring statistics.
+            cooldown_period (float): Cooldown period between requests in seconds.
+            identity (str): Account name used with the service, included in the User-Agent. May be empty.
+        """
         self._config = config
         self._stats = stats
         self._cooldown_period = cooldown_period
-        self._http_client = HttpClient(self.name, cooldown_period)
+        self._http_client = HttpClient(self.name, cooldown_period, build_user_agent(identity, config.user_agent))
         self._submit_queue: queue.Queue[Number] = queue.Queue()
         self._stop_event = threading.Event()
         self._successful_submissions = 0

@@ -36,7 +36,7 @@ class FakeBackend(BaseBackend):
         self.responses = iter(responses)
         self.successes_per_number = successes_per_number
         self.submitted: list[int] = []
-        super().__init__(config, stats, 1.0)
+        super().__init__(config, stats, 1.0, "")
 
     @override
     def _request_composites(self, criteria: FetchCriteria) -> str:
@@ -100,6 +100,7 @@ def config(tmp_path: Path) -> Config:
         mersenne_ca_cooldown_period=0.0,
         result_output_path=tmp_path / "results",
         stats_path=tmp_path / "stats.json",
+        user_agent="",
         work_path=tmp_path / "work",
         yafu_path=tmp_path / "yafu",
         yafu_ini_path=None,

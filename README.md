@@ -79,6 +79,18 @@ Partial factorizations are submitted if a run ends after finding one or more
 factors. For `mersenne_ca`, unfinished assignments are saved in `assignment_state_path`
 and resumed on the next run.
 
+## User Agent
+
+Requests carry a User-Agent header naming the tool, its version, the project URL
+and the configured account for the selected backend. For example:
+
+```text
+factortool/0.1.0 (Username; +https://github.com/aexoden/factortool)
+```
+
+Set `user_agent` in config.json to replace the value entirely if you would rather
+send something else.
+
 ## YAFU Working Directories
 
 `factortool` runs each YAFU invocation in a separate temporary directory under

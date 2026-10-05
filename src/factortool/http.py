@@ -8,6 +8,7 @@ import datetime
 import time
 
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -16,11 +17,31 @@ import requests
 
 from loguru import logger
 
+from factortool.__about__ import PROJECT_URL, __version__
+
 MAX_DELAY = 3600.0
 TRANSIENT_STATUS_CODES = frozenset({502, 503, 504})
 
 CLIENT_ERROR_STATUS_CODES = range(400, 500)
 RETRYABLE_CLIENT_STATUS_CODES = frozenset({408, 429})
+
+
+def build_user_agent(identity: str = "", override: str = "") -> str:
+    """Compose the User-Agent to identify this client to a remote service.
+
+    Returns:
+        str: The User-Agent header value.
+    """
+    if override:
+        return override
+
+    detail = f"+{PROJECT_URL}"
+
+    if identity:
+        safe_identity = quote(identity, safe="", encoding="utf-8")
+        detail = f"{safe_identity}; {detail}"
+
+    return f"factortool/{__version__} ({detail})"
 
 
 def get_too_many_requests_delay(response: requests.Response, default_delay: float = 3600.0) -> float:
@@ -63,16 +84,18 @@ class HttpClient:
     Client errors (4xx) other than 408 and 429 are treated as permanent and fail immediately regardless of max_attempts.
     """
 
-    def __init__(self, service_name: str, cooldown_period: float) -> None:
+    def __init__(self, service_name: str, cooldown_period: float, user_agent: str | None = None) -> None:
         """Initialize the HTTP client.
 
         Args:
             service_name (str): Name of the remote service. Only used for logging purposes.
             cooldown_period (float): Cooldown period between requests in seconds.
+            user_agent (str | None): Custom User-Agent header value. If None, a default User-Agent will be used.
         """
         self._service_name = service_name
         self._cooldown_period = cooldown_period
         self.session = requests.Session()
+        self.session.headers["User-Agent"] = user_agent if user_agent is not None else build_user_agent()
 
     def request(  # ruff: ignore[too-many-arguments] (Matching the signature of requests.Session.request)
         self,

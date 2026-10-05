@@ -43,7 +43,7 @@ class FactorDB(BaseBackend):
 
     def __init__(self, config: Config, stats: FactoringStats) -> None:
         """Initialize the FactorDB interface."""
-        super().__init__(config, stats, config.factordb_cooldown_period)
+        super().__init__(config, stats, config.factordb_cooldown_period, config.factordb_username)
 
         self._load_session()
 
