@@ -2,7 +2,8 @@
 
 -----
 
-`factortool` is a utility for factoring numbers, primarily for submission to FactorDB.
+`factortool` is a utility for factoring numbers, primarily for submission to
+FactorDB and mersenne.ca.
 
 ## Features
 
@@ -12,7 +13,8 @@
   crossover threshold and decision between SIQS and NFS.
 * As an alternative to the built-in breadth-first factoring, can also simply
   directly use YAFU for each fetched number.
-* Automatically fetches composite numbers from FactorDB and submits results.
+* Automatically fetches composite numbers and submits results, either from FactorDB
+  or from the mersenne.ca Aliquot composite service.
 
 ## Usage
 
@@ -29,12 +31,15 @@ then run the program. It accepts the following options:
 * `--config_path`: To specify a configuration file other than config.json.
 * `--min_digits`: The minimium number of digits fetched composite numbers should
   have.
+* `--max_digits`: The maximum number of digits fetched composite numbers should
+  have. Required by the mersenne.ca backend.
 * `--batch_size`: The number of composite numbers to fetch from FactorDB. A value
   of 0 (default) attempts to use an automatic batch size to meet a target time.
 * `--target-duration`: The number of seconds to target when using an automatic
   batch size. The default is 600 seconds (ten minutes).
 * `--skip_count`: How many composite numbers to skip on FactorDB. Useful for working
-  at an offset to avoid conflicts.
+  at an offset to avoid conflicts. Not supported by the mersenne.ca backend (which
+  assigns distinct work to each user).
 
 Note that the program itself does not loop. Such functionality could be added in
 theory, but this way ensures memory leaks aren't an issue. I find it convenient
@@ -56,6 +61,32 @@ an interrupt (such as Ctrl-C).
 If you are using direct YAFU support (by setting `factoring_mode` to `yafu` in
 config.json), I recommend ensuring YAFU's NFS functionality is correctly
 configured.
+
+## Backends
+
+The `backend` setting in config.json selects the source of composite numbers and
+where factors are submitted.
+
+* `factordb`: fetches composites from FactorDB and submits factors back there.
+  Set `factordb_username` and `factordb_password` to log in; otherwise, results
+  are submitted anonymously.
+* `mersenne_ca`: fetches assigned composites from the [mersenne.ca Aliquot composite
+  service](https://www.mersenne.ca/aliquot/?compositelist=1) and submits results
+  through that service. Set `gimps_login` to your GIMPS username. `--max-digits`
+  is required, and `--skip-count` is not supported (or needed to avoid conflict).
+
+Partial factorizations are submitted if a run ends after finding one or more
+factors. For `mersenne_ca`, unfinished assignments are saved in `assignment_state_path`
+and resumed on the next run.
+
+## YAFU Working Directories
+
+`factortool` runs each YAFU invocation in a separate temporary directory under
+`work_path`, preventing YAFU's working files from interfering with other runs.
+
+A `yafu.ini` is copied into each working directory and relative tool paths are
+adjusted automatically. By default, factortool uses the `yafu.ini` next to the
+YAFU binary; set `yafu_ini_path` to use a different file.
 
 ## Notes
 

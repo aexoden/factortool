@@ -57,3 +57,10 @@ implementation. There is no guarantee I will actually get to any of this.
 * Add additional tests.
 * Investigate making threads overridable on the command line.
 * Add support for calculating and verifying Aliquot sequences.
+* Support mersenne.ca's pretest mode (`composites_to_pretest` when fetching, and
+  a `pretest_ratio` field when reporting), which asks for ECM-only pre-factoring
+  without SIQS or NFS.
+* Consider whether the mersenne.ca one-hour assignment window should influence
+  batch sizing. Unfinished assignments are now carried across runs, so nothing is
+  lost, but a batch taking much longer than an hour will have released its later
+  composites back to the pool before they are reported.
