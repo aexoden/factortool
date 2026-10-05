@@ -269,3 +269,19 @@ class BaseBackend(ABC):
 
             self._submit_queue.task_done()
             time.sleep(SUBMIT_SPACING)
+
+
+def create_backend(config: Config, stats: FactoringStats) -> Backend:
+    """Build the backend selected in the configuration.
+
+    Returns:
+        Backend: The configured backend.
+    """
+    # Imported here to avoid a circular import: both backends subclass BaseBackend from this module.
+    from factortool.factordb import FactorDB  # ruff: ignore[import-outside-top-level]
+    from factortool.mersenne_ca import MersenneCA  # ruff: ignore[import-outside-top-level]
+
+    if config.backend == "mersenne_ca":
+        return MersenneCA(config, stats)
+
+    return FactorDB(config, stats)

@@ -46,6 +46,7 @@ def make_config(**overrides: object) -> Config:
     """
     return Config.model_validate(
         {
+            "backend": "factordb",
             "batch_state_path": "batch_state.json",
             "cado_nfs_path": "cado-nfs.py",
             "factordb_cooldown_period": 1.0,

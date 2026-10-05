@@ -9,15 +9,18 @@ import sys
 import time
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Collection
 
 from loguru import logger
 from tap import Tap
 
-from factortool.backend import Backend, FetchCriteria
-from factortool.batch import BatchController
+from factortool.backend import FetchCriteria, create_backend
+from factortool.batch import BatchController, BatchKey
 from factortool.config import read_config
 from factortool.engine import ExitStatus, FactorEngine
-from factortool.factordb import FactorDB
 from factortool.number import Number, format_results
 from factortool.stats import FactoringStats
 from factortool.util import setup_logger
@@ -28,47 +31,34 @@ class Arguments(Tap):
 
     config_path: Path = Path("config.json")  # Path to the JSON-formatted configuration file
     min_digits: int = 1  # Minimum number of digits fetched composite numbers should have
+    max_digits: int = 0  # Maximum number of digits fetched composite numbers should have (required by mersenne.ca)
     batch_size: int = 0  # Number of composite numbers to work on at a time (0 for automatic)
     target_duration: float = 600.0  # Target duration in seconds for each batch (only used when batch_size is 0)
     skip_count: int = 0  # Skip this many numbers when fetching from FactorDB (to hopefully avoid conflict)
 
 
-def main() -> None:  # ruff:ignore[complex-structure, too-many-locals]
-    """Factor numbers using various methods."""
-    setup_logger()
-
-    args = Arguments().parse_args()
-
-    try:
-        config = read_config(args.config_path)
-    except FileNotFoundError:
-        logger.error("Configuration file not found")
+def validate_arguments(args: Arguments, backend_name: str) -> None:
+    """Reject argument combinations the selected backend cannot honor."""
+    if args.max_digits < 0:
+        logger.error("--max_digits ({}) cannot be negative", args.max_digits)
         sys.exit(1)
 
-    stats = FactoringStats(config.stats_path)
-    backend: Backend = FactorDB(config, stats)
-    engine = FactorEngine(config, args.target_duration)
+    if 0 < args.max_digits < args.min_digits:
+        logger.error("--max_digits ({}) is below --min_digits ({})", args.max_digits, args.min_digits)
+        sys.exit(1)
 
-    logger.info("Using factoring mode: {}", config.factoring_mode)
+    if backend_name == "mersenne_ca":
+        if args.max_digits <= 0:
+            logger.error("The mersenne.ca backend requires --max_digits")
+            sys.exit(1)
 
-    batch_controller = BatchController(args.target_duration, args.min_digits, args.skip_count, config.batch_state_path)
-    batch_size = args.batch_size if args.batch_size > 0 else batch_controller.batch_size
+        if args.skip_count != 0:
+            logger.error("The mersenne.ca backend does not support --skip_count, since it assigns distinct work")
+            sys.exit(1)
 
-    logger.info("Fetching {} composite numbers from FactorDB", batch_size)
 
-    numbers = backend.fetch(FetchCriteria(count=batch_size, min_digits=args.min_digits, skip_count=args.skip_count))
-
-    start_time = time.monotonic()
-
-    status = engine.run(sorted(numbers))
-
-    duration = time.monotonic() - start_time
-    factored_count = len([number for number in numbers if number.factored])
-
-    logger.info("Factored {} numbers in {:.2f} seconds", factored_count, duration)
-
-    batch_controller.record_batch(factored_count, duration)
-
+def report_summary(numbers: Collection[Number]) -> None:
+    """Log which methods were used and which numbers were left unfactored."""
     method_counts: dict[str, int] = {}
     failed_numbers: set[Number] = set()
 
@@ -100,13 +90,71 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-locals]
         ", ".join(f"{method} ({count})" for method, count in method_counts.items()),
     )
 
-    if not config.result_output_path.exists():
-        config.result_output_path.mkdir(parents=True)
+
+def write_results(numbers: Collection[Number], output_path: Path) -> None:
+    """Write the run's factorizations to a timestamped file."""
+    if not output_path.exists():
+        output_path.mkdir(parents=True)
 
     output_filename = f"{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d-%H%M%S')}.txt"
-    output_path = config.result_output_path.joinpath(output_filename)
-    with output_path.open("w", encoding="utf-8") as f:
+
+    with output_path.joinpath(output_filename).open("w", encoding="utf-8") as f:
         f.write(format_results(numbers) + "\n")
+
+
+def main() -> None:
+    """Factor numbers using various methods."""
+    setup_logger()
+
+    args = Arguments().parse_args()
+
+    try:
+        config = read_config(args.config_path)
+    except FileNotFoundError:
+        logger.error("Configuration file not found")
+        sys.exit(1)
+
+    validate_arguments(args, config.backend)
+
+    stats = FactoringStats(config.stats_path)
+    backend = create_backend(config, stats)
+    engine = FactorEngine(config, args.target_duration)
+
+    logger.info("Using backend: {}", config.backend)
+    logger.info("Using factoring mode: {}", config.factoring_mode)
+
+    max_digits = args.max_digits if args.max_digits > 0 else None
+    batch_controller = BatchController(
+        args.target_duration,
+        BatchKey(backend=config.backend, min_digits=args.min_digits, max_digits=max_digits, skip_count=args.skip_count),
+        config.batch_state_path,
+    )
+    batch_size = args.batch_size if args.batch_size > 0 else batch_controller.batch_size
+
+    logger.info("Fetching {} composite numbers from {}", batch_size, config.backend)
+
+    numbers = backend.fetch(
+        FetchCriteria(count=batch_size, min_digits=args.min_digits, max_digits=max_digits, skip_count=args.skip_count)
+    )
+
+    if not numbers:
+        logger.warning("No numbers to factor")
+        backend.close()
+        sys.exit(0)
+
+    start_time = time.monotonic()
+
+    status = engine.run(sorted(numbers))
+
+    duration = time.monotonic() - start_time
+    factored_count = len([number for number in numbers if number.factored])
+
+    logger.info("Factored {} numbers in {:.2f} seconds", factored_count, duration)
+
+    batch_controller.record_batch(factored_count, duration)
+
+    report_summary(numbers)
+    write_results(numbers, config.result_output_path)
 
     stats.save_data()
     backend.close()

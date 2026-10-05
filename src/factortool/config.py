@@ -26,6 +26,7 @@ class YafuPaths(NamedTuple):
 class Config(BaseModel):
     """Configuration for factorization tool."""
 
+    backend: Literal["factordb", "mersenne_ca"]
     batch_state_path: Path
     cado_nfs_path: Path
     factordb_cooldown_period: float
