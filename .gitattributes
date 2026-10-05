@@ -20,3 +20,6 @@
 # Python
 *.py    text diff=python
 *.pyi   text diff=python
+
+# Version metadata for source archives (hatch-vcs / setuptools-scm)
+.git_archival.txt  export-subst

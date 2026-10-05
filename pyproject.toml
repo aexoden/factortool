@@ -41,11 +41,11 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-path = "src/factortool/__about__.py"
+source = "vcs"
 
 [tool.hatch.build.targets.sdist]
 exclude = ["/.github"]
@@ -86,5 +86,8 @@ lines-between-types = 1
 convention = "google"
 
 [tool.uv]
+# uv installs the project once and would otherwise keep reporting the version from that install. Treating the commit and
+# tags as cache keys makes it reinstall when HEAD moves.
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
 exclude-newer = "7 days"
 required-version = ">=0.12.0"
