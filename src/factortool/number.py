@@ -353,6 +353,22 @@ class Number:
         return self.n.__hash__()
 
     @property
+    def attempted(self) -> bool:
+        """Whether any factoring method has been run against this number."""
+        return len(self.methods) > 0
+
+    def report_partial(self) -> None:
+        """Report the factorization found so far, even if incomplete."""
+        if self._submitted or self._backend is None:
+            return
+
+        if len(self.prime_factors) == 0:
+            return
+
+        self._backend.submit([self])
+        self._submitted = True
+
+    @property
     def ecm_needed(self) -> bool:
         """Determine if further ECM factoring is needed."""
         return self._ecm_level < self._maximum_ecm_level

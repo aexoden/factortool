@@ -84,6 +84,7 @@ def config(tmp_path: Path) -> Config:
         Config: The test configuration.
     """
     return Config.model_construct(
+        assignment_state_path=tmp_path / "assignment_state.json",
         backend="factordb",
         batch_state_path=tmp_path / "batch_state.json",
         cado_nfs_path=tmp_path / "cado-nfs.py",

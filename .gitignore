@@ -1,5 +1,6 @@
 __pycache__
 /.coverage
+/assignment_state.json
 /batch_state.json
 /config.json
 /dist

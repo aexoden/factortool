@@ -17,13 +17,17 @@ if TYPE_CHECKING:
 from loguru import logger
 from tap import Tap
 
-from factortool.backend import FetchCriteria, create_backend
+from factortool.assignments import AssignmentStore, select_unfinished
+from factortool.backend import Backend, FetchCriteria, create_backend
 from factortool.batch import BatchController, BatchKey
 from factortool.config import read_config
 from factortool.engine import ExitStatus, FactorEngine
 from factortool.number import Number, format_results
 from factortool.stats import FactoringStats
 from factortool.util import setup_logger
+
+if TYPE_CHECKING:
+    from factortool.config import Config
 
 
 class Arguments(Tap):
@@ -102,6 +106,41 @@ def write_results(numbers: Collection[Number], output_path: Path) -> None:
         f.write(format_results(numbers) + "\n")
 
 
+def resume_assignments(
+    backend: Backend, assignments: AssignmentStore, config: Config, stats: FactoringStats
+) -> set[Number]:
+    """Rebuild the composites a previous run was assigned but did not finish.
+
+    Returns:
+        set[Number]: The unfinished assignments, empty for backends that do not assign work.
+    """
+    if not backend.assigns_work:
+        return set()
+
+    return {Number(n, config, stats, backend) for n in assignments.load()}
+
+
+def preserve_unfinished(
+    backend: Backend, assignments: AssignmentStore, numbers: Collection[Number], status: ExitStatus
+) -> None:
+    """Submit or preserve unfinished assignments.
+
+    Partial work is submitted, and untouched assignments are preserved for the next run if the backend assigns work.
+    """
+    if status == ExitStatus.SUCCESS:
+        if backend.assigns_work:
+            assignments.clear()
+        return
+
+    partial, untouched = select_unfinished(numbers)
+
+    for number in partial:
+        number.report_partial()
+
+    if backend.assigns_work:
+        assignments.save(x.n for x in untouched)
+
+
 def main() -> None:
     """Factor numbers using various methods."""
     setup_logger()
@@ -131,11 +170,18 @@ def main() -> None:
     )
     batch_size = args.batch_size if args.batch_size > 0 else batch_controller.batch_size
 
-    logger.info("Fetching {} composite numbers from {}", batch_size, config.backend)
+    assignments = AssignmentStore(config.assignment_state_path, config.backend)
+    numbers = resume_assignments(backend, assignments, config, stats)
 
-    numbers = backend.fetch(
-        FetchCriteria(count=batch_size, min_digits=args.min_digits, max_digits=max_digits, skip_count=args.skip_count)
-    )
+    remaining = batch_size - len(numbers)
+
+    if remaining > 0:
+        logger.info("Fetching {} composite numbers from {}", remaining, config.backend)
+        numbers |= backend.fetch(
+            FetchCriteria(
+                count=remaining, min_digits=args.min_digits, max_digits=max_digits, skip_count=args.skip_count
+            )
+        )
 
     if not numbers:
         logger.warning("No numbers to factor")
@@ -152,6 +198,8 @@ def main() -> None:
     logger.info("Factored {} numbers in {:.2f} seconds", factored_count, duration)
 
     batch_controller.record_batch(factored_count, duration)
+
+    preserve_unfinished(backend, assignments, numbers, status)
 
     report_summary(numbers)
     write_results(numbers, config.result_output_path)
