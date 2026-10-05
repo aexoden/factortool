@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 from loguru import logger
 from tap import Tap
 
+from factortool.__about__ import __version__
 from factortool.assignments import AssignmentStore, select_unfinished
 from factortool.backend import Backend, FetchCriteria, create_backend
 from factortool.batch import BatchController, BatchKey
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 class Arguments(Tap):
     """Utility for factoring numbers using various methods."""
 
+    version: bool = False  # Show the version of the utility and exit
     config_path: Path = Path("config.json")  # Path to the JSON-formatted configuration file
     min_digits: int = 1  # Minimum number of digits fetched composite numbers should have
     max_digits: int = 0  # Maximum number of digits fetched composite numbers should have (required by mersenne.ca)
@@ -146,6 +148,10 @@ def main() -> None:
     setup_logger()
 
     args = Arguments().parse_args()
+
+    if args.version:
+        print(f"Factortool version: {__version__}")  # ruff: ignore[print]
+        sys.exit(0)
 
     try:
         config = read_config(args.config_path)
