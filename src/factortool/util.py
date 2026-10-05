@@ -208,4 +208,4 @@ def safe_write(path: Path, data: bytes) -> None:
         f.flush()
         os.fsync(f.fileno())
 
-    temp_path.rename(path)
+    temp_path.replace(path)
