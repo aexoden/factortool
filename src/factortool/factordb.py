@@ -5,27 +5,22 @@
 from __future__ import annotations
 
 import datetime
-import queue
 import re
-import threading
 import time
 
 from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Collection
 
 import requests
 
 from loguru import logger
 from pydantic import BaseModel
 
-from factortool.http import MAX_DELAY, HttpClient
-from factortool.number import Number
+from factortool.backend import SUBMIT_SPACING, BaseBackend
 
 if TYPE_CHECKING:
     from factortool.backend import FetchCriteria
     from factortool.config import Config
+    from factortool.number import Number
     from factortool.stats import FactoringStats
 
 
@@ -36,41 +31,31 @@ class FactorDBSessionData(BaseModel):
     expiry: datetime.datetime
 
 
-class FactorDB:
+class FactorDB(BaseBackend):
     """Interface for interacting with FactorDB."""
+
+    name = "FactorDB"
 
     # FactorDB does not currently have any sort of reservation system.
     assigns_work = False
 
+    submission_unit = "factors"
+
     def __init__(self, config: Config, stats: FactoringStats) -> None:
         """Initialize the FactorDB interface."""
-        self._config = config
-        self._stats = stats
-        self._submit_queue: queue.Queue[Number] = queue.Queue()
-        self._stop_event = threading.Event()
-        self._successful_submissions = 0
-        self._submission_lock = threading.Lock()
-        self._http_client = HttpClient("FactorDB", config.factordb_cooldown_period)
+        super().__init__(config, stats, config.factordb_cooldown_period)
 
         self._load_session()
 
-        self._submit_thread = threading.Thread(
-            target=self._submit_worker, name="FactorDB-Submission-Worker", daemon=True
-        )
-        self._submit_thread.start()
+    def _request_composites(self, criteria: FetchCriteria) -> str:
+        """Request composites from FactorDB.
 
-    def fetch(self, criteria: FetchCriteria) -> set[Number]:
-        """Fetch composite numbers from FactorDB.
-
-        Supports all criteria. Requests are capped at 50 numbers. Especially when filtering by max_digits, but feasibly
-        also if FactorDB runs out of work, the number of fetched numbers may be fewer than requested, including zero.
+        FactorDB does not itself support max_digits, but BaseBackend automatically filters through its public fetch
+        method. All other criteria are respected. Requests are capped at 50 numbers.
 
         Returns:
-            set[Number]: Set of fetched numbers.
+            str: The response body, containing one composite per line.
         """
-        if criteria.count == 0:
-            return set()
-
         # Limit to a maximum of 50 numbers per request to avoid overloading FactorDB. This is intended to be a temporary
         # measure.
         number_count = min(criteria.count, 50)
@@ -83,87 +68,47 @@ class FactorDB:
             "download": 1,
         }
 
-        delay = self._config.factordb_cooldown_period
+        return self._service_request("GET", "https://factordb.com/listtype.php", params=params, timeout=3.0).text
 
-        while True:
-            try:
-                response = self._http_client.request(
-                    "GET", "https://factordb.com/listtype.php", params=params, timeout=3.0, max_attempts=None
-                )
-                numbers = {
-                    Number(x, self._config, self._stats, self)
-                    for x in map(int, response.text.strip().split("\n"))
-                    if criteria.max_digits is None or len(str(x)) <= criteria.max_digits
-                }
-            except ValueError as e:
-                logger.error("Failed to parse response from FactorDB: {}. Retrying in {} seconds...", e, delay)
-                time.sleep(delay)
-                delay = min(MAX_DELAY, delay * 2)
-            except requests.RequestException as e:
-                logger.error("Failed to fetch numbers from FactorDB: {}. Retrying in {} seconds...", e, delay)
-                time.sleep(delay)
-                delay = min(MAX_DELAY, delay * 2)
-            else:
-                logger.info("Fetched {} numbers from FactorDB", len(numbers))
-                return numbers
-
-    def submit(self, numbers: Collection[Number]) -> None:
-        """Add factored numbers to the submission queue."""
-        for number in numbers:
-            if len(number.prime_factors) > 0:
-                self._submit_queue.put_nowait(number)
-
-    def get_successful_submission_count(self) -> int:
-        """Get the number of successful factor submissions.
+    def _submit_number(self, number: Number) -> int:
+        """Submit each prime factor of a number to FactorDB individually.
 
         Returns:
-            int: The number of factors successfully submitted to FactorDB.
+            int: The number of factors successfully submitted.
         """
-        with self._submission_lock:
-            return self._successful_submissions
+        factors = sorted(set(number.prime_factors))
 
-    def close(self) -> None:
-        """Close the FactorDB interface, ensuring all submissions are complete."""
-        self._stop_event.set()
-        self._submit_thread.join()
+        # If there are no composite factors, avoid sending the trivial largest factor.
+        if len(number.composite_factors) == 0:
+            factors.pop()
 
-        if self._successful_submissions > 0:
-            logger.info("Successfully submitted {} factors to FactorDB", self._successful_submissions)
+        successes = 0
 
-    def _submit_worker(self) -> None:
-        """Background worker that submits factored numbers to FactorDB."""
-        spacing = 0.2
+        for i, factor in enumerate(factors):
+            if i > 0:
+                time.sleep(SUBMIT_SPACING)
 
-        while not self._stop_event.is_set() or not self._submit_queue.empty():
-            try:
-                number = self._submit_queue.get(timeout=0.5)
-            except queue.Empty:
-                continue
+            successes += self._submit_factor(number.n, factor)
 
-            factors = sorted(set(number.prime_factors))
+        return successes
 
-            # If there are no composite factors, avoid sending the trivial largest factor.
-            if len(number.composite_factors) == 0:
-                factors.pop()
+    def _submit_factor(self, number: int, factor: int) -> bool:
+        """Submit a single factor to FactorDB.
 
-            for factor in factors:
-                self._submit_factor(number.n, factor)
-                time.sleep(spacing)
-
-            self._submit_queue.task_done()
-
-    def _submit_factor(self, number: int, factor: int) -> None:
-        """Submit a single factor to FactorDB."""
+        Returns:
+            bool: True if the factor was successfully submitted, False otherwise.
+        """
         url = "https://factordb.com/reportfactor.php"
         payload = {"number": str(number), "factor": str(factor)}
 
         try:
-            self._http_client.request("POST", url, data=payload, timeout=3.0, max_attempts=None)
-            logger.debug("Submitted factor {} for n={}", factor, number)
-            with self._submission_lock:
-                self._successful_submissions += 1
+            self._service_request("POST", url, data=payload, timeout=3.0)
         except requests.RequestException as e:
             logger.error("Error submitting factor {} for n{}: {}", factor, number, e)
+            return False
+
+        logger.debug("Submitted factor {} for n={}", factor, number)
+        return True
 
     def _check_factordb_response(self, response_text: str) -> bool:
         with self._config.factordb_response_path.open(mode="w", encoding="utf-8") as f:

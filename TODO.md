@@ -10,8 +10,8 @@ implementation. There is no guarantee I will actually get to any of this.
   potentially store it once with an exponent.
 * Refactor the standard factoring method away from breadth-first. It doesn't
   really add anything, and if the program is aborted (either manually or because
-  of an expired time limit), the ECM work on any remaining unfactored exponents is
-  effectively lost as it will simply be repeated on another run.
+  of an expired time limit), the ECM work on any remaining unfactored exponents
+  is effectively lost as it will simply be repeated on another run.
 * For the standard factoring method, revisit how the ECM curves and B1 values are
   determined. At the very least, if still using precomputed values, we need to
   consider differences if YAFU is internally using AVX-ECM or not.
@@ -27,8 +27,8 @@ implementation. There is no guarantee I will actually get to any of this.
   if it's a submission that's being waited on, but if the request is a fetch, it's
   unnecessary.
 * Before working on a number, consider fetching any existing factors from FactorDB.
-  We'll probably want to keep track of submission by factor at that point. That can
-  go along with changing storage to factor and exponent.
+  We'll probably want to keep track of submission by factor at that point. That
+  can go along with changing storage to factor and exponent.
 * Investigate integrating the looping process directly into the tool. This needs
   to change the way login is handled to potentially revalidate the cookie, though
   if submission is largely done via the API, this will be less important. I
