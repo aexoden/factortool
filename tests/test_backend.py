@@ -10,7 +10,7 @@ from unittest.mock import Mock, call
 import pytest
 import requests
 
-from factortool.backend import SUBMIT_SPACING, Backend, BaseBackend, FetchCriteria, parse_composites
+from factortool.backend import NO_WORK_DELAY, SUBMIT_SPACING, Backend, BaseBackend, FetchCriteria, parse_composites
 from factortool.config import Config
 from factortool.factordb import FactorDB
 from factortool.http import HttpClient
@@ -184,14 +184,32 @@ def test_base_fetch_retries_failures_with_backoff(config: Config, sleep: Mock) -
     assert sleep.call_args_list[:2] == [call(1.0), call(2.0)]
 
 
-def test_base_fetch_returns_empty_set_for_blank_response(config: Config) -> None:
-    """Test that a blank response is a successful fetch of nothing rather than a parse error."""
-    backend = make_fake_backend(config, ["\n  \n"])
+@pytest.mark.parametrize("blank_response", ["", "\n  \n"], ids=["empty", "whitespace"])
+def test_base_fetch_retries_when_no_work_is_available(config: Config, sleep: Mock, blank_response: str) -> None:
+    """Test that a blank response is retried after a delay until composites are returned."""
+    backend = make_fake_backend(config, [blank_response] * 5 + ["15\n"])
 
     try:
-        assert backend.fetch(FetchCriteria(count=3, min_digits=2)) == set()
+        numbers = backend.fetch(FetchCriteria(count=3, min_digits=2))
     finally:
         backend.close()
+
+    assert {number.n for number in numbers} == {15}
+    assert sleep.call_args_list == [call(NO_WORK_DELAY)] * 5
+
+
+def test_base_fetch_treats_all_excluded_by_max_digits_as_no_work(config: Config, sleep: Mock) -> None:
+    """Test that a response entirely above max_digits is retried like an empty one."""
+    backend = make_fake_backend(config, ["1001\n"] * 5 + ["15\n"])
+
+    try:
+        assert backend.fetch(FetchCriteria(count=3, min_digits=2, max_digits=3)) == {
+            Number(15, config, FactoringStats(config.stats_path, read_only=True), backend)
+        }
+    finally:
+        backend.close()
+
+    assert sleep.call_args_list == [call(NO_WORK_DELAY)] * 5
 
 
 def test_base_close_flushes_submissions(config: Config, sleep: Mock) -> None:
@@ -280,10 +298,9 @@ def test_fetch_zero_skips_http_request(factordb: FactorDB, http_request: Mock) -
     ("response_text", "expected"),
     [
         ("15\n999\n1001\n", {15, 999}),
-        ("1001\n", set[int]()),
         ("999\n", {999}),
     ],
-    ids=["mixed", "all-excluded", "inclusive-bound"],
+    ids=["mixed", "inclusive-bound"],
 )
 def test_fetch_filters_max_digits(
     factordb: FactorDB, http_request: Mock, response_text: str, expected: set[int]

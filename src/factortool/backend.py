@@ -32,6 +32,10 @@ if TYPE_CHECKING:
 # How long to wait between consecutive submissions to a service.
 SUBMIT_SPACING = 0.2
 
+# How long to wait when a service returns no composites within the requested range. Matches the delay used by the
+# reference mersenne.ca aliquot.php client.
+NO_WORK_DELAY = 65.0
+
 
 @dataclass(frozen=True)
 class FetchCriteria:
@@ -170,8 +174,19 @@ class BaseBackend(ABC):
                     if criteria.max_digits is None or len(str(n)) <= criteria.max_digits
                 }
 
-                logger.info("Fetched {} numbers from {}", len(numbers), self.name)
-                return numbers
+                if numbers:
+                    logger.info("Fetched {} numbers from {}", len(numbers), self.name)
+                    return numbers
+
+                logger.info(
+                    "No work available from {} between {} and {} digits. Retrying in {} seconds...",
+                    self.name,
+                    criteria.min_digits,
+                    criteria.max_digits if criteria.max_digits is not None else "unlimited",
+                    NO_WORK_DELAY,
+                )
+                time.sleep(NO_WORK_DELAY)
+                continue
 
             time.sleep(delay)
             delay = min(MAX_DELAY, delay * 2)
