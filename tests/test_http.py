@@ -62,11 +62,12 @@ def make_client(
     [
         lambda: make_response(429, {"Retry-After": "10"}),
         lambda: make_response(503),
-        lambda: make_response(404),
+        lambda: make_response(500),
+        lambda: make_response(408),
         lambda: requests.Timeout("timed out"),
         lambda: requests.ConnectionError("refused"),
     ],
-    ids=["429", "503", "404", "timeout", "connection"],
+    ids=["429", "503", "500", "408", "timeout", "connection"],
 )
 def test_every_failure_counts_toward_max_attempts(
     monkeypatch: pytest.MonkeyPatch, failure: Callable[[], requests.Response | requests.RequestException]
@@ -79,6 +80,20 @@ def test_every_failure_counts_toward_max_attempts(
         client.request("GET", "https://example.com/", max_attempts=max_attempts)
 
     assert len(sleeps) == max_attempts - 1
+
+
+@pytest.mark.parametrize("status_code", [400, 403, 404, 422])
+@pytest.mark.parametrize("max_attempts", [5, None], ids=["limited", "unlimited"])
+def test_permanent_client_errors_are_not_retried(
+    monkeypatch: pytest.MonkeyPatch, status_code: int, max_attempts: int | None
+) -> None:
+    """Tests that a permanent client error fails on the first attempt without sleeping."""
+    client, sleeps = make_client(monkeypatch, [make_response(status_code), make_response(200)])
+
+    with pytest.raises(requests.RequestException, match=f"Unexpected HTTP {status_code}.*Not retrying"):
+        client.request("GET", "https://example.com/", max_attempts=max_attempts)
+
+    assert sleeps == []
 
 
 def test_unlimited_attempts_retry_until_success(monkeypatch: pytest.MonkeyPatch) -> None:

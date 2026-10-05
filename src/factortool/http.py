@@ -19,6 +19,9 @@ from loguru import logger
 MAX_DELAY = 3600.0
 TRANSIENT_STATUS_CODES = frozenset({502, 503, 504})
 
+CLIENT_ERROR_STATUS_CODES = range(400, 500)
+RETRYABLE_CLIENT_STATUS_CODES = frozenset({408, 429})
+
 
 def get_too_many_requests_delay(response: requests.Response, default_delay: float = 3600.0) -> float:
     """Get the delay time from a 429 Too Many Requests response.
@@ -45,8 +48,20 @@ def get_too_many_requests_delay(response: requests.Response, default_delay: floa
     return delay
 
 
+def is_permanent_client_error(status_code: int | None) -> bool:
+    """Determine whether an HTTP status code is a client error that retrying cannot fix.
+
+    Returns:
+        bool: True for 4xx status codes other than 408 Request Timeout and 429 Too Many Requests.
+    """
+    return status_code in CLIENT_ERROR_STATUS_CODES and status_code not in RETRYABLE_CLIENT_STATUS_CODES
+
+
 class HttpClient:
-    """HTTP client that retries transient failures with exponential backoff."""
+    """HTTP client that retries transient failures with exponential backoff.
+
+    Client errors (4xx) other than 408 and 429 are treated as permanent and fail immediately regardless of max_attempts.
+    """
 
     def __init__(self, service_name: str, cooldown_period: float) -> None:
         """Initialize the HTTP client.
@@ -87,7 +102,8 @@ class HttpClient:
             requests.Response: The HTTP response.
 
         Raises:
-            requests.RequestException: If the request still fails after the maximum number of attempts.
+            requests.RequestException: If the request still fails after the maximum number of attempts, or immediately
+                on a permanent client error.
         """
         delay = max(0.1, self._cooldown_period)
         attempts = 0
@@ -119,6 +135,10 @@ class HttpClient:
                 error = e
                 status = getattr(e.response, "status_code", None)
                 reason = f"Unexpected HTTP {status} from {self._service_name}: {e}"
+
+                if is_permanent_client_error(status):
+                    msg = f"{reason}. Not retrying a client error."
+                    raise requests.RequestException(msg) from e
             except requests.RequestException as e:
                 error = e
                 reason = f"HTTP error contacting {self._service_name}: {e}"
