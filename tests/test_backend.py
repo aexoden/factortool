@@ -10,7 +10,7 @@ from unittest.mock import Mock, call
 import pytest
 import requests
 
-from factortool.backend import SUBMIT_SPACING, Backend, BaseBackend, FetchCriteria
+from factortool.backend import SUBMIT_SPACING, Backend, BaseBackend, FetchCriteria, parse_composites
 from factortool.config import Config
 from factortool.factordb import FactorDB
 from factortool.http import HttpClient
@@ -92,8 +92,10 @@ def config(tmp_path: Path) -> Config:
         factordb_username="",
         factordb_password="",
         factoring_mode="standard",
+        gimps_login="",
         max_siqs_digits=100,
         max_threads=1,
+        mersenne_ca_cooldown_period=0.0,
         result_output_path=tmp_path / "results",
         stats_path=tmp_path / "stats.json",
         work_path=tmp_path / "work",
@@ -150,6 +152,23 @@ def test_trial_factoring_submits_to_generic_backend_once(config: Config) -> None
 
     assert submissions == [(number, [3, 5], [])]
     backend.submit.assert_called_once_with([number])
+
+
+def test_parse_composites_reads_one_number_per_line() -> None:
+    """Test that the fetch response is a plain list of decimal integers."""
+    assert parse_composites("101\n103\n107\n") == [101, 103, 107]
+
+
+def test_parse_composites_treats_empty_body_as_no_work() -> None:
+    """Test that an empty fetch response is interpreted as no work."""
+    assert parse_composites("") == []
+    assert parse_composites("\n\n  \n") == []
+
+
+def test_parse_composites_rejects_non_numeric_content() -> None:
+    """Test that non-numeric content raises a ValueError."""
+    with pytest.raises(ValueError, match="invalid literal"):
+        parse_composites("<html>service unavailable</html>")
 
 
 def test_base_fetch_retries_failures_with_backoff(config: Config, sleep: Mock) -> None:

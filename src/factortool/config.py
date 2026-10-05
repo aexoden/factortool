@@ -34,8 +34,10 @@ class Config(BaseModel):
     factordb_username: str
     factordb_password: str
     factoring_mode: Literal["standard", "yafu"]
+    gimps_login: str
     max_siqs_digits: int
     max_threads: int
+    mersenne_ca_cooldown_period: float
     result_output_path: Path
     stats_path: Path
     work_path: Path

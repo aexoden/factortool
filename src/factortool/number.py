@@ -565,10 +565,22 @@ class Number:
         self._factor_generic("NFS", factor_nfs, *self._nfs_args)
 
 
+def format_factorization(number: Number, separator: str) -> str:
+    """Format a number's known factorization as "n=<factors>".
+
+    Every factor is listed individually, including repeats and any remaining composite factors, so the product of the
+    listed factors is always the original number.
+
+    Returns:
+        str: Formatted factorization of the number.
+    """
+    return f"{number.n}={separator.join(map(str, number.prime_factors + number.composite_factors))}"
+
+
 def format_results(numbers: Iterable[Number]) -> str:
     """Format the factoring results for output.
 
     Returns:
         str: Formatted factoring results.
     """
-    return "\n".join([f"{x.n}={' '.join(map(str, x.prime_factors + x.composite_factors))}" for x in numbers])
+    return "\n".join(format_factorization(x, " ") for x in numbers)
