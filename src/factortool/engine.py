@@ -96,6 +96,7 @@ class FactorEngine:
         logger.info("Using direct YAFU factoring mode for {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
         for number in sorted(numbers):
+            # Check before each factorization, so a factorization isn't started if an interrupt has been received.
             if self._interrupt_level > 0:
                 return ExitStatus.INTERRUPTED
 
@@ -104,6 +105,13 @@ class FactorEngine:
 
             logger.info("Factoring {} using YAFU", number.n)
             number.factor_yafu_direct()
+
+        # Check once more for an interrupt that may have occurred during the final factorization.
+        if self._interrupt_level > 0:
+            return ExitStatus.INTERRUPTED
+
+        if self._is_time_limit_exceeded():
+            return ExitStatus.TIME_LIMIT_EXCEEDED
 
         return ExitStatus.SUCCESS
 
