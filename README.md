@@ -40,6 +40,8 @@ then run the program. It accepts the following options:
 * `--skip_count`: How many composite numbers to skip on FactorDB. Useful for working
   at an offset to avoid conflicts. Not supported by the mersenne.ca backend (which
   assigns distinct work to each user).
+* `--no_new_work`: Work only any retained assignments from a previous run, and
+  don't fetch any more. Only supported by the mersenne.ca backend.
 
 Note that the program itself does not loop. Such functionality could be added in
 theory, but this way ensures memory leaks aren't an issue. I find it convenient

@@ -5,6 +5,8 @@ implementation. There is no guarantee I will actually get to any of this.
 
 * Make upgrades safer with regard to the config file. We should possibly set
   defaults for the ones that can be defaulted, and then reject unset ones that cannot.
+* Investigate moving away from Tap for argument parsing. If keeping Tap, consider
+  replacing underscores with hyphens in option names.
 * Move state files into a directory. Consider changing config to only allow the
   directory, then using standardized names.
 * Provide options to allow the user to disable the time limit or to tweak how long

@@ -8,6 +8,7 @@ import datetime
 import sys
 import time
 
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -43,6 +44,7 @@ class Arguments(Tap):
     batch_size: int = 0  # Number of composite numbers to work on at a time (0 for automatic)
     target_duration: float = 600.0  # Target duration in seconds for each batch (only used when batch_size is 0)
     skip_count: int = 0  # Skip this many numbers when fetching from FactorDB (to hopefully avoid conflict)
+    no_new_work: bool = False  # Do not fetch new work from the backend. Only supported by mersenne.ca.
 
 
 def validate_arguments(args: Arguments, backend_name: str) -> None:
@@ -63,6 +65,10 @@ def validate_arguments(args: Arguments, backend_name: str) -> None:
         if args.skip_count != 0:
             logger.error("The mersenne.ca backend does not support --skip_count, since it assigns distinct work")
             sys.exit(1)
+    elif args.no_new_work:
+        # FactorDB doesn't assign work, and we don't retain unfinished work, so this option would have no effect.
+        logger.error("The FactorDB backend does not support --no_new_work, since it does not assign work.")
+        sys.exit(1)
 
 
 def report_summary(numbers: Collection[Number]) -> None:
@@ -110,18 +116,35 @@ def write_results(numbers: Collection[Number], output_path: Path) -> None:
         f.write(format_results(numbers) + "\n")
 
 
-def resume_assignments(
-    backend: Backend, assignments: AssignmentStore, config: Config, stats: FactoringStats
+def acquire_numbers(  # ruff: ignore[too-many-arguments]
+    backend: Backend,
+    assignments: AssignmentStore,
+    config: Config,
+    stats: FactoringStats,
+    criteria: FetchCriteria,
+    *,
+    fetch: bool = True,
 ) -> set[Number]:
-    """Rebuild the composites a previous run was assigned but did not finish.
+    """Collect a batch of numbers to work on by resuming retained assignments and optionally fetching new work.
 
     Returns:
-        set[Number]: The unfinished assignments, empty for backends that do not assign work.
+        set[Number]: A set of numbers to factor, which may be empty.
     """
-    if not backend.assigns_work:
-        return set()
+    numbers: set[Number] = set()
 
-    return {Number(n, config, stats, backend) for n in assignments.load()}
+    if backend.assigns_work:
+        numbers = {Number(n, config, stats, backend) for n in assignments.load()}
+
+    if not fetch:
+        return numbers
+
+    remaining = criteria.count - len(numbers)
+
+    if remaining > 0:
+        logger.info("Fetching {} composite numbers from {}", remaining, config.backend)
+        numbers |= fetch_numbers(backend, replace(criteria, count=remaining))
+
+    return numbers
 
 
 def fetch_numbers(backend: Backend, criteria: FetchCriteria) -> set[Number]:
@@ -188,20 +211,18 @@ def main() -> None:
     )
     batch_size = args.batch_size if args.batch_size > 0 else batch_controller.batch_size
 
-    assignments = AssignmentStore(config.assignment_state_path, config.backend)
-    numbers = resume_assignments(backend, assignments, config, stats)
+    if args.no_new_work:
+        logger.info("As requested, not fetching new work")
 
-    if len(numbers) < batch_size:
-        logger.info("Fetching {} composite numbers from {}", batch_size - len(numbers), config.backend)
-        numbers |= fetch_numbers(
-            backend,
-            FetchCriteria(
-                count=batch_size - len(numbers),
-                min_digits=args.min_digits,
-                max_digits=max_digits,
-                skip_count=args.skip_count,
-            ),
-        )
+    assignments = AssignmentStore(config.assignment_state_path, config.backend)
+    numbers = acquire_numbers(
+        backend,
+        assignments,
+        config,
+        stats,
+        FetchCriteria(count=batch_size, min_digits=args.min_digits, max_digits=max_digits, skip_count=args.skip_count),
+        fetch=not args.no_new_work,
+    )
 
     if not numbers:
         logger.warning("No numbers to factor")
@@ -220,7 +241,9 @@ def main() -> None:
 
         logger.info("Factored {} numbers in {:.2f} seconds", factored_count, duration)
 
-        batch_controller.record_batch(factored_count, duration)
+        # Record the batch only if new work was fetched.
+        if not args.no_new_work:
+            batch_controller.record_batch(factored_count, duration)
 
         preserve_unfinished(backend, assignments, numbers)
 
