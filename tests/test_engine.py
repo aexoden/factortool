@@ -10,7 +10,7 @@ from unittest.mock import Mock
 import pytest
 
 from factortool.engine import ExitStatus, FactorEngine
-from factortool.interrupt import InterruptState
+from factortool.interrupt import FINISH_BATCH, STOP_SOON, Interrupted, InterruptState
 
 from .helpers import make_config, make_number
 
@@ -22,12 +22,16 @@ COMPOSITES = [100, 102, 104]
 
 
 def run_interrupted_on(
-    monkeypatch: pytest.MonkeyPatch, mode: Literal["standard", "yafu"], count: int, interrupt_after: int
-) -> ExitStatus:
+    monkeypatch: pytest.MonkeyPatch,
+    mode: Literal["standard", "yafu"],
+    count: int,
+    interrupt_after: int,
+    level: int = STOP_SOON,
+) -> tuple[ExitStatus, int]:
     """Run the engine, raising an interrupt after a given number of factorizations.
 
     Returns:
-        ExitStatus: The status the engine reported.
+        tuple[ExitStatus, int]: The status the engine reported and the number of completed factorizations.
     """
     config = make_config().model_copy(update={"factoring_mode": mode})
     interrupts = InterruptState()
@@ -43,7 +47,7 @@ def run_interrupted_on(
         # The interrupt lands while this factorization is running; YAFU is in its own process group, so the run
         # always completes rather than being killed.
         if completed == interrupt_after:
-            interrupts._level = 1
+            interrupts._level = level
 
     def factor_ecm(self: Number, level: int) -> None:
         factor(self)
@@ -54,7 +58,7 @@ def run_interrupted_on(
 
     monkeypatch.setattr("factortool.number.Number.factor_ecm", factor_ecm, raising=True)
 
-    return engine.run(numbers)
+    return engine.run(numbers), completed
 
 
 @pytest.mark.parametrize("mode", ["yafu", "standard"])
@@ -63,22 +67,57 @@ def test_interrupt_is_reported_regardless_of_when_it_arrives(
     monkeypatch: pytest.MonkeyPatch, mode: Literal["standard", "yafu"], count: int, interrupt_after: int
 ) -> None:
     """Test that an interrupt is reported even when it arrives during the final number."""
-    assert run_interrupted_on(monkeypatch, mode, count, interrupt_after) == ExitStatus.INTERRUPTED
+    status, _ = run_interrupted_on(monkeypatch, mode, count, interrupt_after)
+
+    assert status == ExitStatus.INTERRUPTED
 
 
 @pytest.mark.parametrize("mode", ["yafu", "standard"])
 def test_uninterrupted_run_reports_success(monkeypatch: pytest.MonkeyPatch, mode: Literal["standard", "yafu"]) -> None:
     """Test that an uninterrupted run reports success."""
-    assert run_interrupted_on(monkeypatch, mode, 3, 0) == ExitStatus.SUCCESS
+    status, _ = run_interrupted_on(monkeypatch, mode, 3, 0)
+
+    assert status == ExitStatus.SUCCESS
+
+
+@pytest.mark.parametrize("mode", ["yafu", "standard"])
+def test_a_single_interrupt_finishes_the_batch(
+    monkeypatch: pytest.MonkeyPatch, mode: Literal["standard", "yafu"]
+) -> None:
+    """Test that a single interrupt lets the batch in hand run to completion."""
+    _, expected = run_interrupted_on(monkeypatch, mode, 3, 0)
+    status, completed = run_interrupted_on(monkeypatch, mode, 3, 1, level=FINISH_BATCH)
+
+    assert status == ExitStatus.SUCCESS
+    assert completed == expected
 
 
 def test_interrupt_before_the_run_starts_no_yafu_factorization(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that an interrupt that arrived before the run, such as during the fetch, starts no YAFU factorization."""
+    """Test that a second interrupt arriving before the run, such as during the fetch, starts no YAFU factorization."""
     interrupts = InterruptState()
     engine = FactorEngine(make_config().model_copy(update={"factoring_mode": "yafu"}), 600.0, interrupts)
     factor = Mock()
     monkeypatch.setattr("factortool.number.Number.factor_yafu_direct", factor, raising=True)
-    interrupts._level = 1
+    interrupts._level = STOP_SOON
 
     assert engine.run([make_number(n) for n in COMPOSITES]) == ExitStatus.INTERRUPTED
     factor.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ["yafu", "standard"])
+def test_abandoned_factorization_leaves_the_number_unfactored(
+    monkeypatch: pytest.MonkeyPatch, mode: Literal["standard", "yafu"]
+) -> None:
+    """Test that a factorization abandoned by the third interrupt keeps its composite, so shutdown carries it over."""
+    engine = FactorEngine(make_config().model_copy(update={"factoring_mode": mode}), 600.0, InterruptState())
+    number = make_number(COMPOSITES[0])
+
+    def abandon(*_args: object) -> list[int]:
+        raise Interrupted
+
+    for function in ("factor_tf", "factor_yafu_direct"):
+        monkeypatch.setattr(f"factortool.number.{function}", abandon, raising=True)
+
+    assert engine.run([number]) == ExitStatus.INTERRUPTED
+    assert number.composite_factors == [COMPOSITES[0]]
+    assert not number.factored

@@ -61,6 +61,17 @@ and then exit. The shell script is designed to stop if `factortool` exits due to
 an interrupt such as Ctrl-C (exit status 2) or for a permanent HTTP error (exit
 status 6).
 
+Repeated interrupts escalate:
+
+* The first stops `factortool` from fetching any more work, but lets the already
+  fetched batch run to completion as normal (subject to the normal time limit).
+* The second gives up on the rest of the batch, but completes the current
+  factorization. Any partial factorizations are reported and untouched assigned
+  work (on the mersenne.ca backend) is retained for the next run.
+* The third abandons the current factorization.
+
+All three submit whatever results are in hand before exiting.
+
 If you are using direct YAFU support (by setting `factoring_mode` to `yafu` in
 config.json), I recommend ensuring YAFU's NFS functionality is correctly
 configured.
@@ -113,7 +124,7 @@ test. The `standard` mode is left in both for fun and as a historical curiosity.
 The program returns the following non-zero error codes:
 
 * 1: Configuration error
-* 2: Interrupted
+* 2: Interrupted (any interrupt level)
 * 3: Time limit exceeded
 * 4: Unexpected CADO-NFS failure
 * 5: Unexpected YAFU failure

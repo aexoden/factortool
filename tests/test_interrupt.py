@@ -11,8 +11,10 @@ import time
 import pytest
 import requests
 
+from loguru import logger
+
 from factortool.http import HttpClient
-from factortool.interrupt import Interrupted, InterruptState
+from factortool.interrupt import ABORT, Interrupted, InterruptState
 
 # A wait short enough to keep the suite quick, but long enough to measure.
 SHORT_WAIT = 0.5
@@ -66,6 +68,63 @@ def test_wait_wakes_promptly_on_a_real_signal() -> None:
     assert time.monotonic() - start < PROMPT
 
 
+def test_a_single_interrupt_stops_fetching_but_not_factoring() -> None:
+    """Test that a single interrupt stops fetching but not factoring."""
+    interrupts = InterruptState()
+    interrupts._level = 1
+
+    assert interrupts.interrupted
+    assert interrupts.stop_fetching
+    assert not interrupts.stop_factoring
+
+
+def test_a_second_interrupt_abandons_the_rest_of_the_batch() -> None:
+    """Test that a second interrupt abandons the rest of the batch."""
+    interrupts = InterruptState()
+    interrupts._level = 2
+
+    assert interrupts.stop_fetching
+    assert interrupts.stop_factoring
+
+
+def test_a_third_interrupt_abandons_abortable_work() -> None:
+    """Test that a third interrupt raises Interrupted inside an abortable block instead of exiting."""
+    interrupts = InterruptState()
+    interrupts._level = 2
+    previous = signal.getsignal(signal.SIGINT)
+    interrupts.install()
+
+    def abort() -> None:
+        signal.raise_signal(signal.SIGINT)
+        time.sleep(PROMPT)
+
+    try:
+        with pytest.raises(Interrupted), interrupts.abortable():
+            abort()
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+    assert interrupts.level == ABORT
+
+
+def test_a_third_interrupt_spares_work_that_is_not_abortable() -> None:
+    """Test that a third interrupt outside an abortable block hands SIGINT back to Python instead of raising."""
+    interrupts = InterruptState()
+    interrupts._level = 2
+    previous = signal.getsignal(signal.SIGINT)
+    interrupts.install()
+
+    try:
+        signal.raise_signal(signal.SIGINT)
+        time.sleep(SHORT_WAIT)
+        handler = signal.getsignal(signal.SIGINT)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+    assert interrupts.level == ABORT
+    assert handler is signal.default_int_handler
+
+
 def test_interruptible_backoff_abandons_the_retry() -> None:
     """Test that an interruptible backoff raises Interrupted instead of waiting."""
     interrupts = InterruptState()
@@ -91,3 +150,32 @@ def test_backoff_is_not_interruptible_by_default() -> None:
 def test_interrupted_is_not_mistaken_for_a_transport_error() -> None:
     """Test that Interrupted is not a requests exception."""
     assert not issubclass(Interrupted, requests.RequestException)
+
+
+@pytest.mark.parametrize(
+    ("level", "abortable", "message"),
+    [
+        (1, True, "Finishing the current batch"),
+        (1, False, "Not fetching any more work"),
+        (2, True, "Stopping after the current factorization"),
+        (2, False, "Not starting any more factorizations"),
+    ],
+)
+def test_interrupt_messages_describe_what_is_actually_running(level: int, *, abortable: bool, message: str) -> None:
+    """Test that an interrupt outside the engine, such as while waiting for work, does not mention a factorization."""
+    interrupts = InterruptState()
+    interrupts._level = level - 1
+    messages: list[str] = []
+    sink = logger.add(messages.append)
+
+    try:
+        if abortable:
+            with interrupts.abortable():
+                interrupts._handle_sigint(signal.SIGINT, None)
+        else:
+            interrupts._handle_sigint(signal.SIGINT, None)
+    finally:
+        logger.remove(sink)
+
+    assert len(messages) == 1
+    assert message in messages[0]

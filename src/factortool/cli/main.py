@@ -210,26 +210,28 @@ def main() -> None:
 
     start_time = time.monotonic()
 
-    status = engine.run(sorted(numbers))
+    # Each number retains its own state, so we can safely process them independently, regardless of what happens in the
+    # engine.
+    try:
+        status = engine.run(sorted(numbers))
+    finally:
+        duration = time.monotonic() - start_time
+        factored_count = len([number for number in numbers if number.factored])
 
-    duration = time.monotonic() - start_time
-    factored_count = len([number for number in numbers if number.factored])
+        logger.info("Factored {} numbers in {:.2f} seconds", factored_count, duration)
 
-    logger.info("Factored {} numbers in {:.2f} seconds", factored_count, duration)
+        batch_controller.record_batch(factored_count, duration)
 
-    batch_controller.record_batch(factored_count, duration)
+        preserve_unfinished(backend, assignments, numbers)
 
-    preserve_unfinished(backend, assignments, numbers)
+        report_summary(numbers)
+        write_results(numbers, config.result_output_path)
 
-    report_summary(numbers)
-    write_results(numbers, config.result_output_path)
+        stats.save_data()
+        backend.close()
 
-    stats.save_data()
-    backend.close()
-
-    if status == ExitStatus.SUCCESS:
-        sys.exit(0)
-    elif status == ExitStatus.INTERRUPTED:
+    if status == ExitStatus.INTERRUPTED or interrupts.interrupted:
         sys.exit(2)
-    elif status == ExitStatus.TIME_LIMIT_EXCEEDED:
+
+    if status == ExitStatus.TIME_LIMIT_EXCEEDED:
         sys.exit(3)

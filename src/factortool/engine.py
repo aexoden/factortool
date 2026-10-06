@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from factortool.constants import ECM_CURVES
-from factortool.interrupt import InterruptState
+from factortool.interrupt import Interrupted, InterruptState
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -71,24 +71,29 @@ class FactorEngine:
         """Run factorization using the configured mode.
 
         Returns:
-            bool: True if interrupted or timed out, False otherwise.
+            ExitStatus: The exit status of the factorization run.
         """
-        if self._config.factoring_mode == "yafu":
-            return self._run_yafu(numbers)
+        try:
+            with self._interrupts.abortable():
+                if self._config.factoring_mode == "yafu":
+                    return self._run_yafu(numbers)
 
-        return self._run_standard(numbers)
+                return self._run_standard(numbers)
+        except Interrupted:
+            logger.warning("Abandoned the factorization in progress")
+            return ExitStatus.INTERRUPTED
 
     def _run_yafu(self, numbers: Collection[Number]) -> ExitStatus:
         """Factor numbers using direct YAFU calls.
 
         Returns:
-            bool: True if interrupted or timed out, False otherwise.
+            ExitStatus: The exit status of the factorization run.
         """
         logger.info("Using direct YAFU factoring mode for {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
         for number in sorted(numbers):
             # Check before each factorization, so a factorization isn't started if an interrupt has been received.
-            if self._interrupts.interrupted:
+            if self._interrupts.stop_factoring:
                 return ExitStatus.INTERRUPTED
 
             if self._is_time_limit_exceeded():
@@ -98,7 +103,7 @@ class FactorEngine:
             number.factor_yafu_direct()
 
         # Check once more for an interrupt that may have occurred during the final factorization.
-        if self._interrupts.interrupted:
+        if self._interrupts.stop_factoring:
             return ExitStatus.INTERRUPTED
 
         if self._is_time_limit_exceeded():
@@ -110,7 +115,7 @@ class FactorEngine:
         """Factor numbers using the built-in sequence of methods.
 
         Returns:
-            bool: True if interrupted or timed out, False otherwise.
+            ExitStatus: The exit status of the factorization run.
         """
         # Attempt to trial factor each number.
         logger.info("Attempting trial factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
@@ -118,7 +123,7 @@ class FactorEngine:
         for number in numbers:
             number.factor_tf()
 
-            if self._interrupts.interrupted:
+            if self._interrupts.stop_factoring:
                 return ExitStatus.INTERRUPTED
 
             if self._is_time_limit_exceeded():
@@ -128,7 +133,7 @@ class FactorEngine:
         logger.info("Attempting rho factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
         def factor_rho(number: Number) -> None:
-            if self._interrupts.interrupted:
+            if self._interrupts.stop_factoring:
                 return
 
             number.factor_rho()
@@ -137,7 +142,7 @@ class FactorEngine:
             for number in [x for x in numbers if not x.factored]:
                 executor.submit(factor_rho, number)
 
-        if self._interrupts.interrupted:
+        if self._interrupts.stop_factoring:
             return ExitStatus.INTERRUPTED
 
         if self._is_time_limit_exceeded():
@@ -147,7 +152,7 @@ class FactorEngine:
         logger.info("Attempting P-1 factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
         def factor_pm1(number: Number) -> None:
-            if self._interrupts.interrupted:
+            if self._interrupts.stop_factoring:
                 return
 
             number.factor_pm1()
@@ -156,7 +161,7 @@ class FactorEngine:
             for number in [x for x in numbers if not x.factored]:
                 executor.submit(factor_pm1, number)
 
-        if self._interrupts.interrupted:
+        if self._interrupts.stop_factoring:
             return ExitStatus.INTERRUPTED
 
         if self._is_time_limit_exceeded():
@@ -191,7 +196,7 @@ class FactorEngine:
             for number in ecm_numbers:
                 number.factor_ecm(ecm_level)
 
-                if self._interrupts.interrupted:
+                if self._interrupts.stop_factoring:
                     logger.info("Not finishing remaining ECM factorizations due to interrupt")
                     return ExitStatus.INTERRUPTED
 
@@ -213,7 +218,7 @@ class FactorEngine:
             for number in [x for x in numbers if not x.factored and x.prefer_siqs]:
                 number.factor_siqs()
 
-                if self._interrupts.interrupted:
+                if self._interrupts.stop_factoring:
                     logger.info("Not finishing remaining SIQS factorizations due to interrupt")
                     return ExitStatus.INTERRUPTED
 
@@ -231,7 +236,7 @@ class FactorEngine:
         for number in [x for x in numbers if not x.factored]:
             number.factor_nfs()
 
-            if self._interrupts.interrupted:
+            if self._interrupts.stop_factoring:
                 logger.info("Not finishing remaining NFS factorizations due to interrupt")
                 return ExitStatus.INTERRUPTED
 

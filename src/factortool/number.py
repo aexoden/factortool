@@ -509,11 +509,9 @@ class Number:
         factor_func: Callable[..., list[int]],
         *args: int | str | Path | YafuPaths | FactoringStats,
     ) -> bool:
-        composite_factors = self.composite_factors.copy()
-        self.composite_factors = []
         found_factors = False
 
-        for n in composite_factors:
+        for n in self.composite_factors.copy():
             try:
                 factors = factor_func(n, *args)
             except SIQSNeeded:
@@ -528,6 +526,8 @@ class Number:
             if len(factors) > 1:
                 self.methods.append(method)
                 found_factors = True
+
+            self.composite_factors.remove(n)
 
             for factor in factors:
                 if is_prime(factor):

@@ -182,7 +182,7 @@ class BaseBackend(ABC):
 
         delay = max(0.1, self._cooldown_period)
 
-        while not self._interrupts.interrupted:
+        while not self._interrupts.stop_fetching:
             try:
                 composites = parse_composites(self._request_composites(criteria))
             except PermanentHttpError:
