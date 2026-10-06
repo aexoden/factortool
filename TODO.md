@@ -3,6 +3,10 @@
 The following is a list of potential TODO items, roughly in my intended order of
 implementation. There is no guarantee I will actually get to any of this.
 
+* Make upgrades safer with regard to the config file. We should possibly set
+  defaults for the ones that can be defaulted, and then reject unset ones that cannot.
+* Move state files into a directory. Consider changing config to only allow the
+  directory, then using standardized names.
 * Provide options to allow the user to disable the time limit or to tweak how long
   it is instead of always doing twice the target time.
 * Fix the time limit to only occur if target time is enabled.

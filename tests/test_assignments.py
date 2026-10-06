@@ -5,11 +5,13 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 from factortool.assignments import AssignmentStore, select_unfinished
+from factortool.cli.main import preserve_unfinished
 
 from .helpers import make_number
 
@@ -68,3 +70,27 @@ def test_select_unfinished_splits_partial_progress_from_untouched() -> None:
 
     assert [x.n for x in partial] == [200]
     assert [x.n for x in pending] == [300]
+
+
+def test_preserve_unfinished_keeps_work_left_by_a_completed_run(tmp_path: Path) -> None:
+    """Test that a number a method could not finish is reported or retained, not dropped with the finished ones."""
+    backend = Mock(assigns_work=True)
+    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca")
+    store.save([100, 200, 300])
+
+    done = make_number(100)
+    done.prime_factors = [2, 2, 5, 5]
+    done.composite_factors = []
+
+    # A method can return a composite cofactor without the engine reporting anything other than success.
+    partially_factored = make_number(200)
+    partially_factored.prime_factors = [2]
+    partially_factored.composite_factors = [100]
+    partially_factored.report_partial = Mock()  # type: ignore[method-assign]
+
+    untouched = make_number(300)
+
+    preserve_unfinished(backend, store, [done, partially_factored, untouched])
+
+    partially_factored.report_partial.assert_called_once_with()
+    assert store.load() == [300]

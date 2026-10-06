@@ -122,18 +122,11 @@ def resume_assignments(
     return {Number(n, config, stats, backend) for n in assignments.load()}
 
 
-def preserve_unfinished(
-    backend: Backend, assignments: AssignmentStore, numbers: Collection[Number], status: ExitStatus
-) -> None:
+def preserve_unfinished(backend: Backend, assignments: AssignmentStore, numbers: Collection[Number]) -> None:
     """Submit or preserve unfinished assignments.
 
     Partial work is submitted, and untouched assignments are preserved for the next run if the backend assigns work.
     """
-    if status == ExitStatus.SUCCESS:
-        if backend.assigns_work:
-            assignments.clear()
-        return
-
     partial, untouched = select_unfinished(numbers)
 
     for number in partial:
@@ -205,7 +198,7 @@ def main() -> None:
 
     batch_controller.record_batch(factored_count, duration)
 
-    preserve_unfinished(backend, assignments, numbers, status)
+    preserve_unfinished(backend, assignments, numbers)
 
     report_summary(numbers)
     write_results(numbers, config.result_output_path)
