@@ -35,7 +35,7 @@ then run the program. It accepts the following options:
   have. Required by the mersenne.ca backend.
 * `--batch_size`: The number of composite numbers to fetch from FactorDB. A value
   of 0 (default) attempts to use an automatic batch size to meet a target time.
-* `--target-duration`: The number of seconds to target when using an automatic
+* `--target_duration`: The number of seconds to target when using an automatic
   batch size. The default is 600 seconds (ten minutes).
 * `--skip_count`: How many composite numbers to skip on FactorDB. Useful for working
   at an offset to avoid conflicts. Not supported by the mersenne.ca backend (which
@@ -86,8 +86,8 @@ where factors are submitted.
   are submitted anonymously.
 * `mersenne_ca`: fetches assigned composites from the [mersenne.ca Aliquot composite
   service](https://www.mersenne.ca/aliquot/?compositelist=1) and submits results
-  through that service. Set `gimps_login` to your GIMPS username. `--max-digits`
-  is required, and `--skip-count` is not supported (or needed to avoid conflict).
+  through that service. Set `gimps_login` to your GIMPS username. `--max_digits`
+  is required, and `--skip_count` is not supported (or needed to avoid conflict).
 
 Partial factorizations are submitted if a run ends after finding one or more
 factors. For `mersenne_ca`, unfinished assignments are saved in `assignment_state_path`
