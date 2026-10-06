@@ -4,15 +4,29 @@
 
 from __future__ import annotations
 
+import threading
+import time
+
 from typing import TYPE_CHECKING, Literal
 from unittest.mock import Mock
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 import pytest
 
 from factortool.engine import ExitStatus, FactorEngine
 from factortool.interrupt import FINISH_BATCH, STOP_SOON, Interrupted, InterruptState
+from factortool.number import run_tool
 
-from .helpers import make_config, make_number
+from .helpers import (
+    TOOL_STOP_TIMEOUT,
+    heartbeat_stopped,
+    make_config,
+    make_number,
+    make_tool_with_helper,
+    wait_for_heartbeat,
+)
 
 if TYPE_CHECKING:
     from factortool.number import Number
@@ -121,3 +135,38 @@ def test_abandoned_factorization_leaves_the_number_unfactored(
     assert engine.run([number]) == ExitStatus.INTERRUPTED
     assert number.composite_factors == [COMPOSITES[0]]
     assert not number.factored
+
+
+def test_third_interrupt_abandons_tools_running_in_worker_threads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that abandoning the rho stage kills the workers' tools and waits for the workers before returning."""
+    engine = FactorEngine(make_config(), 600.0, InterruptState())
+    number = make_number(COMPOSITES[0])
+    heartbeat = tmp_path / "heartbeat"
+    finished = threading.Event()
+
+    def factor_yafu(n: int, *_args: object) -> list[int]:
+        try:
+            run_tool(make_tool_with_helper(heartbeat), tmp_path)
+        finally:
+            finished.set()
+
+        return [n]
+
+    def interrupt_once_started(*_args: object, **_kwargs: object) -> None:
+        # Stands in for the third interrupt.
+        wait_for_heartbeat(heartbeat)
+        raise Interrupted
+
+    monkeypatch.setattr("factortool.number.factor_tf", lambda n, _stats: [n], raising=True)
+    monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
+    monkeypatch.setattr("factortool.engine.concurrent.futures.wait", interrupt_once_started, raising=True)
+
+    start = time.monotonic()
+
+    assert engine.run([number]) == ExitStatus.INTERRUPTED
+    assert time.monotonic() - start < TOOL_STOP_TIMEOUT
+    assert finished.is_set()
+    assert heartbeat_stopped(heartbeat)
+    assert number.composite_factors == [COMPOSITES[0]]

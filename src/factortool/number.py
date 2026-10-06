@@ -4,10 +4,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import math
+import os
 import re
-import subprocess  # ruff:ignore[suspicious-subprocess-import]
+import signal
+import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
+import threading
 import time
 
 from functools import cache
@@ -20,6 +24,7 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from factortool.constants import CADO_NFS_MIN_DIGITS, ECM_CURVES
+from factortool.interrupt import Interrupted
 from factortool.util import SMALL_PRIMES, format_number, get_work_dir, is_prime, log_factor_result
 
 if TYPE_CHECKING:
@@ -34,6 +39,89 @@ class NFSNeeded(Exception):  # ruff:ignore[error-suffix-on-exception-name]
 
 class SIQSNeeded(Exception):  # ruff:ignore[error-suffix-on-exception-name]
     """Exception indicating that SIQS factoring is needed."""
+
+
+# External tools currently running in any thread.
+_running_tools: set[subprocess.Popen[str]] = set()
+
+# External tools that abandon_tools has killed.
+_abandoned_tools: set[subprocess.Popen[str]] = set()
+
+_tools_lock = threading.Lock()
+
+
+def _kill_tool(process: subprocess.Popen[str]) -> None:
+    """Kill a tool along with every helper process it may have started."""
+    if sys.platform == "win32":
+        subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+            ["taskkill", "/F", "/T", "/PID", str(process.pid)],  # ruff: ignore[start-process-with-partial-path]
+            capture_output=True,
+            check=False,
+        )
+    else:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+
+
+def abandon_tools() -> None:
+    """Kill every running external tool."""
+    with _tools_lock:
+        for process in _running_tools:
+            _abandoned_tools.add(process)
+            _kill_tool(process)
+
+
+def run_tool(
+    cmd: list[str], cwd: Path, *, env: dict[str, str] | None = None, stdin: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run an external tool in its own process group, capturing its output.
+
+    The separate process group ensures that the process isn't immediately killed in the event of a terminal interrupt.
+
+    Returns:
+        subprocess.CompletedProcess[str]: The finished process and its output.
+
+    Raises:
+        subprocess.CalledProcessError: If the tool exits with a non-zero status.
+        Interrupted: If abandon_tools killed the tool while it was running.
+    """
+    if sys.platform == "win32":
+        creationflags, process_group = subprocess.CREATE_NEW_PROCESS_GROUP, None
+    else:
+        creationflags, process_group = 0, 0
+
+    with subprocess.Popen(  # ruff: ignore[subprocess-without-shell-equals-true]
+        cmd,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.PIPE if stdin is not None else None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=creationflags,
+        process_group=process_group,
+    ) as process:
+        with _tools_lock:
+            _running_tools.add(process)
+
+        try:
+            stdout, stderr = process.communicate(stdin)
+        except BaseException:
+            _kill_tool(process)
+            raise
+        finally:
+            with _tools_lock:
+                _running_tools.discard(process)
+                abandoned = process in _abandoned_tools
+                _abandoned_tools.discard(process)
+
+    if abandoned:
+        raise Interrupted
+
+    if process.returncode != 0:
+        raise subprocess.CalledProcessError(process.returncode, cmd, stdout, stderr)
+
+    return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
 
 
 @cache
@@ -71,14 +159,7 @@ def factor_ecm(  # ruff:ignore[too-many-arguments, too-many-positional-arguments
 
     try:
         with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
-            result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
-                cmd,
-                cwd=work_dir,
-                capture_output=True,
-                text=True,
-                check=True,
-                process_group=0,
-            )
+            result = run_tool(cmd, work_dir)
     except subprocess.CalledProcessError as e:
         logger.critical("YAFU ECM failed for {} with method ECM: {}", n, e.stderr)
         sys.exit(5)
@@ -119,15 +200,7 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu: YafuPaths, stats: F
 
     try:
         with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
-            result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
-                cmd,
-                cwd=work_dir,
-                capture_output=True,
-                env={"OMP_NUM_THREADS": "1"},
-                text=True,
-                check=True,
-                process_group=0,
-            )
+            result = run_tool(cmd, work_dir, env={"OMP_NUM_THREADS": "1"})
     except subprocess.CalledProcessError as e:
         logger.critical("YAFU failed for {} with method {}: {}", n, method, e.stderr)
         sys.exit(5)
@@ -173,15 +246,7 @@ def factor_yafu_direct(n: int, max_threads: int, yafu: YafuPaths, stats: Factori
 
     try:
         with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
-            result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
-                cmd,
-                cwd=work_dir,
-                capture_output=True,
-                env={"OMP_NUM_THREADS": "1"},
-                text=True,
-                check=True,
-                process_group=0,
-            )
+            result = run_tool(cmd, work_dir, env={"OMP_NUM_THREADS": "1"})
     except subprocess.CalledProcessError as e:
         logger.critical("YAFU direct factoring failed for {}: {}", n, e.stderr)
         sys.exit(5)
@@ -226,15 +291,7 @@ def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, work_path: Path, s
 
     try:
         with get_work_dir(work_path, None, "nfs-") as work_dir:
-            result = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]
-                cmd,
-                cwd=work_dir,
-                input=str(n),
-                capture_output=True,
-                text=True,
-                check=True,
-                process_group=0,
-            )
+            result = run_tool(cmd, work_dir, stdin=str(n))
     except subprocess.CalledProcessError as e:
         logger.critical("NFS failed for {}: {}", n, e.stderr)
         sys.exit(4)

@@ -11,16 +11,16 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Callable, Collection
 
 from loguru import logger
 
 from factortool.constants import ECM_CURVES
 from factortool.interrupt import Interrupted, InterruptState
+from factortool.number import Number, abandon_tools
 
 if TYPE_CHECKING:
     from factortool.config import Config
-    from factortool.number import Number
 
 
 class ExitStatus(Enum):
@@ -62,6 +62,28 @@ class FactorEngine:
             return True
 
         return False
+
+    def _factor_concurrently(self, numbers: Collection[Number], factor: Callable[[Number], None]) -> None:
+        """Apply a factoring method to each unfactored number using a pool of worker threads.
+
+        Raises:
+            Interrupted: If the third interrupt arrives, once the work in progress has been abandoned.
+        """
+
+        def run(number: Number) -> None:
+            if self._interrupts.stop_factoring:
+                return
+
+            factor(number)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self._config.max_threads) as executor:
+            try:
+                futures = [executor.submit(run, number) for number in numbers if not number.factored]
+                concurrent.futures.wait(futures)
+            except Interrupted:
+                abandon_tools()
+                executor.shutdown(cancel_futures=True)
+                raise
 
     #
     # Public Methods
@@ -132,15 +154,7 @@ class FactorEngine:
         # Attempt to find factors via the Rho method.
         logger.info("Attempting rho factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
-        def factor_rho(number: Number) -> None:
-            if self._interrupts.stop_factoring:
-                return
-
-            number.factor_rho()
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self._config.max_threads) as executor:
-            for number in [x for x in numbers if not x.factored]:
-                executor.submit(factor_rho, number)
+        self._factor_concurrently(numbers, Number.factor_rho)
 
         if self._interrupts.stop_factoring:
             return ExitStatus.INTERRUPTED
@@ -151,15 +165,7 @@ class FactorEngine:
         # Attempt to find factors via P-1.
         logger.info("Attempting P-1 factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
-        def factor_pm1(number: Number) -> None:
-            if self._interrupts.stop_factoring:
-                return
-
-            number.factor_pm1()
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self._config.max_threads) as executor:
-            for number in [x for x in numbers if not x.factored]:
-                executor.submit(factor_pm1, number)
+        self._factor_concurrently(numbers, Number.factor_pm1)
 
         if self._interrupts.stop_factoring:
             return ExitStatus.INTERRUPTED
