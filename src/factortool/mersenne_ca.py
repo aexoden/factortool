@@ -23,6 +23,7 @@ from factortool.number import format_factorization
 if TYPE_CHECKING:
     from factortool.backend import FetchCriteria
     from factortool.config import Config
+    from factortool.interrupt import InterruptState
     from factortool.number import Number
     from factortool.stats import FactoringStats
 
@@ -48,9 +49,9 @@ class MersenneCA(BaseBackend):
 
     submission_unit = "factorizations"
 
-    def __init__(self, config: Config, stats: FactoringStats) -> None:
+    def __init__(self, config: Config, stats: FactoringStats, interrupts: InterruptState | None = None) -> None:
         """Initialize the mersenne.ca interface."""
-        super().__init__(config, stats, config.mersenne_ca_cooldown_period, config.gimps_login)
+        super().__init__(config, stats, config.mersenne_ca_cooldown_period, config.gimps_login, interrupts)
 
         if not config.gimps_login:
             logger.error("No GIMPS login is configured; mersenne.ca requires one to assign and accept work")
@@ -87,7 +88,7 @@ class MersenneCA(BaseBackend):
             "gimps_login": self._config.gimps_login,
         }
 
-        return self._service_request("GET", API_URL, params=params, timeout=30.0).text
+        return self._service_request("GET", API_URL, params=params, timeout=30.0, interruptible=True).text
 
     def _submit_number(self, number: Number) -> int:
         """Report a single composite's factorization, complete or partial.

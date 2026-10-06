@@ -14,6 +14,7 @@ from factortool.backend import NO_WORK_DELAY, SUBMIT_SPACING, Backend, BaseBacke
 from factortool.config import Config
 from factortool.factordb import FactorDB
 from factortool.http import HttpClient, PermanentHttpError
+from factortool.interrupt import InterruptState
 from factortool.number import Number
 from factortool.stats import FactoringStats
 
@@ -63,6 +64,18 @@ def sleep(monkeypatch: pytest.MonkeyPatch) -> Mock:
     sleep = Mock()
     monkeypatch.setattr("factortool.backend.time.sleep", sleep)
     return sleep
+
+
+@pytest.fixture
+def wait(monkeypatch: pytest.MonkeyPatch) -> Mock:
+    """Record interruptible waits instead of waiting, reporting that no interrupt arrived.
+
+    Returns:
+        Mock: The recording wait mock.
+    """
+    wait = Mock(return_value=False)
+    monkeypatch.setattr(InterruptState, "wait", wait)
+    return wait
 
 
 def make_fake_backend(
@@ -174,7 +187,7 @@ def test_parse_composites_rejects_non_numeric_content() -> None:
         parse_composites("<html>service unavailable</html>")
 
 
-def test_base_fetch_retries_failures_with_backoff(config: Config, sleep: Mock) -> None:
+def test_base_fetch_retries_failures_with_backoff(config: Config, wait: Mock) -> None:
     """Test that malformed responses and request errors are retried with exponential backoff."""
     backend = make_fake_backend(config, ["invalid", requests.RequestException("rejected"), "15\n"])
 
@@ -184,11 +197,11 @@ def test_base_fetch_retries_failures_with_backoff(config: Config, sleep: Mock) -
         backend.close()
 
     assert {number.n for number in numbers} == {15}
-    assert sleep.call_args_list[:2] == [call(1.0), call(2.0)]
+    assert wait.call_args_list[:2] == [call(1.0), call(2.0)]
 
 
 @pytest.mark.parametrize("blank_response", ["", "\n  \n"], ids=["empty", "whitespace"])
-def test_base_fetch_retries_when_no_work_is_available(config: Config, sleep: Mock, blank_response: str) -> None:
+def test_base_fetch_retries_when_no_work_is_available(config: Config, wait: Mock, blank_response: str) -> None:
     """Test that a blank response is retried after a delay until composites are returned."""
     backend = make_fake_backend(config, [blank_response] * 5 + ["15\n"])
 
@@ -198,10 +211,10 @@ def test_base_fetch_retries_when_no_work_is_available(config: Config, sleep: Moc
         backend.close()
 
     assert {number.n for number in numbers} == {15}
-    assert sleep.call_args_list == [call(NO_WORK_DELAY)] * 5
+    assert wait.call_args_list == [call(NO_WORK_DELAY)] * 5
 
 
-def test_base_fetch_treats_all_excluded_by_max_digits_as_no_work(config: Config, sleep: Mock) -> None:
+def test_base_fetch_treats_all_excluded_by_max_digits_as_no_work(config: Config, wait: Mock) -> None:
     """Test that a response entirely above max_digits is retried like an empty one."""
     backend = make_fake_backend(config, ["1001\n"] * 5 + ["15\n"])
 
@@ -212,7 +225,21 @@ def test_base_fetch_treats_all_excluded_by_max_digits_as_no_work(config: Config,
     finally:
         backend.close()
 
-    assert sleep.call_args_list == [call(NO_WORK_DELAY)] * 5
+    assert wait.call_args_list == [call(NO_WORK_DELAY)] * 5
+
+
+@pytest.mark.parametrize("response", ["", requests.RequestException("rejected")], ids=["no-work", "request-error"])
+def test_base_fetch_abandons_the_wait_on_an_interrupt(config: Config, wait: Mock, response: str | Exception) -> None:
+    """Test that an interrupt during a retry wait abandons the fetch instead of retrying."""
+    wait.return_value = True
+    backend = make_fake_backend(config, [response, "15\n"])
+
+    try:
+        assert backend.fetch(FetchCriteria(count=3, min_digits=2)) == set()
+    finally:
+        backend.close()
+
+    assert wait.call_count == 1
 
 
 def test_base_close_flushes_submissions(config: Config, sleep: Mock) -> None:
@@ -278,6 +305,7 @@ def test_fetch_maps_criteria(factordb: FactorDB, http_request: Mock) -> None:
         files=None,
         timeout=3.0,
         max_attempts=None,
+        interruptible=True,
     )
 
 

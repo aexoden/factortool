@@ -5,8 +5,6 @@
 from __future__ import annotations
 
 import concurrent.futures
-import signal
-import sys
 import time
 
 from enum import Enum
@@ -14,11 +12,11 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Collection
-    from types import FrameType
 
 from loguru import logger
 
 from factortool.constants import ECM_CURVES
+from factortool.interrupt import InterruptState
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -36,26 +34,19 @@ class ExitStatus(Enum):
 class FactorEngine:
     """Engine for managing factorization tasks."""
 
-    def __init__(self, config: Config, target_duration: float = 600.0) -> None:
+    def __init__(
+        self, config: Config, target_duration: float = 600.0, interrupts: InterruptState | None = None
+    ) -> None:
         """Initialize the factorization engine."""
         self._config = config
         self._target_duration = target_duration
-        self._interrupt_level: int = 0
         self._start_time = time.monotonic()
-        signal.signal(signal.SIGINT, self._handle_sigint)
 
-    #
-    # Signal Handlers
-    #
+        if interrupts is None:
+            interrupts = InterruptState()
+            interrupts.install()
 
-    def _handle_sigint(self, _signum: int, _frame: FrameType | None) -> None:
-        self._interrupt_level += 1
-
-        if self._interrupt_level == 1:
-            logger.critical("Interrupt received. Finishing current factorization")
-        else:
-            logger.critical("Second interrupt received. Terminating immediately")
-            sys.exit(2)
+        self._interrupts = interrupts
 
     def _is_time_limit_exceeded(self) -> bool:
         """Check if the current runtime exceeds twice the target duration.
@@ -97,7 +88,7 @@ class FactorEngine:
 
         for number in sorted(numbers):
             # Check before each factorization, so a factorization isn't started if an interrupt has been received.
-            if self._interrupt_level > 0:
+            if self._interrupts.interrupted:
                 return ExitStatus.INTERRUPTED
 
             if self._is_time_limit_exceeded():
@@ -107,7 +98,7 @@ class FactorEngine:
             number.factor_yafu_direct()
 
         # Check once more for an interrupt that may have occurred during the final factorization.
-        if self._interrupt_level > 0:
+        if self._interrupts.interrupted:
             return ExitStatus.INTERRUPTED
 
         if self._is_time_limit_exceeded():
@@ -127,7 +118,7 @@ class FactorEngine:
         for number in numbers:
             number.factor_tf()
 
-            if self._interrupt_level > 0:
+            if self._interrupts.interrupted:
                 return ExitStatus.INTERRUPTED
 
             if self._is_time_limit_exceeded():
@@ -137,13 +128,16 @@ class FactorEngine:
         logger.info("Attempting rho factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
         def factor_rho(number: Number) -> None:
+            if self._interrupts.interrupted:
+                return
+
             number.factor_rho()
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self._config.max_threads) as executor:
             for number in [x for x in numbers if not x.factored]:
                 executor.submit(factor_rho, number)
 
-        if self._interrupt_level > 0:
+        if self._interrupts.interrupted:
             return ExitStatus.INTERRUPTED
 
         if self._is_time_limit_exceeded():
@@ -153,13 +147,16 @@ class FactorEngine:
         logger.info("Attempting P-1 factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
         def factor_pm1(number: Number) -> None:
+            if self._interrupts.interrupted:
+                return
+
             number.factor_pm1()
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self._config.max_threads) as executor:
             for number in [x for x in numbers if not x.factored]:
                 executor.submit(factor_pm1, number)
 
-        if self._interrupt_level > 0:
+        if self._interrupts.interrupted:
             return ExitStatus.INTERRUPTED
 
         if self._is_time_limit_exceeded():
@@ -194,7 +191,7 @@ class FactorEngine:
             for number in ecm_numbers:
                 number.factor_ecm(ecm_level)
 
-                if self._interrupt_level > 0:
+                if self._interrupts.interrupted:
                     logger.info("Not finishing remaining ECM factorizations due to interrupt")
                     return ExitStatus.INTERRUPTED
 
@@ -216,7 +213,7 @@ class FactorEngine:
             for number in [x for x in numbers if not x.factored and x.prefer_siqs]:
                 number.factor_siqs()
 
-                if self._interrupt_level > 0:
+                if self._interrupts.interrupted:
                     logger.info("Not finishing remaining SIQS factorizations due to interrupt")
                     return ExitStatus.INTERRUPTED
 
@@ -234,7 +231,7 @@ class FactorEngine:
         for number in [x for x in numbers if not x.factored]:
             number.factor_nfs()
 
-            if self._interrupt_level > 0:
+            if self._interrupts.interrupted:
                 logger.info("Not finishing remaining NFS factorizations due to interrupt")
                 return ExitStatus.INTERRUPTED
 

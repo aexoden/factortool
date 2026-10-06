@@ -20,6 +20,7 @@ from factortool.backend import SUBMIT_SPACING, BaseBackend
 if TYPE_CHECKING:
     from factortool.backend import FetchCriteria
     from factortool.config import Config
+    from factortool.interrupt import InterruptState
     from factortool.number import Number
     from factortool.stats import FactoringStats
 
@@ -41,9 +42,9 @@ class FactorDB(BaseBackend):
 
     submission_unit = "factors"
 
-    def __init__(self, config: Config, stats: FactoringStats) -> None:
+    def __init__(self, config: Config, stats: FactoringStats, interrupts: InterruptState | None = None) -> None:
         """Initialize the FactorDB interface."""
-        super().__init__(config, stats, config.factordb_cooldown_period, config.factordb_username)
+        super().__init__(config, stats, config.factordb_cooldown_period, config.factordb_username, interrupts)
 
         self._load_session()
 
@@ -68,7 +69,9 @@ class FactorDB(BaseBackend):
             "download": 1,
         }
 
-        return self._service_request("GET", "https://factordb.com/listtype.php", params=params, timeout=3.0).text
+        return self._service_request(
+            "GET", "https://factordb.com/listtype.php", params=params, timeout=3.0, interruptible=True
+        ).text
 
     def _submit_number(self, number: Number) -> int:
         """Submit each prime factor of a number to FactorDB individually.

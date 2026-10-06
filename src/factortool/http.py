@@ -18,6 +18,7 @@ import requests
 from loguru import logger
 
 from factortool.__about__ import PROJECT_URL, __version__
+from factortool.interrupt import Interrupted, InterruptState
 
 MAX_DELAY = 3600.0
 TRANSIENT_STATUS_CODES = frozenset({502, 503, 504})
@@ -88,18 +89,41 @@ class HttpClient:
     Client errors (4xx) other than 408 and 429 are treated as permanent and fail immediately regardless of max_attempts.
     """
 
-    def __init__(self, service_name: str, cooldown_period: float, user_agent: str | None = None) -> None:
+    def __init__(
+        self,
+        service_name: str,
+        cooldown_period: float,
+        user_agent: str | None = None,
+        interrupts: InterruptState | None = None,
+    ) -> None:
         """Initialize the HTTP client.
 
         Args:
             service_name (str): Name of the remote service. Only used for logging purposes.
             cooldown_period (float): Cooldown period between requests in seconds.
             user_agent (str | None): Custom User-Agent header value. If None, a default User-Agent will be used.
+            interrupts (InterruptState | None): Interrupt state for handling external interruptions.
         """
         self._service_name = service_name
         self._cooldown_period = cooldown_period
+        self._interrupts = interrupts
         self.session = requests.Session()
         self.session.headers["User-Agent"] = user_agent if user_agent is not None else build_user_agent()
+
+    def _backoff(self, delay: float, *, interruptible: bool) -> None:
+        """Wait between attempts, abandoning the wait if an interrupt arrives.
+
+        Raises:
+            Interrupted: If an interrupt is received while waiting.
+        """
+        if interruptible and self._interrupts is not None:
+            if self._interrupts.wait(delay):
+                msg = f"Interrupted while waiting to retry a request to {self._service_name}"
+                raise Interrupted(msg)
+
+            return
+
+        time.sleep(delay)
 
     def request(  # ruff: ignore[too-many-arguments] (Matching the signature of requests.Session.request)
         self,
@@ -112,6 +136,7 @@ class HttpClient:
         json: Mapping[str, str] | None = None,
         max_attempts: int | None = 5,
         timeout: float = 3.0,
+        interruptible: bool = False,
     ) -> requests.Response:
         """Perform an HTTP request, retrying transient failures with exponential backoff.
 
@@ -124,6 +149,7 @@ class HttpClient:
             json (Mapping[str, str] | None): JSON payload for the request.
             max_attempts (int | None): Maximum number of attempts, or None for unlimited retries.
             timeout (float): Timeout for the request in seconds.
+            interruptible (bool): Whether the request can be interrupted during backoff.
 
         Returns:
             requests.Response: The HTTP response.
@@ -175,7 +201,7 @@ class HttpClient:
                 raise requests.RequestException(msg) from error
 
             logger.warning("{}. Retrying in {} seconds...", reason, wait)
-            time.sleep(wait)
+            self._backoff(wait, interruptible=interruptible)
 
             if not rate_limited:
                 delay = min(MAX_DELAY, delay * 2)

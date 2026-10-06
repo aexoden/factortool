@@ -23,6 +23,7 @@ import requests
 from loguru import logger
 
 from factortool.http import MAX_DELAY, HttpClient, PermanentHttpError, build_user_agent
+from factortool.interrupt import Interrupted, InterruptState
 from factortool.number import Number
 
 if TYPE_CHECKING:
@@ -127,7 +128,14 @@ class BaseBackend(ABC):
     # A descriptive name for a single submission unit, used for logging.
     submission_unit: ClassVar[str]
 
-    def __init__(self, config: Config, stats: FactoringStats, cooldown_period: float, identity: str) -> None:
+    def __init__(
+        self,
+        config: Config,
+        stats: FactoringStats,
+        cooldown_period: float,
+        identity: str,
+        interrupts: InterruptState | None = None,
+    ) -> None:
         """Initialize the backend and start its submission worker.
 
         Args:
@@ -135,11 +143,15 @@ class BaseBackend(ABC):
             stats (FactoringStats): Factoring statistics.
             cooldown_period (float): Cooldown period between requests in seconds.
             identity (str): Account name used with the service, included in the User-Agent. May be empty.
+            interrupts (InterruptState | None): Interrupt state for interrupt signals, or None for a private one.
         """
         self._config = config
         self._stats = stats
         self._cooldown_period = cooldown_period
-        self._http_client = HttpClient(self.name, cooldown_period, build_user_agent(identity, config.user_agent))
+        self._interrupts = interrupts if interrupts is not None else InterruptState()
+        self._http_client = HttpClient(
+            self.name, cooldown_period, build_user_agent(identity, config.user_agent), self._interrupts
+        )
         self._submit_queue: queue.Queue[Number] = queue.Queue()
         self._stop_event = threading.Event()
         self._successful_submissions = 0
@@ -150,10 +162,11 @@ class BaseBackend(ABC):
         )
         self._submit_thread.start()
 
-    def fetch(self, criteria: FetchCriteria) -> set[Number]:
+    def fetch(self, criteria: FetchCriteria) -> set[Number]:  # ruff: ignore[complex-structure]
         """Fetch up to criteria.count matching composites, possibly returning an empty set.
 
-        Composites above criteria.max_digits are discarded even if the service would otherwise return them.
+        Composites above criteria.max_digits are discarded even if the service would otherwise return them. Retries
+        continue until composites are found, unless an interrupt arrives, in which case an empty set is returned.
 
         Returns:
             set[Number]: A set of composite numbers matching the criteria.
@@ -169,11 +182,13 @@ class BaseBackend(ABC):
 
         delay = max(0.1, self._cooldown_period)
 
-        while True:
+        while not self._interrupts.interrupted:
             try:
                 composites = parse_composites(self._request_composites(criteria))
             except PermanentHttpError:
                 raise
+            except Interrupted:
+                break
             except ValueError as e:
                 logger.error("Failed to parse response from {}: {}. Retrying in {} seconds...", self.name, e, delay)
             except requests.RequestException as e:
@@ -196,11 +211,19 @@ class BaseBackend(ABC):
                     criteria.max_digits if criteria.max_digits is not None else "unlimited",
                     NO_WORK_DELAY,
                 )
-                time.sleep(NO_WORK_DELAY)
+
+                if self._interrupts.wait(NO_WORK_DELAY):
+                    break
+
                 continue
 
-            time.sleep(delay)
+            if self._interrupts.wait(delay):
+                break
+
             delay = min(MAX_DELAY, delay * 2)
+
+        logger.warning("Abandoning fetch from {} due to an interrupt", self.name)
+        return set()
 
     def submit(self, numbers: Collection[Number]) -> None:
         """Add factored numbers to the submission queue."""
@@ -255,6 +278,7 @@ class BaseBackend(ABC):
         data: Mapping[str, str] | None = None,
         files: Mapping[str, tuple[None, str]] | None = None,
         timeout: float,
+        interruptible: bool = False,
     ) -> requests.Response:
         """Perform a fetch or submission request, retrying transient failures indefinitely.
 
@@ -262,7 +286,14 @@ class BaseBackend(ABC):
             requests.Response: The HTTP response.
         """
         return self._http_client.request(
-            method, url, params=params, data=data, files=files, timeout=timeout, max_attempts=None
+            method,
+            url,
+            params=params,
+            data=data,
+            files=files,
+            timeout=timeout,
+            max_attempts=None,
+            interruptible=interruptible,
         )
 
     def _submit_worker(self) -> None:
@@ -282,7 +313,7 @@ class BaseBackend(ABC):
             time.sleep(SUBMIT_SPACING)
 
 
-def create_backend(config: Config, stats: FactoringStats) -> Backend:
+def create_backend(config: Config, stats: FactoringStats, interrupts: InterruptState) -> Backend:
     """Build the backend selected in the configuration.
 
     Returns:
@@ -293,6 +324,6 @@ def create_backend(config: Config, stats: FactoringStats) -> Backend:
     from factortool.mersenne_ca import MersenneCA  # ruff: ignore[import-outside-top-level]
 
     if config.backend == "mersenne_ca":
-        return MersenneCA(config, stats)
+        return MersenneCA(config, stats, interrupts)
 
-    return FactorDB(config, stats)
+    return FactorDB(config, stats, interrupts)

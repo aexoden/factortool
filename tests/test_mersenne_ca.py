@@ -132,4 +132,5 @@ def test_fetch_maps_criteria(mersenne_ca: MersenneCA, monkeypatch: pytest.Monkey
         files=None,
         timeout=30.0,
         max_attempts=None,
+        interruptible=True,
     )

@@ -24,6 +24,7 @@ from factortool.batch import BatchController, BatchKey
 from factortool.config import read_config
 from factortool.engine import ExitStatus, FactorEngine
 from factortool.http import PermanentHttpError
+from factortool.interrupt import InterruptState
 from factortool.number import Number, format_results
 from factortool.stats import FactoringStats
 from factortool.util import setup_logger
@@ -169,9 +170,12 @@ def main() -> None:
 
     validate_arguments(args, config.backend)
 
+    interrupts = InterruptState()
+    interrupts.install()
+
     stats = FactoringStats(config.stats_path)
-    backend = create_backend(config, stats)
-    engine = FactorEngine(config, args.target_duration)
+    backend = create_backend(config, stats, interrupts)
+    engine = FactorEngine(config, args.target_duration, interrupts)
 
     logger.info("Using backend: {}", config.backend)
     logger.info("Using factoring mode: {}", config.factoring_mode)
@@ -187,21 +191,22 @@ def main() -> None:
     assignments = AssignmentStore(config.assignment_state_path, config.backend)
     numbers = resume_assignments(backend, assignments, config, stats)
 
-    remaining = batch_size - len(numbers)
-
-    if remaining > 0:
-        logger.info("Fetching {} composite numbers from {}", remaining, config.backend)
+    if len(numbers) < batch_size:
+        logger.info("Fetching {} composite numbers from {}", batch_size - len(numbers), config.backend)
         numbers |= fetch_numbers(
             backend,
             FetchCriteria(
-                count=remaining, min_digits=args.min_digits, max_digits=max_digits, skip_count=args.skip_count
+                count=batch_size - len(numbers),
+                min_digits=args.min_digits,
+                max_digits=max_digits,
+                skip_count=args.skip_count,
             ),
         )
 
     if not numbers:
         logger.warning("No numbers to factor")
         backend.close()
-        sys.exit(0)
+        sys.exit(2 if interrupts.interrupted else 0)
 
     start_time = time.monotonic()
 
