@@ -22,7 +22,7 @@ import requests
 
 from loguru import logger
 
-from factortool.http import MAX_DELAY, HttpClient, build_user_agent
+from factortool.http import MAX_DELAY, HttpClient, PermanentHttpError, build_user_agent
 from factortool.number import Number
 
 if TYPE_CHECKING:
@@ -81,6 +81,7 @@ class Backend(Protocol):
         """Fetch up to criteria.count matching composites, possibly returning an empty set.
 
         Raises:
+            PermanentHttpError: If a permanent client error is encountered and should not be retried.
             ValueError: If criteria are invalid or contain unsupported constraints.
         """
         ...
@@ -158,6 +159,7 @@ class BaseBackend(ABC):
             set[Number]: A set of composite numbers matching the criteria.
 
         Raises:
+            PermanentHttpError: If a permanent client error is encountered and should not be retried.
             ValueError: If the service does not support the requested criteria.
         """
         self._validate_criteria(criteria)
@@ -170,6 +172,8 @@ class BaseBackend(ABC):
         while True:
             try:
                 composites = parse_composites(self._request_composites(criteria))
+            except PermanentHttpError:
+                raise
             except ValueError as e:
                 logger.error("Failed to parse response from {}: {}. Retrying in {} seconds...", self.name, e, delay)
             except requests.RequestException as e:

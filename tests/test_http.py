@@ -14,7 +14,7 @@ import pytest
 import requests
 
 from factortool.__about__ import PROJECT_URL, __version__
-from factortool.http import HttpClient, build_user_agent, get_too_many_requests_delay
+from factortool.http import HttpClient, PermanentHttpError, build_user_agent, get_too_many_requests_delay
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -133,7 +133,7 @@ def test_permanent_client_errors_are_not_retried(
     """Tests that a permanent client error fails on the first attempt without sleeping."""
     client, sleeps = make_client(monkeypatch, [make_response(status_code), make_response(200)])
 
-    with pytest.raises(requests.RequestException, match=f"Unexpected HTTP {status_code}.*Not retrying"):
+    with pytest.raises(PermanentHttpError, match=f"Unexpected HTTP {status_code}.*Not retrying"):
         client.request("GET", "https://example.com/", max_attempts=max_attempts)
 
     assert sleeps == []

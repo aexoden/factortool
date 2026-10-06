@@ -48,7 +48,9 @@ to use a shell script such as the following:
 ```sh
 while true ; do
     uv run factortool --min_digits 55 --batch_size 60 --skip_count 277 ;
-    if [ $? -eq 2 ] ; then exit 2 ; fi ; sleep 1 ;
+    status=$? ;
+    if [ $status -eq 2 ] || [ $status -eq 6 ]; then exit $status ; fi ;
+    sleep 1 ;
 done
 ```
 
@@ -56,7 +58,8 @@ I typically run this as a one-liner. It's been split into multiple lines here to
 keep the line length down. To stop the script, simply press Ctrl-C. `factortool`
 will finish the current factorization it is working on, submit any finished results,
 and then exit. The shell script is designed to stop if `factortool` exits due to
-an interrupt (such as Ctrl-C).
+an interrupt such as Ctrl-C (exit status 2) or for a permanent HTTP error (exit
+status 6).
 
 If you are using direct YAFU support (by setting `factoring_mode` to `yafu` in
 config.json), I recommend ensuring YAFU's NFS functionality is correctly
@@ -114,6 +117,7 @@ The program returns the following non-zero error codes:
 * 3: Time limit exceeded
 * 4: Unexpected CADO-NFS failure
 * 5: Unexpected YAFU failure
+* 6: Permanent HTTP error in the backend
 
 ## License
 

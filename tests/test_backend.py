@@ -13,7 +13,7 @@ import requests
 from factortool.backend import NO_WORK_DELAY, SUBMIT_SPACING, Backend, BaseBackend, FetchCriteria, parse_composites
 from factortool.config import Config
 from factortool.factordb import FactorDB
-from factortool.http import HttpClient
+from factortool.http import HttpClient, PermanentHttpError
 from factortool.number import Number
 from factortool.stats import FactoringStats
 
@@ -343,3 +343,17 @@ def test_fetch_criteria_accepts_boundary_values() -> None:
     assert criteria.count == 0
     assert criteria.min_digits == criteria.max_digits == 1
     assert criteria.skip_count == 0
+
+
+@pytest.mark.parametrize("status_code", [400, 403, 404])
+def test_base_fetch_does_not_retry_permanent_errors(config: Config, sleep: Mock, status_code: int) -> None:
+    """Test that a permanent client error escapes the fetch loop instead of being retried."""
+    backend = make_fake_backend(config, [PermanentHttpError(f"HTTP {status_code}"), "15\n"])
+
+    try:
+        with pytest.raises(PermanentHttpError):
+            backend.fetch(FetchCriteria(count=3, min_digits=2))
+    finally:
+        backend.close()
+
+    sleep.assert_not_called()

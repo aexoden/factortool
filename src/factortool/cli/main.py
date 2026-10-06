@@ -23,6 +23,7 @@ from factortool.backend import Backend, FetchCriteria, create_backend
 from factortool.batch import BatchController, BatchKey
 from factortool.config import read_config
 from factortool.engine import ExitStatus, FactorEngine
+from factortool.http import PermanentHttpError
 from factortool.number import Number, format_results
 from factortool.stats import FactoringStats
 from factortool.util import setup_logger
@@ -122,6 +123,20 @@ def resume_assignments(
     return {Number(n, config, stats, backend) for n in assignments.load()}
 
 
+def fetch_numbers(backend: Backend, criteria: FetchCriteria) -> set[Number]:
+    """Fetch new work, exiting if the backend reports a permanent error.
+
+    Returns:
+        set[Number]: The fetched numbers.
+    """
+    try:
+        return backend.fetch(criteria)
+    except PermanentHttpError as e:
+        logger.error("Unable to fetch numbers: {}", e)
+        backend.close()
+        sys.exit(6)
+
+
 def preserve_unfinished(backend: Backend, assignments: AssignmentStore, numbers: Collection[Number]) -> None:
     """Submit or preserve unfinished assignments.
 
@@ -176,10 +191,11 @@ def main() -> None:
 
     if remaining > 0:
         logger.info("Fetching {} composite numbers from {}", remaining, config.backend)
-        numbers |= backend.fetch(
+        numbers |= fetch_numbers(
+            backend,
             FetchCriteria(
                 count=remaining, min_digits=args.min_digits, max_digits=max_digits, skip_count=args.skip_count
-            )
+            ),
         )
 
     if not numbers:

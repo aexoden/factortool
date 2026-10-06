@@ -78,6 +78,10 @@ def is_permanent_client_error(status_code: int | None) -> bool:
     return status_code in CLIENT_ERROR_STATUS_CODES and status_code not in RETRYABLE_CLIENT_STATUS_CODES
 
 
+class PermanentHttpError(requests.RequestException):
+    """A permanent HTTP error indicating that the request cannot be retried."""
+
+
 class HttpClient:
     """HTTP client that retries transient failures with exponential backoff.
 
@@ -125,8 +129,8 @@ class HttpClient:
             requests.Response: The HTTP response.
 
         Raises:
-            requests.RequestException: If the request still fails after the maximum number of attempts, or immediately
-                on a permanent client error.
+            PermanentHttpError: Immediately on a permanent client error.
+            requests.RequestException: If the request still fails after the maximum number of attempts.
         """
         delay = max(0.1, self._cooldown_period)
         attempts = 0
@@ -161,7 +165,7 @@ class HttpClient:
 
                 if is_permanent_client_error(status):
                     msg = f"{reason}. Not retrying a client error."
-                    raise requests.RequestException(msg) from e
+                    raise PermanentHttpError(msg) from e
             except requests.RequestException as e:
                 error = e
                 reason = f"HTTP error contacting {self._service_name}: {e}"
