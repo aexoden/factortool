@@ -4,8 +4,6 @@ __pycache__
 /batch_state.json
 /config.json
 /dist
-/factordb_response.html
-/factordb_session.json
 /results/*.txt
 /stats.json
 /work

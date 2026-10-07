@@ -130,6 +130,7 @@ def test_fetch_maps_criteria(mersenne_ca: MersenneCA, monkeypatch: pytest.Monkey
         params={"composites_to_factor": 3, "min_digits": 2, "max_digits": 4, "gimps_login": "tester"},
         data=None,
         files=None,
+        json=None,
         timeout=30.0,
         max_attempts=None,
         interruptible=True,

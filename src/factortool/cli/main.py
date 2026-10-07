@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Collection
 
+import requests
+
 from loguru import logger
 from tap import Tap
 
@@ -153,6 +155,19 @@ def acquire_numbers(  # ruff: ignore[too-many-arguments]
     return numbers
 
 
+def start_backend(config: Config, stats: FactoringStats, interrupts: InterruptState) -> Backend:
+    """Create the configured backend, exiting if it cannot start.
+
+    Returns:
+        Backend: The configured backend.
+    """
+    try:
+        return create_backend(config, stats, interrupts)
+    except requests.RequestException as e:
+        logger.error("Unable to start the {} backend: {}", config.backend, e)
+        sys.exit(6)
+
+
 def fetch_numbers(backend: Backend, criteria: FetchCriteria) -> set[Number]:
     """Fetch new work, exiting if the backend reports a permanent error.
 
@@ -209,7 +224,7 @@ def main() -> None:
     interrupts.install()
 
     stats = FactoringStats(config.stats_path)
-    backend = create_backend(config, stats, interrupts)
+    backend = start_backend(config, stats, interrupts)
     engine = FactorEngine(config, args.target_duration, interrupts)
 
     logger.info("Using backend: {}", config.backend)

@@ -83,9 +83,11 @@ configured.
 The `backend` setting in config.json selects the source of composite numbers and
 where factors are submitted.
 
-* `factordb`: fetches composites from FactorDB and submits factors back there.
-  Set `factordb_username` and `factordb_password` to log in; otherwise, results
-  are submitted anonymously.
+* `factordb`: fetches composites from FactorDB and submits factors back there,
+  using its [JSON-RPC API](https://factordb.com/api.php). Set `factordb_api_token`
+  to submit as your account (and be credited for factors); otherwise, results
+  are submitted anonymously. You can get your API token by signing in and
+  clicking your username in the upper right to access your account page.
 * `mersenne_ca`: fetches assigned composites from the [mersenne.ca Aliquot composite
   service](https://www.mersenne.ca/aliquot/?compositelist=1) and submits results
   through that service. Set `gimps_login` to your GIMPS username. `--max_digits`

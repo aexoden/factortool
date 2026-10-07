@@ -33,11 +33,8 @@ class Config(BaseModel):
     backend: Literal["factordb", "mersenne_ca"]
     batch_state_path: Path
     cado_nfs_path: Path
+    factordb_api_token: str
     factordb_cooldown_period: float
-    factordb_response_path: Path
-    factordb_session_path: Path
-    factordb_username: str
-    factordb_password: str
     factoring_mode: Literal["standard", "yafu"]
     gimps_login: str
     max_siqs_digits: int

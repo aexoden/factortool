@@ -192,7 +192,7 @@ class BaseBackend(ABC):
 
         while not self._interrupts.stop_fetching:
             try:
-                composites = parse_composites(self._request_composites(criteria))
+                composites = self._request_composites(criteria)
             except PermanentHttpError:
                 raise
             except Interrupted:
@@ -262,11 +262,14 @@ class BaseBackend(ABC):
         """Reject criteria the service cannot honor by raising a ValueError. By default, all criteria are supported."""
 
     @abstractmethod
-    def _request_composites(self, criteria: FetchCriteria) -> str:
+    def _request_composites(self, criteria: FetchCriteria) -> list[int]:
         """Request composites from the service, which may return fewer than requested or none at all.
 
         Returns:
-            str: The response body, containing one composite per line.
+            list[int]: The composite numbers returned by the service.
+
+        Raises:
+            ValueError: If the response is malformed.
         """
 
     @abstractmethod
@@ -285,6 +288,7 @@ class BaseBackend(ABC):
         params: Mapping[str, int | str] | None = None,
         data: Mapping[str, str] | None = None,
         files: Mapping[str, tuple[None, str]] | None = None,
+        json: object = None,
         timeout: float,
         interruptible: bool = False,
     ) -> requests.Response:
@@ -299,6 +303,7 @@ class BaseBackend(ABC):
             params=params,
             data=data,
             files=files,
+            json=json,
             timeout=timeout,
             max_attempts=None,
             interruptible=interruptible,

@@ -4,16 +4,26 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, Any, override
 from unittest.mock import Mock, call
 
 import pytest
 import requests
 
+from loguru import logger
+
 from factortool.backend import NO_WORK_DELAY, SUBMIT_SPACING, Backend, BaseBackend, FetchCriteria, parse_composites
 from factortool.config import Config
-from factortool.factordb import FactorDB
-from factortool.http import HttpClient, PermanentHttpError
+from factortool.factordb import (
+    API_URL,
+    MAX_FETCH_COUNT,
+    REJECTED_FACTORS_ERROR,
+    SUBMIT_RPC_ATTEMPTS,
+    FactorDB,
+    RpcError,
+    parse_rpc_responses,
+)
+from factortool.http import HttpClient, PermanentHttpError, build_user_agent
 from factortool.interrupt import InterruptState
 from factortool.number import Number
 from factortool.stats import FactoringStats
@@ -40,13 +50,13 @@ class FakeBackend(BaseBackend):
         super().__init__(config, stats, 1.0, "")
 
     @override
-    def _request_composites(self, criteria: FetchCriteria) -> str:
+    def _request_composites(self, criteria: FetchCriteria) -> list[int]:
         response = next(self.responses)
 
         if isinstance(response, Exception):
             raise response
 
-        return response
+        return parse_composites(response)
 
     @override
     def _submit_number(self, number: Number) -> int:
@@ -101,11 +111,8 @@ def config(tmp_path: Path) -> Config:
         backend="factordb",
         batch_state_path=tmp_path / "batch_state.json",
         cado_nfs_path=tmp_path / "cado-nfs.py",
+        factordb_api_token="",
         factordb_cooldown_period=0.0,
-        factordb_response_path=tmp_path / "factordb_response.html",
-        factordb_session_path=tmp_path / "factordb_session.json",
-        factordb_username="",
-        factordb_password="",
         factoring_mode="standard",
         gimps_login="",
         max_siqs_digits=100,
@@ -120,6 +127,45 @@ def config(tmp_path: Path) -> Config:
     )
 
 
+def rpc_response(*results: object) -> Mock:
+    """Build an HTTP response carrying a batch of successful JSON-RPC results.
+
+    Returns:
+        Mock: The response mock.
+    """
+    body = [{"jsonrpc": "2.0", "id": i, "result": result} for i, result in enumerate(results)]
+    return Mock(spec=requests.Response, json=Mock(return_value=body))
+
+
+def rpc_error(code: int, message: str) -> Mock:
+    """Build an HTTP response carrying a single JSON-RPC error.
+
+    Returns:
+        Mock: The response mock.
+    """
+    body = [{"jsonrpc": "2.0", "id": 0, "error": {"code": code, "message": message}}]
+    return Mock(spec=requests.Response, json=Mock(return_value=body))
+
+
+def row(n: int, fid: int = 1) -> dict[str, object]:
+    """Build a list_by_type row, truncating the preview as FactorDB does.
+
+    Returns:
+        dict[str, object]: The row.
+    """
+    decimal = str(n)
+    return {"fid": fid, "digits": len(decimal), "preview": decimal[:100], "tail": decimal[100:][-100:], "term": ""}
+
+
+def rpc_calls(http_request: Mock) -> list[tuple[str, dict[str, Any]]]:
+    """Collect the JSON-RPC calls made through a recording request mock.
+
+    Returns:
+        list[tuple[str, dict[str, Any]]]: The method and parameters of each call, in order.
+    """
+    return [(c["method"], c["params"]) for request in http_request.call_args_list for c in request.kwargs["json"]]
+
+
 @pytest.fixture
 def http_request(monkeypatch: pytest.MonkeyPatch) -> Mock:
     """Replace HTTP requests with a recording mock returning a composite.
@@ -127,8 +173,7 @@ def http_request(monkeypatch: pytest.MonkeyPatch) -> Mock:
     Returns:
         Mock: The recording request mock.
     """
-    response = Mock(spec=requests.Response, text="15\n")
-    request = Mock(return_value=response)
+    request = Mock(return_value=rpc_response({"rows": [row(15)], "has_more": False}))
     monkeypatch.setattr(HttpClient, "request", request)
     return request
 
@@ -269,7 +314,7 @@ def test_base_close_flushes_submissions(config: Config, sleep: Mock) -> None:
     ],
     ids=["complete", "partial"],
 )
-def test_factordb_submits_each_distinct_factor(  # ruff: ignore[too-many-arguments, too-many-positional-arguments] (Fixtures and parameters)
+def test_factordb_submits_distinct_factors_in_one_call(  # ruff: ignore[too-many-arguments, too-many-positional-arguments] (Fixtures and parameters)
     factordb: FactorDB,
     config: Config,
     http_request: Mock,
@@ -279,6 +324,7 @@ def test_factordb_submits_each_distinct_factor(  # ruff: ignore[too-many-argumen
     expected: list[int],
 ) -> None:
     """Test that FactorDB receives each distinct prime factor, skipping the largest of a complete factorization."""
+    http_request.return_value = rpc_response({"id": {"fid": 315, "kind": "stored"}, "status": "CF"})
     number = Number(315, config, FactoringStats(config.stats_path, read_only=True), factordb)
     number.prime_factors = prime_factors
     number.composite_factors = composite_factors
@@ -287,36 +333,197 @@ def test_factordb_submits_each_distinct_factor(  # ruff: ignore[too-many-argumen
     factordb.close()
 
     assert factordb.get_successful_submission_count() == len(expected)
-    assert [c.kwargs["data"]["factor"] for c in http_request.call_args_list] == [str(f) for f in expected]
-    # One spacing between consecutive factors, plus one after the number.
-    assert sleep.call_args_list == [call(SUBMIT_SPACING)] * len(expected)
+    http_request.assert_called_once()
+    assert rpc_calls(http_request) == [
+        (
+            "report_factors",
+            {"target": {"expr": "315"}, "factors": [str(f) for f in expected], "credit": False},
+        )
+    ]
+    assert sleep.call_args_list == [call(SUBMIT_SPACING)]
+
+
+def test_factordb_skips_submission_without_nontrivial_factors(
+    factordb: FactorDB, config: Config, http_request: Mock, sleep: Mock
+) -> None:
+    """Test that a prime power, whose only factor is the trivial largest one, is not submitted."""
+    number = Number(9, config, FactoringStats(config.stats_path, read_only=True), factordb)
+    number.prime_factors = [3, 3]
+    number.composite_factors = []
+
+    factordb.submit([number])
+    factordb.close()
+
+    assert factordb.get_successful_submission_count() == 0
+    http_request.assert_not_called()
+    assert sleep.call_args_list == [call(SUBMIT_SPACING)]
+
+
+def test_factordb_counts_rejected_submission_as_failure(
+    factordb: FactorDB, config: Config, http_request: Mock, sleep: Mock
+) -> None:
+    """Test that a factor rejected by FactorDB is logged and not counted or retried."""
+    http_request.return_value = rpc_error(*REJECTED_FACTORS_ERROR)
+    number = Number(15, config, FactoringStats(config.stats_path, read_only=True), factordb)
+    number.prime_factors = [3, 5]
+    number.composite_factors = []
+
+    factordb.submit([number])
+    factordb.close()
+
+    assert factordb.get_successful_submission_count() == 0
+    http_request.assert_called_once()
+    assert sleep.call_args_list == [call(SUBMIT_SPACING)]
+
+
+def test_factordb_gives_up_on_repeated_submission_errors(
+    factordb: FactorDB, config: Config, http_request: Mock, sleep: Mock
+) -> None:
+    """Test that a submission still failing after SUBMIT_RPC_ATTEMPTS attempts is abandoned."""
+    http_request.return_value = rpc_error(-32000, "database busy")
+    number = Number(15, config, FactoringStats(config.stats_path, read_only=True), factordb)
+    number.prime_factors = [3, 5]
+    number.composite_factors = []
+
+    factordb.submit([number])
+    factordb.close()
+
+    assert factordb.get_successful_submission_count() == 0
+    assert http_request.call_count == SUBMIT_RPC_ATTEMPTS
+    assert sleep.call_args_list == [call(0.1), call(0.2), call(0.4), call(0.8), call(SUBMIT_SPACING)]
+
+
+def test_factordb_retries_submission_errors(
+    factordb: FactorDB, config: Config, http_request: Mock, sleep: Mock
+) -> None:
+    """Test that an error reported in a successful HTTP response is retried rather than discarding the submission."""
+    http_request.side_effect = [
+        rpc_error(-32603, "internal error"),
+        Mock(spec=requests.Response, json=Mock(return_value=[])),
+        rpc_response({"status": "FF"}),
+    ]
+    number = Number(15, config, FactoringStats(config.stats_path, read_only=True), factordb)
+    number.prime_factors = [3, 5]
+    number.composite_factors = []
+
+    factordb.submit([number])
+    factordb.close()
+
+    assert factordb.get_successful_submission_count() == 1
+    assert http_request.call_count == 3  # ruff: ignore[magic-value-comparison]
+    assert sleep.call_args_list == [call(0.1), call(0.2), call(SUBMIT_SPACING)]
+
+
+def test_factordb_does_not_retry_malformed_submissions(
+    factordb: FactorDB, config: Config, http_request: Mock, sleep: Mock
+) -> None:
+    """Test that an error indicating a malformed request is not retried."""
+    http_request.return_value = rpc_error(-32602, "invalid params")
+    number = Number(15, config, FactoringStats(config.stats_path, read_only=True), factordb)
+    number.prime_factors = [3, 5]
+    number.composite_factors = []
+
+    factordb.submit([number])
+    factordb.close()
+
+    assert factordb.get_successful_submission_count() == 0
+    http_request.assert_called_once()
+    assert sleep.call_args_list == [call(SUBMIT_SPACING)]
+
+
+def submit_signed_in(config: Config, http_request: Mock, responses: list[Mock]) -> list[str]:
+    """Submit 15, 21 and 35 as a signed-in user, then close, with FactorDB answering with the given responses.
+
+    Returns:
+        list[str]: The messages logged while submitting and closing.
+    """
+    http_request.side_effect = [rpc_response({"found": True, "login": "FactorFinder"}), *responses]
+    backend = FactorDB(config.model_copy(update={"factordb_api_token": "secret"}), FactoringStats(config.stats_path))
+    stats = FactoringStats(config.stats_path, read_only=True)
+    numbers = [Number(n, config, stats, backend) for n in (15, 21, 35)]
+
+    for number, factors in zip(numbers, ([3, 5], [3, 7], [5, 7]), strict=True):
+        number.prime_factors = factors
+        number.composite_factors = []
+
+    messages: list[str] = []
+    sink = logger.add(messages.append, format="{message}")
+
+    try:
+        backend.submit(numbers)
+        backend.close()
+    finally:
+        logger.remove(sink)
+
+    return messages
+
+
+def test_factordb_reports_credited_factors(config: Config, http_request: Mock, sleep: Mock) -> None:
+    """Test that credit is claimed for each submission and the credit FactorDB reports is totalled as a lower bound."""
+    # The response for 21 claims no credit, as when a submission is repeated after its first response was lost.
+    reports = [
+        rpc_response({"status": "FF", "credited": 1}),
+        rpc_response({"status": "CF", "credited": 0}),
+        rpc_response({"status": "FF", "credited": 1}),
+    ]
+
+    messages = submit_signed_in(config, http_request, reports)
+
+    assert [params["credit"] for method, params in rpc_calls(http_request) if method == "report_factors"] == [True] * 3
+    assert "FactorDB credited at least 2 factors to your account\n" in messages
+    assert sleep.call_args_list == [call(SUBMIT_SPACING)] * 3
+
+
+def test_factordb_counts_unaccepted_submission_as_failure(
+    factordb: FactorDB, config: Config, http_request: Mock, sleep: Mock
+) -> None:
+    """Test that a number left with no known factors after reporting is not counted, as FactorDB returns no error."""
+    http_request.return_value = rpc_response(
+        {"created_ids": [], "id": {"kind": "literal", "text": "15"}, "status": "C"}
+    )
+    number = Number(15, config, FactoringStats(config.stats_path, read_only=True), factordb)
+    number.prime_factors = [3, 5]
+    number.composite_factors = []
+
+    factordb.submit([number])
+    factordb.close()
+
+    assert factordb.get_successful_submission_count() == 0
+    http_request.assert_called_once()
+    assert sleep.call_args_list == [call(SUBMIT_SPACING)]
 
 
 def test_fetch_maps_criteria(factordb: FactorDB, http_request: Mock) -> None:
-    """Test that fetch criteria map to FactorDB query parameters."""
+    """Test that fetch criteria map to list_by_type parameters."""
     numbers = factordb.fetch(FetchCriteria(count=7, min_digits=2, skip_count=11))
 
     assert {number.n for number in numbers} == {15}
     http_request.assert_called_once_with(
-        "GET",
-        "https://factordb.com/listtype.php",
-        params={"t": 3, "mindig": 2, "perpage": 7, "start": 11, "download": 1},
+        "POST",
+        API_URL,
+        params=None,
         data=None,
         files=None,
-        timeout=3.0,
+        json=[
+            {
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "list_by_type",
+                "params": {"table": "C", "min_digits": 2, "offset": 11, "limit": 7},
+            }
+        ],
+        timeout=10.0,
         max_attempts=None,
         interruptible=True,
     )
 
 
-def test_fetch_caps_count_at_fifty(factordb: FactorDB, http_request: Mock) -> None:
-    """Test that requests for 100 numbers are capped at 50 per page."""
-    expected_perpage = 50
-    numbers = factordb.fetch(FetchCriteria(count=100, min_digits=2))
+def test_fetch_caps_count(factordb: FactorDB, http_request: Mock) -> None:
+    """Test that requests for more numbers than list_by_type allows are capped."""
+    numbers = factordb.fetch(FetchCriteria(count=MAX_FETCH_COUNT + 1, min_digits=2))
 
     assert {number.n for number in numbers} == {15}
-    http_request.assert_called_once()
-    assert http_request.call_args.kwargs["params"]["perpage"] == expected_perpage
+    assert rpc_calls(http_request)[0][1]["limit"] == MAX_FETCH_COUNT
 
 
 def test_fetch_zero_skips_http_request(factordb: FactorDB, http_request: Mock) -> None:
@@ -326,24 +533,154 @@ def test_fetch_zero_skips_http_request(factordb: FactorDB, http_request: Mock) -
 
 
 @pytest.mark.parametrize(
-    ("response_text", "expected"),
+    ("rows", "expected"),
     [
-        ("15\n999\n1001\n", {15, 999}),
-        ("999\n", {999}),
+        ([row(15), row(999), row(1001)], {15, 999}),
+        ([row(999)], {999}),
     ],
     ids=["mixed", "inclusive-bound"],
 )
 def test_fetch_filters_max_digits(
-    factordb: FactorDB, http_request: Mock, response_text: str, expected: set[int]
+    factordb: FactorDB, http_request: Mock, rows: list[dict[str, object]], expected: set[int]
 ) -> None:
-    """Test digit filtering terminates after one successfully parsed response."""
+    """Test that max_digits is sent to FactorDB and also enforced locally."""
     # A finite side effect makes an unexpected retry fail instead of hanging.
-    http_request.side_effect = [Mock(spec=requests.Response, text=response_text)]
+    http_request.side_effect = [rpc_response({"rows": rows, "has_more": False})]
 
     numbers = factordb.fetch(FetchCriteria(count=3, min_digits=2, max_digits=3))
 
     assert {number.n for number in numbers} == expected
     http_request.assert_called_once()
+    assert rpc_calls(http_request)[0][1]["max_digits"] == 3  # ruff: ignore[magic-value-comparison]
+
+
+def test_fetch_requests_decimals_for_truncated_previews(factordb: FactorDB, http_request: Mock) -> None:
+    """Test that numbers whose preview is truncated are expanded with a batch of get_number calls."""
+    large = [10**150 + 7, 10**200 + 9]
+    http_request.side_effect = [
+        rpc_response({"rows": [row(15, 1), row(large[0], 2), row(large[1], 3)], "has_more": True}),
+        rpc_response({"decimal": str(large[0])}, {"decimal": str(large[1])}),
+    ]
+
+    numbers = factordb._request_composites(FetchCriteria(count=3, min_digits=2))
+
+    assert numbers == [15, *large]
+    assert rpc_calls(http_request)[1:] == [
+        ("get_number", {"target": {"id": 2}, "decimal": True}),
+        ("get_number", {"target": {"id": 3}, "decimal": True}),
+    ]
+
+
+def test_fetch_skips_numbers_without_decimals(factordb: FactorDB, http_request: Mock) -> None:
+    """Test that a number whose decimal expansion FactorDB omits is skipped."""
+    http_request.side_effect = [
+        rpc_response({"rows": [row(15, 1), row(10**150 + 7, 2)], "has_more": False}),
+        rpc_response({"decimal_omitted": True}),
+    ]
+
+    assert factordb._request_composites(FetchCriteria(count=2, min_digits=2)) == [15]
+
+
+def test_fetch_skips_decimals_of_the_wrong_length(factordb: FactorDB, http_request: Mock) -> None:
+    """Test that a number whose decimal expansion disagrees with its reported digit count is skipped."""
+    http_request.side_effect = [
+        rpc_response({"rows": [row(15, 1), row(10**150 + 7, 2)], "has_more": False}),
+        rpc_response({"decimal": "123"}),
+    ]
+
+    assert factordb._request_composites(FetchCriteria(count=2, min_digits=2)) == [15]
+
+
+def test_parse_rpc_responses_orders_results_by_id() -> None:
+    """Test that batch results are matched to their calls by id rather than position."""
+    body = [{"jsonrpc": "2.0", "id": 1, "result": "b"}, {"jsonrpc": "2.0", "id": 0, "result": "a"}]
+
+    assert parse_rpc_responses(body, 2) == ["a", "b"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"jsonrpc": "2.0", "id": 0, "result": 1},
+        [],
+        ["result"],
+        [{"jsonrpc": "2.0", "id": 1, "result": 1}],
+        [{"jsonrpc": "2.0", "id": 0}],
+        [{"jsonrpc": "2.0", "id": None, "result": 1}],
+    ],
+    ids=["not-a-batch", "wrong-length", "not-an-object", "missing-id", "no-result", "null-id"],
+)
+def test_parse_rpc_responses_rejects_malformed_responses(body: object) -> None:
+    """Test that malformed batch responses raise a ValueError."""
+    with pytest.raises(ValueError):  # ruff: ignore[pytest-raises-too-broad] (Pydantic and our own messages differ)
+        parse_rpc_responses(body, 1)
+
+
+@pytest.mark.parametrize("code", [-32700, -32600, -32601, -32602])
+def test_parse_rpc_responses_treats_invalid_requests_as_permanent(code: int) -> None:
+    """Test that errors indicating an invalid request are not retried."""
+    with pytest.raises(PermanentHttpError, match="unsupported"):
+        parse_rpc_responses(rpc_error(code, "unsupported").json(), 1)
+
+
+@pytest.mark.parametrize("batch", [False, True], ids=["single", "batch"])
+def test_parse_rpc_responses_raises_errors_without_an_id(*, batch: bool) -> None:
+    """Test that an error not tied to any call, as for an unparseable batch, is raised with its own message."""
+    response: dict[str, object] = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}
+
+    with pytest.raises(PermanentHttpError, match="Parse error"):
+        parse_rpc_responses([response] if batch else response, 2)
+
+
+def test_parse_rpc_responses_raises_other_errors() -> None:
+    """Test that other errors are raised as ordinary request exceptions."""
+    with pytest.raises(RpcError, match="Division by zero") as exc_info:
+        parse_rpc_responses(rpc_error(-32000, "eval: Division by zero").json(), 1)
+
+    assert not isinstance(exc_info.value, PermanentHttpError)
+
+
+def test_factordb_verifies_api_token(config: Config, http_request: Mock) -> None:
+    """Test that a configured token is verified, sent with requests and used to claim credit."""
+    http_request.return_value = rpc_response({"found": True, "login": "FactorFinder"})
+    backend = FactorDB(config.model_copy(update={"factordb_api_token": "secret"}), FactoringStats(config.stats_path))
+
+    try:
+        headers = backend._http_client.session.headers
+        assert rpc_calls(http_request) == [("whoami", {"session": "secret"})]
+        assert headers["X-Fdb-User-Token"] == "secret"
+        assert headers["User-Agent"] == build_user_agent()
+        assert backend._signed_in
+    finally:
+        backend.close()
+
+
+def test_factordb_rejects_unrecognized_api_token(config: Config, http_request: Mock) -> None:
+    """Test that an unrecognized token is a permanent error rather than a silent fallback to anonymous submission."""
+    http_request.return_value = rpc_response({"found": False})
+
+    with pytest.raises(PermanentHttpError, match="does not recognize"):
+        FactorDB(config.model_copy(update={"factordb_api_token": "bogus"}), FactoringStats(config.stats_path))
+
+
+@pytest.mark.parametrize(
+    "response",
+    [requests.RequestException("unreachable"), rpc_response({"login": "FactorFinder"})],
+    ids=["request-error", "malformed"],
+)
+def test_factordb_stops_if_token_cannot_be_verified(config: Config, http_request: Mock, response: object) -> None:
+    """Test that a token that cannot be verified stops startup rather than claiming credit it may not get."""
+    http_request.side_effect = [response]
+
+    with pytest.raises(requests.RequestException, match="Unable to verify"):
+        FactorDB(config.model_copy(update={"factordb_api_token": "secret"}), FactoringStats(config.stats_path))
+
+
+def test_factordb_without_token_is_anonymous(factordb: FactorDB, http_request: Mock) -> None:
+    """Test that no token means no verification request and no token header."""
+    http_request.assert_not_called()
+    assert "X-Fdb-User-Token" not in factordb._http_client.session.headers
+    assert not factordb._signed_in
 
 
 @pytest.mark.parametrize(
@@ -385,3 +722,11 @@ def test_base_fetch_does_not_retry_permanent_errors(config: Config, sleep: Mock,
         backend.close()
 
     sleep.assert_not_called()
+
+
+def test_factordb_stops_if_token_verification_is_invalid(config: Config, http_request: Mock) -> None:
+    """Test that a permanent error while verifying the token is raised rather than ignored."""
+    http_request.return_value = rpc_error(-32602, "invalid params")
+
+    with pytest.raises(PermanentHttpError, match="invalid params"):
+        FactorDB(config.model_copy(update={"factordb_api_token": "secret"}), FactoringStats(config.stats_path))

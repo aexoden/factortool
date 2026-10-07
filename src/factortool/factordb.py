@@ -1,21 +1,23 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
-"""Interface for interacting with FactorDB."""
+"""Interface for interacting with FactorDB through its JSON-RPC API. See https://factordb.com/api.php."""
 
 from __future__ import annotations
 
-import datetime
-import re
 import time
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, NoReturn, override
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 import requests
 
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
-from factortool.backend import SUBMIT_SPACING, BaseBackend
+from factortool.backend import BaseBackend
+from factortool.http import MAX_DELAY, PermanentHttpError
 
 if TYPE_CHECKING:
     from factortool.backend import FetchCriteria
@@ -24,12 +26,157 @@ if TYPE_CHECKING:
     from factortool.number import Number
     from factortool.stats import FactoringStats
 
+API_URL = "https://factordb.com/rpc"
 
-class FactorDBSessionData(BaseModel):
-    """Session data for FactorDB login persistence."""
+# The most rows list_by_type returns for a single request.
+MAX_FETCH_COUNT = 1000
 
-    cookies: dict[str, str]
-    expiry: datetime.datetime
+# How many times to attempt a submission that FactorDB answers with an error or a malformed response.
+SUBMIT_RPC_ATTEMPTS = 5
+
+# JSON-RPC errors indicating a malformed or unsupported request that retrying cannot fix.
+PERMANENT_RPC_ERROR_CODES = frozenset({-32700, -32600, -32601, -32602})
+
+# The error report_factors returns when none of the submitted factors divides the target.
+REJECTED_FACTORS_ERROR = (-32000, "no valid factor")
+
+
+class RpcError(requests.RequestException):
+    """An error reported by FactorDB in a JSON-RPC response."""
+
+    def __init__(self, code: int, message: str) -> None:
+        """Initialize the error from the code and message reported by FactorDB."""
+        super().__init__(f"FactorDB reported error {code}: {message}")
+        self.code = code
+        self.message = message
+
+
+class RpcErrorDetail(BaseModel):
+    """The error object of a failed JSON-RPC call."""
+
+    code: int
+    message: str
+
+
+class RpcResponse(BaseModel):
+    """A single JSON-RPC response, carrying either a result or an error."""
+
+    id: int | None
+    result: Any = None
+    error: RpcErrorDetail | None = None
+
+
+RPC_RESPONSES = TypeAdapter(list[RpcResponse])
+
+
+class ListedNumber(BaseModel):
+    """A row returned by list_by_type. The preview is the full decimal only for small numbers."""
+
+    fid: int
+    digits: int
+    preview: str
+
+
+class ListResult(BaseModel):
+    """The result of list_by_type."""
+
+    rows: list[ListedNumber]
+
+
+class NumberRecord(BaseModel):
+    """The result of get_number. The decimal is omitted if FactorDB considers the number too large."""
+
+    decimal: str | None = None
+
+
+class ReportResult(BaseModel):
+    """The result of report_factors, returned if at least one factor was accepted."""
+
+    status: str
+    credited: int = 0
+
+
+class Identity(BaseModel):
+    """The result of whoami."""
+
+    found: bool
+    login: str = ""
+
+
+def raise_rpc_error(error: RpcErrorDetail) -> NoReturn:
+    """Raise the exception corresponding to a JSON-RPC error.
+
+    Raises:
+        PermanentHttpError: If the error indicates a request that retrying cannot fix.
+        RpcError: For any other error.
+    """
+    if error.code in PERMANENT_RPC_ERROR_CODES:
+        msg = f"FactorDB reported error {error.code}: {error.message}"
+        raise PermanentHttpError(msg)
+
+    raise RpcError(error.code, error.message)
+
+
+def is_rejection(error: Exception) -> bool:
+    """Determine whether an error is FactorDB rejecting every submitted factor.
+
+    Returns:
+        bool: True if the error reports that none of the factors divide the target.
+    """
+    return isinstance(error, RpcError) and (error.code, error.message) == REJECTED_FACTORS_ERROR
+
+
+def parse_rpc_responses(body: object, count: int) -> list[Any]:
+    """Extract the results from a batch JSON-RPC response, in request order.
+
+    Returns:
+        list[Any]: The result of each call, in the order the calls were made.
+
+    Raises:
+        ValueError: If the response is malformed.
+        PermanentHttpError: If a call failed in a way retrying cannot fix.
+        RpcError: If a call failed for any other reason.
+    """
+    if isinstance(body, dict):
+        response = RpcResponse.model_validate(body)
+
+        if response.error is not None:
+            raise_rpc_error(response.error)
+
+        msg = "FactorDB answered a batch of JSON-RPC calls with a single result"
+        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] (The response was malformed)
+
+    batch = RPC_RESPONSES.validate_python(body)
+
+    for response in batch:
+        if response.id is None:
+            if response.error is not None:
+                raise_rpc_error(response.error)
+
+            msg = "FactorDB returned a JSON-RPC result without an id"
+            raise ValueError(msg)
+
+    responses = {response.id: response for response in batch if response.id is not None}
+
+    if sorted(responses) != list(range(count)):
+        msg = f"FactorDB returned JSON-RPC calls {sorted(responses)} when {count} were made"
+        raise ValueError(msg)
+
+    results: list[Any] = []
+
+    for i in range(count):
+        response = responses[i]
+
+        if response.error is not None:
+            raise_rpc_error(response.error)
+
+        if "result" not in response.model_fields_set:
+            msg = f"FactorDB returned neither a result nor an error for JSON-RPC call {i}"
+            raise ValueError(msg)
+
+        results.append(response.result)
+
+    return results
 
 
 class FactorDB(BaseBackend):
@@ -44,38 +191,133 @@ class FactorDB(BaseBackend):
     submission_unit = "factors"
 
     def __init__(self, config: Config, stats: FactoringStats, interrupts: InterruptState | None = None) -> None:
-        """Initialize the FactorDB interface."""
-        super().__init__(config, stats, config.factordb_cooldown_period, config.factordb_username, interrupts)
+        """Initialize the FactorDB interface, verifying any configured API token.
 
-        self._load_session()
+        Raises:
+            PermanentHttpError: If FactorDB does not recognize the configured API token.
+            requests.RequestException: If the configured API token could not be verified.
+        """
+        super().__init__(config, stats, config.factordb_cooldown_period, "", interrupts)
 
-    def _request_composites(self, criteria: FetchCriteria) -> str:
-        """Request composites from FactorDB.
+        self._signed_in = False
+        self._credited_count = 0
 
-        FactorDB does not itself support max_digits, but BaseBackend automatically filters through its public fetch
-        method. All other criteria are respected. Requests are capped at 50 numbers.
+        if not config.factordb_api_token:
+            logger.warning("No FactorDB API token is configured; results will be submitted anonymously")
+            return
+
+        self._http_client.session.headers["X-Fdb-User-Token"] = config.factordb_api_token
+
+        try:
+            (result,) = self._rpc([("whoami", {"session": config.factordb_api_token})], timeout=5.0, max_attempts=5)
+            identity = Identity.model_validate(result)
+        except PermanentHttpError:
+            self.close()
+            raise
+        except (requests.RequestException, ValueError) as e:
+            self.close()
+            msg = f"Unable to verify the FactorDB API token: {e}"
+            raise requests.RequestException(msg) from e
+
+        if not identity.found:
+            self.close()
+            msg = "FactorDB does not recognize the configured API token"
+            raise PermanentHttpError(msg)
+
+        logger.info("Signed in to FactorDB as {}", identity.login)
+        self._signed_in = True
+
+    def _rpc(
+        self,
+        calls: Sequence[tuple[str, Mapping[str, object]]],
+        *,
+        timeout: float,
+        interruptible: bool = False,
+        max_attempts: int | None = None,
+    ) -> list[Any]:
+        """Make a batch of JSON-RPC calls.
+
+        HTTP failures are retried indefinitely unless max_attempts is given. Errors reported by FactorDB for individual
+        calls are not retried.
 
         Returns:
-            str: The response body, containing one composite per line.
+            list[Any]: The result of each call, in the order the calls were made.
         """
-        # Limit to a maximum of 50 numbers per request to avoid overloading FactorDB. This is intended to be a temporary
-        # measure.
-        number_count = min(criteria.count, 50)
+        payload = [
+            {"jsonrpc": "2.0", "id": i, "method": method, "params": params} for i, (method, params) in enumerate(calls)
+        ]
 
-        params = {
-            "t": 3,
-            "mindig": criteria.min_digits,
-            "perpage": number_count,
-            "start": criteria.skip_count,
-            "download": 1,
+        if max_attempts is None:
+            response = self._service_request(
+                "POST", API_URL, json=payload, timeout=timeout, interruptible=interruptible
+            )
+        else:
+            response = self._http_client.request(
+                "POST", API_URL, json=payload, timeout=timeout, max_attempts=max_attempts, interruptible=interruptible
+            )
+
+        return parse_rpc_responses(response.json(), len(calls))
+
+    def _request_composites(self, criteria: FetchCriteria) -> list[int]:
+        """Request composites from FactorDB, smallest first.
+
+        All criteria are respected. Requests are capped at MAX_FETCH_COUNT numbers.
+
+        Returns:
+            list[int]: The composite numbers returned by FactorDB.
+
+        Raises:
+            ValueError: If the response is malformed.
+        """
+        params: dict[str, object] = {
+            "table": "C",
+            "min_digits": criteria.min_digits,
+            "offset": criteria.skip_count,
+            "limit": min(criteria.count, MAX_FETCH_COUNT),
         }
 
-        return self._service_request(
-            "GET", "https://factordb.com/listtype.php", params=params, timeout=3.0, interruptible=True
-        ).text
+        if criteria.max_digits is not None:
+            params["max_digits"] = criteria.max_digits
+
+        (result,) = self._rpc([("list_by_type", params)], timeout=10.0, interruptible=True)
+        rows = ListResult.model_validate(result).rows
+
+        # Larger numbers are only previewed.
+        truncated = [row for row in rows if len(row.preview) != row.digits]
+        decimals: dict[int, str | None] = {}
+
+        if truncated:
+            calls = [("get_number", {"target": {"id": row.fid}, "decimal": True}) for row in truncated]
+            results = self._rpc(calls, timeout=30.0, interruptible=True)
+            decimals = {
+                row.fid: NumberRecord.model_validate(result).decimal
+                for row, result in zip(truncated, results, strict=True)
+            }
+
+        composites: list[int] = []
+
+        for row in rows:
+            decimal = decimals.get(row.fid, row.preview)
+
+            if decimal is None:
+                logger.warning("Skipping FactorDB number {}, as its decimal expansion was omitted", row.fid)
+                continue
+
+            if len(decimal) != row.digits:
+                logger.warning(
+                    "Skipping FactorDB number {}, as its decimal expansion has {} digits rather than {}",
+                    row.fid,
+                    len(decimal),
+                    row.digits,
+                )
+                continue
+
+            composites.append(int(decimal))
+
+        return composites
 
     def _submit_number(self, number: Number) -> int:
-        """Submit each prime factor of a number to FactorDB individually.
+        """Submit the distinct prime factors of a number to FactorDB.
 
         Returns:
             int: The number of factors successfully submitted.
@@ -86,99 +328,75 @@ class FactorDB(BaseBackend):
         if len(number.composite_factors) == 0:
             factors.pop()
 
-        successes = 0
+        if not factors:
+            return 0
 
-        for i, factor in enumerate(factors):
-            if i > 0:
-                time.sleep(SUBMIT_SPACING)
-
-            successes += self._submit_factor(number.n, factor)
-
-        return successes
-
-    def _submit_factor(self, number: int, factor: int) -> bool:
-        """Submit a single factor to FactorDB.
-
-        Returns:
-            bool: True if the factor was successfully submitted, False otherwise.
-        """
-        url = "https://factordb.com/reportfactor.php"
-        payload = {"number": str(number), "factor": str(factor)}
-
-        try:
-            self._service_request("POST", url, data=payload, timeout=3.0)
-        except requests.RequestException as e:
-            logger.error("Error submitting factor {} for n{}: {}", factor, number, e)
-            return False
-
-        logger.debug("Submitted factor {} for n={}", factor, number)
-        return True
-
-    def _check_factordb_response(self, response_text: str) -> bool:
-        with self._config.factordb_response_path.open(mode="w", encoding="utf-8") as f:
-            f.write(response_text)
-
-        logged_in_pattern = r"Logged in as <b>(.*)</b>"
-        match = re.search(logged_in_pattern, response_text)
-        if match:
-            logger.info("FactorDB reports logged in as {}", match.group(1))
-        elif self._config.factordb_username:
-            logger.warning("Attemping to relogin as FactorDB reports not logged in")
-            self._login()
-        else:
-            logger.warning("Results were submitted anonymously as no FactorDB username is configured")
-
-        success_pattern = r"Found (\d+) factors and \d+ ECM/P-1/P\+1 results."
-        match = re.search(success_pattern, response_text)
-        if match:
-            factors_found = int(match.group(1))
-            logger.info("FactorDB reports {} factors were added to the database", factors_found)
-            return True
-
-        logger.error("Could not find expected success message in FactorDB reponse")
-        return False
-
-    def _login(self) -> bool:
-        if not self._config.factordb_username:
-            logger.warning("Results will be submitted anonymously as no FactorDB username is set")
-            return False
-
-        login_url = "https://factordb.com/login.php"
-
-        login_data = {
-            "user": self._config.factordb_username,
-            "pass": self._config.factordb_password,
-            "dlogin": "Login",
+        params = {
+            "target": {"expr": str(number.n)},
+            "factors": [str(factor) for factor in factors],
+            "credit": self._signed_in,
         }
 
         try:
-            self._http_client.request("POST", login_url, data=login_data, timeout=5.0, max_attempts=5)
-        except requests.RequestException as e:
-            logger.error("FactorDB login failed: {}", e)
-            return False
+            result, report = self._report_factors(params)
+        except (requests.RequestException, ValueError) as e:
+            if is_rejection(e):
+                logger.warning("FactorDB did not accept factors {} for n={}: {}", factors, number.n, e)
+            else:
+                logger.error("Error submitting factors {} for n={}: {}", factors, number.n, e)
 
-        self._save_session()
+            return 0
 
-        return True
+        if report.status == "C":
+            logger.warning("FactorDB did not accept factors {} for n={}: {}", factors, number.n, result)
+            return 0
 
-    def _load_session(self) -> None:
-        if self._config.factordb_session_path.exists():
-            with self._config.factordb_session_path.open("r", encoding="utf-8") as f:
-                session_data = FactorDBSessionData.model_validate_json(f.read())
+        logger.debug("Submitted factors {} for n={}: {}", factors, number.n, result)
 
-            if datetime.datetime.now(tz=datetime.UTC) < session_data.expiry - datetime.timedelta(hours=1):
-                self._http_client.set_cookies(session_data.cookies)
-                return
+        self._credited_count += report.credited
 
-        self._login()
+        return len(factors)
 
-    def _save_session(self) -> None:
-        expiry = datetime.datetime.now(tz=datetime.UTC) + datetime.timedelta(days=21)
+    def _report_factors(self, params: Mapping[str, object]) -> tuple[Any, ReportResult]:
+        """Call report_factors, retrying errors and malformed responses up to SUBMIT_RPC_ATTEMPTS times in total.
 
-        session_data = FactorDBSessionData(
-            cookies=self._http_client.get_cookies(),
-            expiry=expiry,
-        )
+        HTTP failures are retried indefinitely by the underlying client, while errors indicating a malformed request
+        or a rejection of every factor are not retried.
 
-        with self._config.factordb_session_path.open("w", encoding="utf-8") as f:
-            f.write(session_data.model_dump_json())
+        Returns:
+            tuple[Any, ReportResult]: A tuple containing the raw result and the parsed report.
+
+        Raises:
+            PermanentHttpError: If FactorDB reports that the request is malformed.
+            RpcError: If FactorDB rejects every factor, or still reports an error on the final attempt.
+            ValueError: If the response is still malformed on the final attempt.
+        """
+        delay = max(0.1, self._cooldown_period)
+        attempt = 1
+
+        while True:
+            try:
+                (result,) = self._rpc([("report_factors", params)], timeout=30.0)
+                return result, ReportResult.model_validate(result)
+            except PermanentHttpError:
+                raise
+            except (RpcError, ValueError) as e:
+                if is_rejection(e) or attempt >= SUBMIT_RPC_ATTEMPTS:
+                    raise
+
+                logger.warning("Error submitting factors to FactorDB: {}. Retrying in {} seconds...", e, delay)
+
+            time.sleep(delay)
+            delay = min(MAX_DELAY, delay * 2)
+            attempt += 1
+
+    @override
+    def close(self) -> None:
+        """Flush any pending submissions, then log how many factors FactorDB credited to the account."""
+        super().close()
+
+        if not self._signed_in or self.get_successful_submission_count() == 0:
+            return
+
+        # A submission repeated after its response was lost reports no credit for factors credited the first time.
+        logger.info("FactorDB credited at least {} factors to your account", self._credited_count)

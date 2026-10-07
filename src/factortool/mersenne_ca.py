@@ -17,7 +17,7 @@ import requests
 
 from loguru import logger
 
-from factortool.backend import BaseBackend
+from factortool.backend import BaseBackend, parse_composites
 from factortool.number import format_factorization
 
 if TYPE_CHECKING:
@@ -75,11 +75,11 @@ class MersenneCA(BaseBackend):
             msg = "mersenne.ca does not support a skip count"
             raise ValueError(msg)
 
-    def _request_composites(self, criteria: FetchCriteria) -> str:
+    def _request_composites(self, criteria: FetchCriteria) -> list[int]:
         """Request composites assigned by mersenne.ca. An empty body means no work is available.
 
         Returns:
-            str: The response body, containing one composite per line.
+            list[int]: The composite numbers assigned by mersenne.ca.
         """
         params: dict[str, int | str] = {
             "composites_to_factor": criteria.count,
@@ -89,7 +89,9 @@ class MersenneCA(BaseBackend):
             "gimps_login": self._config.gimps_login,
         }
 
-        return self._service_request("GET", API_URL, params=params, timeout=30.0, interruptible=True).text
+        return parse_composites(
+            self._service_request("GET", API_URL, params=params, timeout=30.0, interruptible=True).text
+        )
 
     def _submit_number(self, number: Number) -> int:
         """Report a single composite's factorization, complete or partial.

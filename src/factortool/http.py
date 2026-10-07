@@ -133,7 +133,7 @@ class HttpClient:
         params: Mapping[str, int | str] | None = None,
         data: Mapping[str, str] | None = None,
         files: Mapping[str, tuple[None, str]] | None = None,
-        json: Mapping[str, str] | None = None,
+        json: object = None,
         max_attempts: int | None = 5,
         timeout: float = 3.0,
         interruptible: bool = False,
@@ -146,7 +146,7 @@ class HttpClient:
             params (Mapping[str, int | str] | None): Query parameters for the request.
             data (Mapping[str, str] | None): Form data for the request.
             files (Mapping[str, tuple[None, str]] | None): Files to upload with the request.
-            json (Mapping[str, str] | None): JSON payload for the request.
+            json (object): JSON payload for the request, or None for no JSON body.
             max_attempts (int | None): Maximum number of attempts, or None for unlimited retries.
             timeout (float): Timeout for the request in seconds.
             interruptible (bool): Whether the request can be interrupted during backoff.
@@ -205,19 +205,3 @@ class HttpClient:
 
             if not rate_limited:
                 delay = min(MAX_DELAY, delay * 2)
-
-    def get_cookies(self) -> dict[str, str]:
-        """Return the session's cookies as a plain dictionary.
-
-        Returns:
-            dict[str, str]: The current session cookies.
-        """
-        return self.session.cookies.get_dict()
-
-    def set_cookies(self, cookies: Mapping[str, str]) -> None:
-        """Replace the session's cookies.
-
-        Args:
-            cookies (Mapping[str, str]): The new cookies to set for the session.
-        """
-        self.session.cookies.update(cookies)  # pyright: ignore[reportUnknownMemberType] (return type is Unknown, but irrelevant here)
