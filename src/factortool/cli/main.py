@@ -19,7 +19,7 @@ from loguru import logger
 from tap import Tap
 
 from factortool.__about__ import __version__
-from factortool.assignments import AssignmentStore, select_unfinished
+from factortool.assignments import ASSIGNMENT_EXPIRY_FUDGE_FACTOR, AssignmentStore, select_unfinished
 from factortool.backend import Backend, FetchCriteria, create_backend
 from factortool.batch import BatchController, BatchKey
 from factortool.config import read_config
@@ -135,14 +135,20 @@ def acquire_numbers(  # ruff: ignore[too-many-arguments]
     if backend.assigns_work:
         numbers = {Number(n, config, stats, backend) for n in assignments.load()}
 
-    if not fetch:
-        return numbers
-
     remaining = criteria.count - len(numbers)
 
-    if remaining > 0:
+    if fetch and remaining > 0:
         logger.info("Fetching {} composite numbers from {}", remaining, config.backend)
-        numbers |= fetch_numbers(backend, replace(criteria, count=remaining))
+        fetched = fetch_numbers(backend, replace(criteria, count=remaining))
+
+        if backend.assigns_work:
+            assignments.note_assigned(x.n for x in fetched)
+
+        numbers |= fetched
+
+    if backend.assigns_work:
+        for number in numbers:
+            number.expires_at = assignments.expires_at(number.n)
 
     return numbers
 
@@ -159,6 +165,12 @@ def fetch_numbers(backend: Backend, criteria: FetchCriteria) -> set[Number]:
         logger.error("Unable to fetch numbers: {}", e)
         backend.close()
         sys.exit(6)
+
+
+def warn_if_assignments_may_expire(backend: Backend, target_duration: float) -> None:
+    """Warn if a run may outlast the assignments it fetches."""
+    if backend.assigns_work and 2.0 * target_duration + ASSIGNMENT_EXPIRY_FUDGE_FACTOR > backend.assignment_lifetime:
+        logger.warning("With a target duration of {:.0f}s, assignments may expire before completion", target_duration)
 
 
 def preserve_unfinished(backend: Backend, assignments: AssignmentStore, numbers: Collection[Number]) -> None:
@@ -214,7 +226,9 @@ def main() -> None:
     if args.no_new_work:
         logger.info("As requested, not fetching new work")
 
-    assignments = AssignmentStore(config.assignment_state_path, config.backend)
+    warn_if_assignments_may_expire(backend, args.target_duration)
+
+    assignments = AssignmentStore(config.assignment_state_path, config.backend, backend.assignment_lifetime)
     numbers = acquire_numbers(
         backend,
         assignments,

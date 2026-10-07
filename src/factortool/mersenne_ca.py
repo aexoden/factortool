@@ -46,6 +46,7 @@ class MersenneCA(BaseBackend):
 
     # Fetched composites are reserved for this client for an hour.
     assigns_work = True
+    assignment_lifetime = 3600.0
 
     submission_unit = "factorizations"
 

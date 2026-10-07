@@ -170,3 +170,28 @@ def test_third_interrupt_abandons_tools_running_in_worker_threads(
     assert finished.is_set()
     assert heartbeat_stopped(heartbeat)
     assert number.composite_factors == [COMPOSITES[0]]
+
+
+@pytest.mark.parametrize("mode", ["yafu", "standard"])
+def test_numbers_whose_assignment_has_expired_are_skipped(
+    monkeypatch: pytest.MonkeyPatch, mode: Literal["standard", "yafu"]
+) -> None:
+    """Test that no work is started on a number whose assignment has expired, while other numbers are unaffected."""
+    config = make_config().model_copy(update={"factoring_mode": mode})
+    engine = FactorEngine(config, 600.0, InterruptState())
+    lapsed, assigned, unassigned = (make_number(n) for n in COMPOSITES)
+    lapsed.expires_at = time.time()
+    assigned.expires_at = time.time() + 3600.0
+    attempted: set[int] = set()
+
+    def factor(self: Number, *_: object) -> None:
+        attempted.add(self.n)
+        self.prime_factors = [self.n]
+        self.composite_factors = []
+
+    for method in ("factor_yafu_direct", "factor_tf"):
+        monkeypatch.setattr(f"factortool.number.Number.{method}", factor, raising=True)
+
+    assert engine.run([lapsed, assigned, unassigned]) == ExitStatus.SUCCESS
+    assert attempted == {assigned.n, unassigned.n}
+    assert not lapsed.factored

@@ -93,7 +93,8 @@ where factors are submitted.
 
 Partial factorizations are submitted if a run ends after finding one or more
 factors. For `mersenne_ca`, unfinished assignments are saved in `assignment_state_path`
-and resumed on the next run.
+and resumed on the next run. Assignments will be dropped if they come within ten
+minutes of expiration without being started.
 
 ## User Agent
 

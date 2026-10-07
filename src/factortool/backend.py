@@ -78,6 +78,11 @@ class Backend(Protocol):
         """Whether the service reserves fetched composites for this client."""
         ...
 
+    @property
+    def assignment_lifetime(self) -> float:
+        """The lifetime of the assignment in seconds."""
+        ...
+
     def fetch(self, criteria: FetchCriteria) -> set[Number]:
         """Fetch up to criteria.count matching composites, possibly returning an empty set.
 
@@ -124,6 +129,9 @@ class BaseBackend(ABC):
 
     # Whether the service reserves fetched composites for this client.
     assigns_work: bool
+
+    # How long, in seconds, the service holds a fetched composite for this client. Only meaningful if assigns_work.
+    assignment_lifetime: float
 
     # A descriptive name for a single submission unit, used for logging.
     submission_unit: ClassVar[str]

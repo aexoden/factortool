@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
+from factortool.assignments import assignment_expired
 from factortool.constants import CADO_NFS_MIN_DIGITS, ECM_CURVES
 from factortool.interrupt import Interrupted
 from factortool.util import SMALL_PRIMES, format_number, get_work_dir, is_prime, log_factor_result
@@ -357,6 +358,8 @@ class Number:
     composite_factors: list[int]
     methods: list[str]
 
+    expires_at: float | None
+
     _ecm_level: int
     _maximum_ecm_level: int
     _stats: FactoringStats
@@ -370,6 +373,7 @@ class Number:
         self._config = config
         self._backend = backend
         self._submitted = False
+        self.expires_at = None
 
         self._ecm_level = 0
         self._prefer_siqs = True
@@ -408,6 +412,11 @@ class Number:
             int: Hash of the number.
         """
         return self.n.__hash__()
+
+    @property
+    def assignment_expired(self) -> bool:
+        """Whether this number's assignment is too close to expiry to continue factoring."""
+        return self.expires_at is not None and assignment_expired(self.expires_at)
 
     @property
     def attempted(self) -> bool:

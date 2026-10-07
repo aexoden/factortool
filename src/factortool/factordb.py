@@ -39,6 +39,7 @@ class FactorDB(BaseBackend):
 
     # FactorDB does not currently have any sort of reservation system.
     assigns_work = False
+    assignment_lifetime = 0.0
 
     submission_unit = "factors"
 

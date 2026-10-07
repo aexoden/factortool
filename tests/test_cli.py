@@ -30,6 +30,8 @@ FETCHED = [104, 106, 108]
 class FakeBackend:
     """A backend that records requests, assigning work unless told otherwise."""
 
+    assignment_lifetime = 3600.0
+
     def __init__(self, *, assigns_work: bool = True) -> None:
         """Initialize the fake backend."""
         self.assigns_work = assigns_work
@@ -67,7 +69,8 @@ class FakeBackend:
 def test_a_normal_run_tops_the_batch_back_up(tmp_path: Path) -> None:
     """Test that retained work counts toward the batch and the rest is fetched."""
     backend = FakeBackend()
-    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca")
+    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca", backend.assignment_lifetime)
+    store.note_assigned(CARRIED_OVER)
     store.save(CARRIED_OVER)
 
     numbers = acquire_numbers(backend, store, make_config(), FactoringStats(tmp_path / "stats.json"), CRITERIA)
@@ -76,10 +79,25 @@ def test_a_normal_run_tops_the_batch_back_up(tmp_path: Path) -> None:
     assert sorted(x.n for x in numbers) == sorted([*CARRIED_OVER, FETCHED[0]])
 
 
+def test_acquired_numbers_carry_their_assignment_expiry(tmp_path: Path) -> None:
+    """Test that both retained and fetched numbers know when their assignment expires."""
+    backend = FakeBackend()
+    state_path = tmp_path / "assignments.json"
+    first = AssignmentStore(state_path, "mersenne_ca", backend.assignment_lifetime)
+    first.note_assigned(CARRIED_OVER)
+    first.save(CARRIED_OVER)
+
+    store = AssignmentStore(state_path, "mersenne_ca", backend.assignment_lifetime)
+    numbers = acquire_numbers(backend, store, make_config(), FactoringStats(tmp_path / "stats.json"), CRITERIA)
+
+    assert all(x.expires_at is not None and x.expires_at == store.expires_at(x.n) for x in numbers)
+
+
 def test_no_new_work_works_only_what_is_already_assigned(tmp_path: Path) -> None:
     """Test that the no new work option only uses already assigned work."""
     backend = FakeBackend()
-    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca")
+    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca", backend.assignment_lifetime)
+    store.note_assigned(CARRIED_OVER)
     store.save(CARRIED_OVER)
 
     numbers = acquire_numbers(
@@ -93,7 +111,7 @@ def test_no_new_work_works_only_what_is_already_assigned(tmp_path: Path) -> None
 def test_no_new_work_with_nothing_carried_over_finds_no_work(tmp_path: Path) -> None:
     """Test that the no new work option finds no work when nothing is retained."""
     backend = FakeBackend()
-    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca")
+    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca", backend.assignment_lifetime)
 
     numbers = acquire_numbers(
         backend, store, make_config(), FactoringStats(tmp_path / "stats.json"), CRITERIA, fetch=False
@@ -106,7 +124,7 @@ def test_no_new_work_with_nothing_carried_over_finds_no_work(tmp_path: Path) -> 
 def test_an_early_exit_reports_partial_progress_without_an_assignment(tmp_path: Path) -> None:
     """Test that an early exit reports partial progress for a backend that does not assign work."""
     backend = FakeBackend(assigns_work=False)
-    store = AssignmentStore(tmp_path / "assignments.json", "factordb")
+    store = AssignmentStore(tmp_path / "assignments.json", "factordb", backend.assignment_lifetime)
     stats = FactoringStats(tmp_path / "stats.json", read_only=True)
 
     partially_factored = Number(200, make_config(), stats, backend)

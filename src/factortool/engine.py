@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import threading
 import time
 
 from enum import Enum
@@ -48,6 +49,25 @@ class FactorEngine:
 
         self._interrupts = interrupts
 
+        self._expired: set[Number] = set()
+        self._expired_lock = threading.Lock()
+
+    def _skip_expired(self, number: Number) -> bool:
+        """Check if a number's assignment is expired, logging the first time it is skipped.
+
+        Returns:
+            bool: True if the number's assignment is expired, False otherwise.
+        """
+        if not number.assignment_expired:
+            return False
+
+        with self._expired_lock:
+            if number not in self._expired:
+                self._expired.add(number)
+                logger.warning("Skipping {} as its assignment is about to expire", number.n)
+
+        return True
+
     def _is_time_limit_exceeded(self) -> bool:
         """Check if the current runtime exceeds twice the target duration.
 
@@ -71,7 +91,7 @@ class FactorEngine:
         """
 
         def run(number: Number) -> None:
-            if self._interrupts.stop_factoring:
+            if self._interrupts.stop_factoring or self._skip_expired(number):
                 return
 
             factor(number)
@@ -121,6 +141,9 @@ class FactorEngine:
             if self._is_time_limit_exceeded():
                 return ExitStatus.TIME_LIMIT_EXCEEDED
 
+            if self._skip_expired(number):
+                continue
+
             logger.info("Factoring {} using YAFU", number.n)
             number.factor_yafu_direct()
 
@@ -133,7 +156,7 @@ class FactorEngine:
 
         return ExitStatus.SUCCESS
 
-    def _run_standard(self, numbers: Collection[Number]) -> ExitStatus:  # ruff:ignore[complex-structure, too-many-branches, too-many-return-statements]
+    def _run_standard(self, numbers: Collection[Number]) -> ExitStatus:  # ruff: ignore[complex-structure, too-many-branches, too-many-return-statements, too-many-statements]
         """Factor numbers using the built-in sequence of methods.
 
         Returns:
@@ -143,6 +166,9 @@ class FactorEngine:
         logger.info("Attempting trial factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
         for number in numbers:
+            if self._skip_expired(number):
+                continue
+
             number.factor_tf()
 
             if self._interrupts.stop_factoring:
@@ -179,7 +205,7 @@ class FactorEngine:
 
         for ecm_level in range(minimum_ecm_level, maximum_ecm_level + 1):
             overall_number_count = len([x for x in numbers if not x.factored])
-            ecm_numbers = [x for x in numbers if x.ecm_needed]
+            ecm_numbers = [x for x in numbers if x.ecm_needed and not self._skip_expired(x)]
             ecm_number_count = len(ecm_numbers)
 
             if ecm_number_count == 0:
@@ -200,6 +226,9 @@ class FactorEngine:
             )
 
             for number in ecm_numbers:
+                if self._skip_expired(number):
+                    continue
+
                 number.factor_ecm(ecm_level)
 
                 if self._interrupts.stop_factoring:
@@ -211,7 +240,8 @@ class FactorEngine:
 
         # Do SIQS on the remaining numbers that prefer SIQS.
         overall_number_count = len([x for x in numbers if not x.factored])
-        number_count = len([x for x in numbers if not x.factored and x.prefer_siqs])
+        siqs_numbers = [x for x in numbers if not x.factored and x.prefer_siqs and not self._skip_expired(x)]
+        number_count = len(siqs_numbers)
 
         if number_count > 0:
             logger.info(
@@ -221,7 +251,10 @@ class FactorEngine:
                 overall_number_count,
             )
 
-            for number in [x for x in numbers if not x.factored and x.prefer_siqs]:
+            for number in siqs_numbers:
+                if self._skip_expired(number):
+                    continue
+
                 number.factor_siqs()
 
                 if self._interrupts.stop_factoring:
@@ -232,14 +265,18 @@ class FactorEngine:
                     return ExitStatus.TIME_LIMIT_EXCEEDED
 
         # Finish the remaining numbers with NFS.
-        number_count = len([x for x in numbers if not x.factored])
+        nfs_numbers = [x for x in numbers if not x.factored and not self._skip_expired(x)]
+        number_count = len(nfs_numbers)
 
         if number_count == 0:
             return ExitStatus.SUCCESS
 
         logger.info("Attempting NFS factoring on {} number{}", number_count, "s" if number_count != 1 else "")
 
-        for number in [x for x in numbers if not x.factored]:
+        for number in nfs_numbers:
+            if self._skip_expired(number):
+                continue
+
             number.factor_nfs()
 
             if self._interrupts.stop_factoring:
