@@ -470,7 +470,7 @@ class Number:
 
         self._prefer_siqs = siqs_time < nfs_time
 
-    def _set_maximum_ecm_level(self) -> None:  # ruff:ignore[complex-structure, too-many-locals]
+    def _set_maximum_ecm_level(self) -> None:
         # If factored, there is no need for any ECM.
         if self.factored:
             self._maximum_ecm_level = self._ecm_level
@@ -488,76 +488,7 @@ class Number:
             self._maximum_ecm_level = max(ECM_CURVES.keys())
             return
 
-        # Establish a semi-arbitrary limit on our maximum ECM level. The smallest factors should never have more than
-        # about half the digits of the number, so do a few levels beyond that (as ECM may miss factors).
-        self._maximum_ecm_level = digits // 2 + 10
-
-        # Collect data on the statistics based on stopping ECM at a given level. Once we've reached the first level with
-        # no data, simply abort. Along the way, we'll note which ECM level was fastest on average.
-        ecm_data: dict[int, tuple[int, float | None]] = {}
-        best_maximum_ecm_level = None
-        best_maximum_ecm_level_time = 0.0
-
-        for ecm_level in range(min(ECM_CURVES.keys()), self._maximum_ecm_level + 1):
-            ecm_count, average_time = self._stats.get_average_time(digits, ecm_level, self._config.max_threads)
-
-            if ecm_count == 0:
-                break
-
-            assert average_time is not None  # ruff:ignore[assert]
-
-            if best_maximum_ecm_level is None or average_time < best_maximum_ecm_level_time:
-                best_maximum_ecm_level = ecm_level
-                best_maximum_ecm_level_time = average_time
-
-            ecm_data[ecm_level] = (ecm_count, average_time)
-
-        # If no data at all was collected, limit the ECM work to one-third the digit count. This is probably too little
-        # for smaller numbers, but it's only for the first run, at which point the other metrics will take over. This
-        # prevents trying to do way too much ECM on the first run, which will be more important with medium and large
-        # numbers.
-        if best_maximum_ecm_level is None:
-            self._maximum_ecm_level = digits // 3
-            return
-
-        # Cap the maximum ECM level based on SIQS and NFS statistics. There's no point doing an ECM level if either of
-        # those are faster. We do apply a fudge factor in case of measurement inaccuracy.
-        siqs_time = self._stats.get_siqs_stats(digits, self._config.max_threads)[1]
-        nfs_time = self._stats.get_nfs_stats(digits, self._config.max_threads)[1]
-
-        for ecm_level in range(min(ECM_CURVES.keys()), self._maximum_ecm_level + 1):
-            test_ecm_time = self._stats.get_ecm_stats(digits, ecm_level, self._config.max_threads)[1]
-
-            if siqs_time is not None and test_ecm_time is not None and siqs_time * 1.25 < test_ecm_time:
-                self._maximum_ecm_level = ecm_level - 1
-                break
-
-            if nfs_time is not None and test_ecm_time is not None and nfs_time * 1.25 < test_ecm_time:
-                self._maximum_ecm_level = ecm_level - 1
-                break
-
-        # Otherwise, we'll balance collecting more data with taking advantage of what we already know, based on how many
-        # samples have been collected. The function as defined here will do an extra number of levels based on the
-        # number of samples for the level following the one with the minimum time. The parameters as chosen here will do
-        # eight extra levels when there are 4 samples, decaying to zero extra levels when 1024 samples are reached.
-        # These numbers are, of course, arbitrary, but should work reasonably well enough. We need to check each level
-        # from the minimum up to the test level because in certain situations, the numbers won't be monotonically
-        # decreasing.
-        test_ecm_level = best_maximum_ecm_level + 1
-        lowest_ecm_count = None
-
-        for ecm_level in range(min(ECM_CURVES.keys()), test_ecm_level + 1):
-            test_ecm_count, _ = ecm_data.get(ecm_level, (0, None))
-
-            if lowest_ecm_count is None or test_ecm_count < lowest_ecm_count:
-                lowest_ecm_count = test_ecm_count
-
-        if lowest_ecm_count is None or lowest_ecm_count == 0:
-            lowest_ecm_count = 1
-
-        extra_ecm_levels = math.ceil(-math.log2(lowest_ecm_count) + 10)
-
-        self._maximum_ecm_level = min(best_maximum_ecm_level + extra_ecm_levels, self._maximum_ecm_level)
+        _, self._maximum_ecm_level = self._stats.get_ecm_cutoffs(digits, self._config.max_threads)
 
     @property
     def _yafu_args(self) -> tuple[int, YafuPaths, FactoringStats]:

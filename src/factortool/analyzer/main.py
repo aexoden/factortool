@@ -98,17 +98,51 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
         print(f"Average time for YAFU (direct) is {yafu_time:0.3f}s")
         print()
 
+    optimal_ecm_level, current_ecm_level = stats.get_ecm_cutoffs(args.digits, config.max_threads)
+
     print("Stopping ECM after doing the given level averages:")
 
     for ecm_level in range(min_ecm_level, max_ecm_level + 1):
         ecm_count, ecm_time, ecm_p_factor = stats.get_ecm_stats(args.digits, ecm_level, config.max_threads)
 
-        # If there is no ECM data for this level, we've reached the end and can just exit.
+        # If there is no ECM data for this level, we've reached the end of the table.
         if ecm_count == 0:
-            sys.exit(0)
+            break
 
         assert ecm_p_factor is not None  # ruff:ignore[assert]
 
         _, average_time = stats.get_average_time(args.digits, ecm_level, config.max_threads)
+        average_time_str = f"{average_time:7.3f}s" if average_time else f"{'N/A':8}"
 
-        print(f"  {ecm_level:3}  {ecm_count:8}  {ecm_time:7.3f}s  {ecm_p_factor * 100:7.3f}%  {average_time:7.3f}s")
+        markers = []
+
+        if ecm_level == optimal_ecm_level:
+            markers.append("optimal")
+
+        if ecm_level == current_ecm_level:
+            markers.append("current")
+
+        marker_str = f"  <- {', '.join(markers)}" if markers else ""
+
+        print(
+            f"  {ecm_level:3}  {ecm_count:8}  {ecm_time:7.3f}s  {ecm_p_factor * 100:7.3f}%"
+            f"  {average_time_str}{marker_str}"
+        )
+
+    print()
+
+    if optimal_ecm_level is None:
+        print("Optimal ECM cutoff: N/A (insufficient data)")
+    else:
+        print(f"Optimal ECM cutoff: {optimal_ecm_level}")
+
+    if optimal_ecm_level is None:
+        extra_text = " (initial estimate; insufficient data)"
+    elif current_ecm_level > optimal_ecm_level:
+        extra_text = " (extended to gather data)"
+    elif current_ecm_level < optimal_ecm_level:
+        extra_text = " (adjusted below estimated optimum)"
+    else:
+        extra_text = ""
+
+    print(f"Current ECM cutoff: {current_ecm_level}{extra_text}")

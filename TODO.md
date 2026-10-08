@@ -5,12 +5,7 @@
 Six commits are ahead of origin/main. Dependencies, from cherry-picking each
 onto origin/main and running the tests:
 
-* `e0839e6` (batch FactorDB submissions) is fully independent. It only touches
-  `backend.py`, `factordb.py` and `test_backend.py`, and can be moved anywhere or
-  pushed on its own.
 * The other five form one chain, all touching the ECM cutoff code:
-  * `0f8f01f` (analyzer cutoffs) is the base. It adds `get_ecm_cutoffs` and
-    applies cleanly on its own.
   * `6180afe` (cutoffs without TF/rho/P-1 data) and `bce4e63` (statistical
     cutoffs for small cofactors) both need `0f8f01f`, but can be swapped with
     each other.
@@ -86,7 +81,10 @@ implementation. There is no guarantee I will actually get to any of this.
   kind of measurement with error bars and only doing as many tests as needed to
   resolve which is fastest.
 * Determine if there is a more sensible (statistically sound) method to determine
-  the ECM cutoffs.
+  the ECM cutoffs. Also ensure it's possible to choose "do no ECM at all". It may
+  also be desirable to extend this to the other pre-ECM factoring methods. This
+  may go along with dropping some of the ECM levels, since many of the early ones
+  take about the same time and may not add a lot of value doing them all.
 * Reconsider how to best handle fetching larger batches, especially with FactorDB
   returning a lot of 502 errors right now (which is more likely with larger batches).
 * Add additional tests.

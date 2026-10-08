@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 
 from typing import TYPE_CHECKING
@@ -382,6 +383,78 @@ class FactoringStats:
         total_time += ecm_nfs_time * (1 - tf_p_factor) * (1 - rho_p_factor) * (1 - pm1_p_factor)
 
         return (ecm_count, total_time)
+
+    def get_ecm_cutoffs(self, digits: int, threads: int) -> tuple[int | None, int]:
+        """Determine the ECM levels at which to stop doing ECM factoring.
+
+        Returns:
+            tuple[int | None, int]: A tuple containing the optimal ECM level (the one with the lowest estimated average
+                time, or None if insufficient data) and the actual ECM level to stop at, which may be higher in order to
+                collect more data.
+        """
+        # Establish a semi-arbitrary limit on our maximum ECM level. The smallest factors should never have more than
+        # about half the digits of the number, so do a few levels beyond that (as ECM may miss factors).
+        maximum_ecm_level = digits // 2 + 10
+
+        # Collect data on the statistics based on stopping ECM at a given level. Once we've reached the first level with
+        # no data, simply abort. Along the way, we'll note which ECM level was fastest on average.
+        ecm_counts: dict[int, int] = {}
+        best_maximum_ecm_level = None
+        best_maximum_ecm_level_time = 0.0
+
+        for ecm_level in range(min(ECM_CURVES.keys()), maximum_ecm_level + 1):
+            ecm_count, average_time = self.get_average_time(digits, ecm_level, threads)
+
+            if ecm_count == 0:
+                break
+
+            assert average_time is not None  # ruff:ignore[assert]
+
+            if best_maximum_ecm_level is None or average_time < best_maximum_ecm_level_time:
+                best_maximum_ecm_level = ecm_level
+                best_maximum_ecm_level_time = average_time
+
+            ecm_counts[ecm_level] = ecm_count
+
+        # If no data at all was collected, limit the ECM work to one-third the digit count. This is probably too little
+        # for smaller numbers, but it's only for the first run, at which point the other metrics will take over. This
+        # prevents trying to do way too much ECM on the first run, which will be more important with medium and large
+        # numbers.
+        if best_maximum_ecm_level is None:
+            return (None, digits // 3)
+
+        # Cap the maximum ECM level based on SIQS and NFS statistics. There's no point doing an ECM level if either of
+        # those are faster. We do apply a fudge factor in case of measurement inaccuracy.
+        siqs_time = self.get_siqs_stats(digits, threads)[1]
+        nfs_time = self.get_nfs_stats(digits, threads)[1]
+
+        for ecm_level in range(min(ECM_CURVES.keys()), maximum_ecm_level + 1):
+            test_ecm_time = self.get_ecm_stats(digits, ecm_level, threads)[1]
+
+            if siqs_time is not None and test_ecm_time is not None and siqs_time * 1.25 < test_ecm_time:
+                maximum_ecm_level = ecm_level - 1
+                break
+
+            if nfs_time is not None and test_ecm_time is not None and nfs_time * 1.25 < test_ecm_time:
+                maximum_ecm_level = ecm_level - 1
+                break
+
+        # Otherwise, we'll balance collecting more data with taking advantage of what we already know, based on how many
+        # samples have been collected. The function as defined here will do an extra number of levels based on the
+        # number of samples for the level following the one with the minimum time. The parameters as chosen here will do
+        # eight extra levels when there are 4 samples, decaying to zero extra levels when 1024 samples are reached.
+        # These numbers are, of course, arbitrary, but should work reasonably well enough. We need to check each level
+        # from the minimum up to the test level because in certain situations, the numbers won't be monotonically
+        # decreasing.
+        test_ecm_level = best_maximum_ecm_level + 1
+        lowest_ecm_count = min(
+            ecm_counts.get(ecm_level, 0) for ecm_level in range(min(ECM_CURVES.keys()), test_ecm_level + 1)
+        )
+        lowest_ecm_count = max(lowest_ecm_count, 1)
+
+        extra_ecm_levels = max(0, math.ceil(-math.log2(lowest_ecm_count) + 10))
+
+        return (best_maximum_ecm_level, min(best_maximum_ecm_level + extra_ecm_levels, maximum_ecm_level))
 
     def _get_average_time_internal(
         self, digits: int, threads: int, final_time: float, next_ecm_level: int, maximum_ecm_level: int
