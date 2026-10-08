@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+import math
+import threading
+
 from typing import TYPE_CHECKING, Any, override
 from unittest.mock import Mock, call
 
@@ -29,7 +32,7 @@ from factortool.number import Number
 from factortool.stats import FactoringStats
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterable, Iterator
+    from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
     from pathlib import Path
 
 
@@ -431,13 +434,36 @@ def test_factordb_does_not_retry_malformed_submissions(
     assert sleep.call_args_list == [call(SUBMIT_SPACING)]
 
 
-def submit_signed_in(config: Config, http_request: Mock, responses: list[Mock]) -> list[str]:
-    """Submit 15, 21 and 35 as a signed-in user, then close, with FactorDB answering with the given responses.
+def make_factor_submission_responder(results_by_target: Mapping[str, object]) -> Callable[..., Mock]:
+    """Create a callback for http_request.side_effect that simulates FactorDB submission responses.
+
+    results_by_target maps each submitted number's expression (such as "15") to its report_factors result dictionary.
+    The callback looks up each result by that expression, so submission order and batching do not affect the response.
+    Other RPC calls receive a successful whoami result for the test user "x" to simulate being signed in.
+
+    Returns:
+        Callable[..., Mock]: A request callback returning a mock HTTP response containing the JSON-RPC results.
+    """
+
+    def respond(*_args: object, json: list[dict[str, Any]], **_kwargs: object) -> Mock:
+        results = [
+            results_by_target[c["params"]["target"]["expr"]]
+            if c["method"] == "report_factors"
+            else {"found": True, "login": "x"}
+            for c in json
+        ]
+        return rpc_response(*results)
+
+    return respond
+
+
+def submit_signed_in(config: Config, http_request: Mock, reports: Mapping[str, object]) -> list[str]:
+    """Submit 15, 21 and 35 as a signed-in user, then close, with FactorDB answering each with the given report.
 
     Returns:
         list[str]: The messages logged while submitting and closing.
     """
-    http_request.side_effect = [rpc_response({"found": True, "login": "FactorFinder"}), *responses]
+    http_request.side_effect = make_factor_submission_responder(reports)
     backend = FactorDB(config.model_copy(update={"factordb_api_token": "secret"}), FactoringStats(config.stats_path))
     stats = FactoringStats(config.stats_path, read_only=True)
     numbers = [Number(n, config, stats, backend) for n in (15, 21, 35)]
@@ -461,16 +487,124 @@ def submit_signed_in(config: Config, http_request: Mock, responses: list[Mock]) 
 def test_factordb_reports_credited_factors(config: Config, http_request: Mock, sleep: Mock) -> None:
     """Test that credit is claimed for each submission and the credit FactorDB reports is totalled as a lower bound."""
     # The response for 21 claims no credit, as when a submission is repeated after its first response was lost.
-    reports = [
-        rpc_response({"status": "FF", "credited": 1}),
-        rpc_response({"status": "CF", "credited": 0}),
-        rpc_response({"status": "FF", "credited": 1}),
-    ]
+    reports = {
+        "15": {"status": "FF", "credited": 1},
+        "21": {"status": "CF", "credited": 0},
+        "35": {"status": "FF", "credited": 1},
+    }
 
     messages = submit_signed_in(config, http_request, reports)
 
     assert [params["credit"] for method, params in rpc_calls(http_request) if method == "report_factors"] == [True] * 3
     assert "FactorDB credited at least 2 factors to your account\n" in messages
+    assert all(c == call(SUBMIT_SPACING) for c in sleep.call_args_list)
+
+
+def make_factored(config: Config, backend: BaseBackend, *factorizations: list[int]) -> list[Number]:
+    """Build completely factored numbers from their prime factors.
+
+    Returns:
+        list[Number]: The factored numbers.
+    """
+    stats = FactoringStats(config.stats_path, read_only=True)
+    numbers: list[Number] = []
+
+    for factors in factorizations:
+        number = Number(math.prod(factors), config, stats, backend)
+        number.prime_factors = factors
+        number.composite_factors = []
+        numbers.append(number)
+
+    return numbers
+
+
+def rpc_batch(*entries: object) -> Mock:
+    """Build an HTTP response to a batch of JSON-RPC calls, where an RpcError entry stands for that call failing.
+
+    Returns:
+        Mock: The response mock.
+    """
+    body = [
+        {"jsonrpc": "2.0", "id": i, "error": {"code": entry.code, "message": entry.message}}
+        if isinstance(entry, RpcError)
+        else {"jsonrpc": "2.0", "id": i, "result": entry}
+        for i, entry in enumerate(entries)
+    ]
+    return Mock(spec=requests.Response, json=Mock(return_value=body))
+
+
+def test_factordb_submits_a_batch_in_one_request(factordb: FactorDB, config: Config, http_request: Mock) -> None:
+    """Test that several numbers are reported in a single batch request, one report_factors call each."""
+    http_request.return_value = rpc_batch({"status": "FF"}, {"status": "FF"}, {"status": "FF"})
+    numbers = make_factored(config, factordb, [3, 5], [3, 7], [5, 7])
+
+    assert factordb._submit_numbers(numbers) == len(numbers)
+
+    http_request.assert_called_once()
+    assert [params["target"]["expr"] for _, params in rpc_calls(http_request)] == ["15", "21", "35"]
+
+
+def test_factordb_retries_only_failed_calls_in_a_batch(
+    factordb: FactorDB, config: Config, http_request: Mock, sleep: Mock
+) -> None:
+    """Test that a failed call is retried alone, while successes and rejections in the same batch are kept."""
+    http_request.side_effect = [
+        rpc_batch({"status": "FF"}, RpcError(*REJECTED_FACTORS_ERROR), RpcError(-32000, "database busy")),
+        rpc_batch({"status": "FF"}),
+    ]
+    numbers = make_factored(config, factordb, [3, 5], [3, 7], [5, 7])
+
+    assert factordb._submit_numbers(numbers) == 2  # ruff: ignore[magic-value-comparison]
+
+    calls = [[c["params"]["target"]["expr"] for c in request.kwargs["json"]] for request in http_request.call_args_list]
+    assert calls == [["15", "21", "35"], ["35"]]
+    assert sleep.call_args_list == [call(0.1)]
+
+
+def test_factordb_retries_a_whole_batch_after_a_malformed_response(
+    factordb: FactorDB, config: Config, http_request: Mock, sleep: Mock
+) -> None:
+    """Test that every call is retried when the batch response as a whole is malformed."""
+    http_request.side_effect = [
+        Mock(spec=requests.Response, json=Mock(return_value=[])),
+        rpc_batch({"status": "FF"}, {"status": "FF"}),
+    ]
+    numbers = make_factored(config, factordb, [3, 5], [3, 7])
+
+    assert factordb._submit_numbers(numbers) == len(numbers)
+    assert http_request.call_count == 2  # ruff: ignore[magic-value-comparison]
+    assert sleep.call_args_list == [call(0.1)]
+
+
+def test_base_worker_submits_a_backlog_in_batches(config: Config, sleep: Mock) -> None:
+    """Test that numbers queued while a submission is in progress are submitted together, up to the batch size."""
+    started = threading.Event()
+    release = threading.Event()
+    batches: list[list[int]] = []
+
+    class BatchingBackend(FakeBackend):
+        submit_batch_size = 2
+
+        @override
+        def _submit_numbers(self, numbers: Sequence[Number]) -> int:
+            started.set()
+            release.wait(timeout=5.0)
+            batches.append([number.n for number in numbers])
+            return len(numbers)
+
+    backend = BatchingBackend(config, FactoringStats(config.stats_path, read_only=True), ())
+    numbers = make_factored(config, backend, [3, 5], [3, 7], [5, 7], [7, 11])
+
+    try:
+        backend.submit(numbers[:1])
+        assert started.wait(timeout=5.0)
+        backend.submit(numbers[1:])
+        release.set()
+    finally:
+        backend.close()
+
+    assert batches == [[15], [21, 35], [77]]
+    assert backend.get_successful_submission_count() == len(numbers)
     assert sleep.call_args_list == [call(SUBMIT_SPACING)] * 3
 
 

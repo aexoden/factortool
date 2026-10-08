@@ -34,6 +34,14 @@ MAX_FETCH_COUNT = 1000
 # How many times to attempt a submission that FactorDB answers with an error or a malformed response.
 SUBMIT_RPC_ATTEMPTS = 5
 
+# The most report_factors calls to send in a single batch. FactorDB runs the calls in a batch sequentially and applies
+# per-client quotas.
+SUBMIT_BATCH_SIZE = 25
+
+# The timeout for a batch of report_factors calls and the extra allowed for each call beyond the first.
+SUBMIT_TIMEOUT = 30.0
+SUBMIT_TIMEOUT_PER_CALL = 5.0
+
 # JSON-RPC errors indicating a malformed or unsupported request that retrying cannot fix.
 PERMANENT_RPC_ERROR_CODES = frozenset({-32700, -32600, -32601, -32602})
 
@@ -126,16 +134,18 @@ def is_rejection(error: Exception) -> bool:
     return isinstance(error, RpcError) and (error.code, error.message) == REJECTED_FACTORS_ERROR
 
 
-def parse_rpc_responses(body: object, count: int) -> list[Any]:
-    """Extract the results from a batch JSON-RPC response, in request order.
+def parse_rpc_batch(body: object, count: int) -> list[RpcResponse]:
+    """Extract the individual responses from a batch JSON-RPC response, in request order.
+
+    Errors reported for individual calls are left in their responses rather than raised.
 
     Returns:
-        list[Any]: The result of each call, in the order the calls were made.
+        list[RpcResponse]: The response to each call, in the order the calls were made.
 
     Raises:
         ValueError: If the response is malformed.
-        PermanentHttpError: If a call failed in a way retrying cannot fix.
-        RpcError: If a call failed for any other reason.
+        PermanentHttpError: If the batch as a whole failed in a way retrying cannot fix.
+        RpcError: If the batch as a whole failed for any other reason.
     """
     if isinstance(body, dict):
         response = RpcResponse.model_validate(body)
@@ -162,21 +172,42 @@ def parse_rpc_responses(body: object, count: int) -> list[Any]:
         msg = f"FactorDB returned JSON-RPC calls {sorted(responses)} when {count} were made"
         raise ValueError(msg)
 
-    results: list[Any] = []
+    return [responses[i] for i in range(count)]
 
-    for i in range(count):
-        response = responses[i]
 
-        if response.error is not None:
-            raise_rpc_error(response.error)
+def rpc_result(response: RpcResponse) -> object:
+    """Extract the result of a single JSON-RPC call.
 
-        if "result" not in response.model_fields_set:
-            msg = f"FactorDB returned neither a result nor an error for JSON-RPC call {i}"
-            raise ValueError(msg)
+    Returns:
+        object: The result of the call.
 
-        results.append(response.result)
+    Raises:
+        ValueError: If the response carries neither a result nor an error.
+        PermanentHttpError: If the call failed in a way retrying cannot fix.
+        RpcError: If the call failed for any other reason.
+    """
+    if response.error is not None:
+        raise_rpc_error(response.error)
 
-    return results
+    if "result" not in response.model_fields_set:
+        msg = f"FactorDB returned neither a result nor an error for JSON-RPC call {response.id}"
+        raise ValueError(msg)
+
+    return response.result
+
+
+def parse_rpc_responses(body: object, count: int) -> list[Any]:
+    """Extract the results from a batch JSON-RPC response, in request order.
+
+    Returns:
+        list[Any]: The result of each call, in the order the calls were made.
+
+    Raises:
+        ValueError: If the response is malformed.
+        PermanentHttpError: If a call failed in a way retrying cannot fix.
+        RpcError: If a call failed for any other reason.
+    """
+    return [rpc_result(response) for response in parse_rpc_batch(body, count)]
 
 
 class FactorDB(BaseBackend):
@@ -189,6 +220,7 @@ class FactorDB(BaseBackend):
     assignment_lifetime = 0.0
 
     submission_unit = "factors"
+    submit_batch_size = SUBMIT_BATCH_SIZE
 
     def __init__(self, config: Config, stats: FactoringStats, interrupts: InterruptState | None = None) -> None:
         """Initialize the FactorDB interface, verifying any configured API token.
@@ -243,6 +275,24 @@ class FactorDB(BaseBackend):
         Returns:
             list[Any]: The result of each call, in the order the calls were made.
         """
+        responses = self._rpc_batch(calls, timeout=timeout, interruptible=interruptible, max_attempts=max_attempts)
+        return [rpc_result(response) for response in responses]
+
+    def _rpc_batch(
+        self,
+        calls: Sequence[tuple[str, Mapping[str, object]]],
+        *,
+        timeout: float,
+        interruptible: bool = False,
+        max_attempts: int | None = None,
+    ) -> list[RpcResponse]:
+        """Make a batch of JSON-RPC calls, leaving any errors reported for individual calls in their responses.
+
+        HTTP failures are retried indefinitely unless max_attempts is given.
+
+        Returns:
+            list[RpcResponse]: The raw responses for each call, in the order the calls were made.
+        """
         payload = [
             {"jsonrpc": "2.0", "id": i, "method": method, "params": params} for i, (method, params) in enumerate(calls)
         ]
@@ -256,7 +306,7 @@ class FactorDB(BaseBackend):
                 "POST", API_URL, json=payload, timeout=timeout, max_attempts=max_attempts, interruptible=interruptible
             )
 
-        return parse_rpc_responses(response.json(), len(calls))
+        return parse_rpc_batch(response.json(), len(calls))
 
     def _request_composites(self, criteria: FetchCriteria) -> list[int]:
         """Request composites from FactorDB, smallest first.
@@ -322,69 +372,117 @@ class FactorDB(BaseBackend):
         Returns:
             int: The number of factors successfully submitted.
         """
-        factors = sorted(set(number.prime_factors))
+        return self._submit_numbers([number])
 
-        # If there are no composite factors, avoid sending the trivial largest factor.
-        if len(number.composite_factors) == 0:
-            factors.pop()
-
-        if not factors:
-            return 0
-
-        params = {
-            "target": {"expr": str(number.n)},
-            "factors": [str(factor) for factor in factors],
-            "credit": self._signed_in,
-        }
-
-        try:
-            result, report = self._report_factors(params)
-        except (requests.RequestException, ValueError) as e:
-            if is_rejection(e):
-                logger.warning("FactorDB did not accept factors {} for n={}: {}", factors, number.n, e)
-            else:
-                logger.error("Error submitting factors {} for n={}: {}", factors, number.n, e)
-
-            return 0
-
-        if report.status == "C":
-            logger.warning("FactorDB did not accept factors {} for n={}: {}", factors, number.n, result)
-            return 0
-
-        logger.debug("Submitted factors {} for n={}: {}", factors, number.n, result)
-
-        self._credited_count += report.credited
-
-        return len(factors)
-
-    def _report_factors(self, params: Mapping[str, object]) -> tuple[Any, ReportResult]:
-        """Call report_factors, retrying errors and malformed responses up to SUBMIT_RPC_ATTEMPTS times in total.
-
-        HTTP failures are retried indefinitely by the underlying client, while errors indicating a malformed request
-        or a rejection of every factor are not retried.
+    @override
+    def _submit_numbers(self, numbers: Sequence[Number]) -> int:
+        """Submit the distinct prime factors of each number to FactorDB in a single batch.
 
         Returns:
-            tuple[Any, ReportResult]: A tuple containing the raw result and the parsed report.
-
-        Raises:
-            PermanentHttpError: If FactorDB reports that the request is malformed.
-            RpcError: If FactorDB rejects every factor, or still reports an error on the final attempt.
-            ValueError: If the response is still malformed on the final attempt.
+            int: The number of factors successfully submitted.
         """
+        submissions: list[tuple[Number, list[int]]] = []
+
+        for number in numbers:
+            factors = sorted(set(number.prime_factors))
+
+            # If there are no composite factors, avoid sending the trivial largest factor.
+            if len(number.composite_factors) == 0:
+                factors.pop()
+
+            if factors:
+                submissions.append((number, factors))
+
+        if not submissions:
+            return 0
+
+        outcomes = self._report_factors(
+            [
+                {
+                    "target": {"expr": str(number.n)},
+                    "factors": [str(factor) for factor in factors],
+                    "credit": self._signed_in,
+                }
+                for number, factors in submissions
+            ]
+        )
+
+        successes = 0
+
+        for (number, factors), outcome in zip(submissions, outcomes, strict=True):
+            if isinstance(outcome, Exception):
+                if is_rejection(outcome):
+                    logger.warning("FactorDB did not accept factors {} for n={}: {}", factors, number.n, outcome)
+                else:
+                    logger.error("Error submitting factors {} for n={}: {}", factors, number.n, outcome)
+
+                continue
+
+            result, report = outcome
+
+            if report.status == "C":
+                logger.warning("FactorDB did not accept factors {} for n={}: {}", factors, number.n, result)
+                continue
+
+            logger.debug("Submitted factors {} for n={}: {}", factors, number.n, result)
+
+            self._credited_count += report.credited
+            successes += len(factors)
+
+        return successes
+
+    def _report_factors(self, calls: Sequence[Mapping[str, object]]) -> list[tuple[Any, ReportResult] | Exception]:
+        """Call report_factors in a batch, retrying errors and malformed responses up to SUBMIT_RPC_ATTEMPTS times.
+
+        HTTP failures are retried indefinitely by the underlying client. Only the calls that failed are retried, and
+        errors indicating a malformed request or a rejection of every factor are not retried at all.
+
+        Returns:
+            list[tuple[Any, ReportResult] | Exception]: For each call, in order, either a tuple containing the raw
+                result and the parsed report, or the error from its final attempt.
+        """
+        outcomes: list[tuple[Any, ReportResult] | Exception] = [
+            ValueError("report_factors was never attempted") for _ in calls
+        ]
+        pending = list(range(len(calls)))
         delay = max(0.1, self._cooldown_period)
         attempt = 1
 
         while True:
-            try:
-                (result,) = self._rpc([("report_factors", params)], timeout=30.0)
-                return result, ReportResult.model_validate(result)
-            except PermanentHttpError:
-                raise
-            except (RpcError, ValueError) as e:
-                if is_rejection(e) or attempt >= SUBMIT_RPC_ATTEMPTS:
-                    raise
+            errors: dict[int, Exception] = {}
+            timeout = SUBMIT_TIMEOUT + SUBMIT_TIMEOUT_PER_CALL * (len(pending) - 1)
 
-                logger.warning("Error submitting factors to FactorDB: {}. Retrying in {} seconds...", e, delay)
+            try:
+                responses = self._rpc_batch([("report_factors", calls[i]) for i in pending], timeout=timeout)
+            except (requests.RequestException, ValueError) as e:
+                errors = dict.fromkeys(pending, e)
+            else:
+                for i, response in zip(pending, responses, strict=True):
+                    try:
+                        result = rpc_result(response)
+                        outcomes[i] = (result, ReportResult.model_validate(result))
+                    except (requests.RequestException, ValueError) as e:
+                        errors[i] = e
+
+            for i, error in errors.items():
+                outcomes[i] = error
+
+            pending = [
+                i
+                for i, error in errors.items()
+                if not isinstance(error, PermanentHttpError) and not is_rejection(error)
+            ]
+
+            if not pending or attempt >= SUBMIT_RPC_ATTEMPTS:
+                return outcomes
+
+            logger.warning(
+                "Error submitting factors for {} of {} numbers to FactorDB: {}. Retrying in {} seconds...",
+                len(pending),
+                len(calls),
+                errors[pending[0]],
+                delay,
+            )
 
             time.sleep(delay)
             delay = min(MAX_DELAY, delay * 2)

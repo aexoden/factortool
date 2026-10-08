@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping
+    from collections.abc import Collection, Mapping, Sequence
 
 import requests
 
@@ -135,6 +135,9 @@ class BaseBackend(ABC):
 
     # A descriptive name for a single submission unit, used for logging.
     submission_unit: ClassVar[str]
+
+    # The largest number of composites to submit in a single batch.
+    submit_batch_size: ClassVar[int] = 1
 
     def __init__(
         self,
@@ -280,6 +283,14 @@ class BaseBackend(ABC):
             int: The number of successful submissions, counted in units of submission_unit.
         """
 
+    def _submit_numbers(self, numbers: Sequence[Number]) -> int:
+        """Submit a batch of factored numbers to the service. By default, each number is submitted individually.
+
+        Returns:
+            int: The number of successful submissions, counted in units of submission_unit.
+        """
+        return sum(self._submit_number(number) for number in numbers)
+
     def _service_request(  # ruff: ignore[too-many-arguments] (Mirrors HttpClient.request)
         self,
         method: str,
@@ -313,16 +324,25 @@ class BaseBackend(ABC):
         """Background worker that submits queued numbers until closed and the queue is drained."""
         while not self._stop_event.is_set() or not self._submit_queue.empty():
             try:
-                number = self._submit_queue.get(timeout=0.5)
+                numbers = [self._submit_queue.get(timeout=0.5)]
             except queue.Empty:
                 continue
 
-            successes = self._submit_number(number)
+            # Try to fill the batch up to the submit_batch_size with any additional numbers available in the queue.
+            while len(numbers) < self.submit_batch_size:
+                try:
+                    numbers.append(self._submit_queue.get_nowait())
+                except queue.Empty:
+                    break
+
+            successes = self._submit_numbers(numbers)
 
             with self._submission_lock:
                 self._successful_submissions += successes
 
-            self._submit_queue.task_done()
+            for _ in numbers:
+                self._submit_queue.task_done()
+
             time.sleep(SUBMIT_SPACING)
 
 
