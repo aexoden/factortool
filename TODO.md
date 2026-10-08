@@ -6,10 +6,8 @@ Six commits are ahead of origin/main. Dependencies, from cherry-picking each
 onto origin/main and running the tests:
 
 * The other five form one chain, all touching the ECM cutoff code:
-  * `6180afe` (cutoffs without TF/rho/P-1 data) and `bce4e63` (statistical
-    cutoffs for small cofactors) both need `0f8f01f`, but can be swapped with
-    each other.
-  * `b153baf` (YAFU NFS) needs `bce4e63` and probably `6180afe`.
+  * `bce4e63` (statistical cutoffs for small cofactors)
+  * `b153baf` (YAFU NFS) needs `bce4e63`.
   * `abd1cc2` (dynamic ECM cutoffs) needs `b153baf`. It's logically independent,
     but moving it earlier means resolving conflicts in `number.py` and
     `test_factor.py` by hand, then again when `b153baf` is reapplied.
@@ -29,6 +27,11 @@ implementation. There is no guarantee I will actually get to any of this.
   directory, then using standardized names.
 * Provide options to allow the user to disable the time limit or to tweak how long
   it is instead of always doing twice the target time.
+* Analyzer needs to show all available ECM data, not just cut off at the first gap,
+  as smaller digit sizes that were only cofactors may not have data starting at
+  the lowest level.
+* Investigate whether the time to factor estimate needs to account for finding all
+  factors rather than just the first.
 * Fix the time limit to only occur if target time is enabled.
 * Investigate integrating the looping process directly into the tool.
 * Optional alternate buffer dashboard -- more useful once built-in looping (or

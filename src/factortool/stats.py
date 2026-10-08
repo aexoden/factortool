@@ -325,7 +325,7 @@ class FactoringStats:
 
         return (0, None, None)
 
-    def get_average_time(self, digits: int, maximum_ecm_level: int, threads: int) -> tuple[int, float | None]:  # ruff:ignore[too-many-locals]
+    def get_average_time(self, digits: int, maximum_ecm_level: int, threads: int) -> tuple[int, float | None]:
         """Estimate the average time to factor a number with the given digit count.
 
         Returns:
@@ -356,6 +356,25 @@ class FactoringStats:
         assert pm1_time is not None  # ruff:ignore[assert]
         assert pm1_p_factor is not None  # ruff:ignore[assert]
 
+        ecm_count, ecm_nfs_time = self.get_ecm_average_time(digits, maximum_ecm_level, threads)
+
+        if ecm_nfs_time is None:
+            return (0, None)
+
+        total_time = tf_time
+        total_time += rho_time * (1 - tf_p_factor)
+        total_time += pm1_time * (1 - tf_p_factor) * (1 - rho_p_factor)
+        total_time += ecm_nfs_time * (1 - tf_p_factor) * (1 - rho_p_factor) * (1 - pm1_p_factor)
+
+        return (ecm_count, total_time)
+
+    def get_ecm_average_time(self, digits: int, maximum_ecm_level: int, threads: int) -> tuple[int, float | None]:
+        """Estimate the average time to factor a number with the given digit count, starting from ECM.
+
+        Returns:
+            tuple[int, float | None]: A tuple containing the estimated number of ECM runs and the average time to factor
+                the number.
+        """
         _, siqs_time = self.get_siqs_stats(digits, threads)
         _, nfs_time = self.get_nfs_stats(digits, threads)
 
@@ -370,19 +389,7 @@ class FactoringStats:
         else:
             return (0, None)
 
-        ecm_count, ecm_nfs_time = self._get_average_time_internal(
-            digits, threads, final_time, min(ECM_CURVES.keys()), maximum_ecm_level
-        )
-
-        if ecm_nfs_time is None:
-            return (0, None)
-
-        total_time = tf_time
-        total_time += rho_time * (1 - tf_p_factor)
-        total_time += pm1_time * (1 - tf_p_factor) * (1 - rho_p_factor)
-        total_time += ecm_nfs_time * (1 - tf_p_factor) * (1 - rho_p_factor) * (1 - pm1_p_factor)
-
-        return (ecm_count, total_time)
+        return self._get_average_time_internal(digits, threads, final_time, min(ECM_CURVES.keys()), maximum_ecm_level)
 
     def get_ecm_cutoffs(self, digits: int, threads: int) -> tuple[int | None, int]:
         """Determine the ECM levels at which to stop doing ECM factoring.
@@ -403,7 +410,7 @@ class FactoringStats:
         best_maximum_ecm_level_time = 0.0
 
         for ecm_level in range(min(ECM_CURVES.keys()), maximum_ecm_level + 1):
-            ecm_count, average_time = self.get_average_time(digits, ecm_level, threads)
+            ecm_count, average_time = self.get_ecm_average_time(digits, ecm_level, threads)
 
             if ecm_count == 0:
                 break

@@ -101,6 +101,7 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
     optimal_ecm_level, current_ecm_level = stats.get_ecm_cutoffs(args.digits, config.max_threads)
 
     print("Stopping ECM after doing the given level averages:")
+    print(f"  {'Lvl':>3}  {'Runs':>8}  {'ECM time':>8}  {'P(fact)':>8}  {'From ECM':>8}  {'Overall':>8}")
 
     for ecm_level in range(min_ecm_level, max_ecm_level + 1):
         ecm_count, ecm_time, ecm_p_factor = stats.get_ecm_stats(args.digits, ecm_level, config.max_threads)
@@ -110,6 +111,9 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
             break
 
         assert ecm_p_factor is not None  # ruff:ignore[assert]
+
+        _, ecm_average_time = stats.get_ecm_average_time(args.digits, ecm_level, config.max_threads)
+        ecm_average_time_str = f"{ecm_average_time:7.3f}s" if ecm_average_time else f"{'N/A':8}"
 
         _, average_time = stats.get_average_time(args.digits, ecm_level, config.max_threads)
         average_time_str = f"{average_time:7.3f}s" if average_time else f"{'N/A':8}"
@@ -126,7 +130,7 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
 
         print(
             f"  {ecm_level:3}  {ecm_count:8}  {ecm_time:7.3f}s  {ecm_p_factor * 100:7.3f}%"
-            f"  {average_time_str}{marker_str}"
+            f"  {ecm_average_time_str}  {average_time_str}{marker_str}"
         )
 
     print()
