@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import time
 
 from typing import TYPE_CHECKING, Literal
@@ -112,6 +113,7 @@ class FactoringStats:
     _last_write_time: int
     _data_changed: bool
     _read_only: bool
+    _lock: threading.Lock
 
     def __init__(self, path: Path, *, min_write_interval: float = 5.0, read_only: bool = False) -> None:
         """Initialize the factoring statistics manager."""
@@ -120,6 +122,7 @@ class FactoringStats:
         self._last_write_time = 0
         self._data_changed = False
         self._read_only = read_only
+        self._lock = threading.Lock()
 
         self._load_data()
 
@@ -161,70 +164,74 @@ class FactoringStats:
 
     def save_data(self) -> None:
         """Force saving the factoring statistics data."""
-        self._save_data(force=True)
+        with self._lock:
+            self._save_data(force=True)
 
     def update_probability(
         self, digits: int, method: str, threads: int, execution_time: float, *, success: bool
     ) -> None:
         """Update probabilistic factorization data."""
-        data = getattr(self._data, method)
+        with self._lock:
+            data = getattr(self._data, method)
 
-        if digits not in data:
-            data[digits] = ProbabilityDigitData()
+            if digits not in data:
+                data[digits] = ProbabilityDigitData()
 
-        if threads not in data[digits].thread_data:
-            data[digits].thread_data[threads] = ProbabilityRunData()
+            if threads not in data[digits].thread_data:
+                data[digits].thread_data[threads] = ProbabilityRunData()
 
-        run_data = data[digits].thread_data[threads]
+            run_data = data[digits].thread_data[threads]
 
-        run_data.total_time += execution_time
-        run_data.run_count += 1
+            run_data.total_time += execution_time
+            run_data.run_count += 1
 
-        if success:
-            run_data.success_count += 1
+            if success:
+                run_data.success_count += 1
 
-        self._data_changed = True
-        self._save_data()
+            self._data_changed = True
+            self._save_data()
 
     def update_final(self, method: str, digits: int, threads: int, execution_time: float) -> None:
         """Update final factorization data for the method with the given statistics key."""
-        data = getattr(self._data, method)
+        with self._lock:
+            data = getattr(self._data, method)
 
-        if digits not in data:
-            data[digits] = FinalDigitData()
+            if digits not in data:
+                data[digits] = FinalDigitData()
 
-        if threads not in data[digits].thread_data:
-            data[digits].thread_data[threads] = FinalRunData()
+            if threads not in data[digits].thread_data:
+                data[digits].thread_data[threads] = FinalRunData()
 
-        run_data = data[digits].thread_data[threads]
+            run_data = data[digits].thread_data[threads]
 
-        run_data.total_time += execution_time
-        run_data.run_count += 1
+            run_data.total_time += execution_time
+            run_data.run_count += 1
 
-        self._data_changed = True
-        self._save_data()
+            self._data_changed = True
+            self._save_data()
 
     def update_ecm(self, digits: int, ecm_level: int, threads: int, execution_time: float, *, success: bool) -> None:
         """Update ECM factorization data."""
-        if digits not in self._data.ecm:
-            self._data.ecm[digits] = ECMDigitData()
+        with self._lock:
+            if digits not in self._data.ecm:
+                self._data.ecm[digits] = ECMDigitData()
 
-        if ecm_level not in self._data.ecm[digits].level_data:
-            self._data.ecm[digits].level_data[ecm_level] = ECMLevelData()
+            if ecm_level not in self._data.ecm[digits].level_data:
+                self._data.ecm[digits].level_data[ecm_level] = ECMLevelData()
 
-        if threads not in self._data.ecm[digits].level_data[ecm_level].thread_data:
-            self._data.ecm[digits].level_data[ecm_level].thread_data[threads] = ProbabilityRunData()
+            if threads not in self._data.ecm[digits].level_data[ecm_level].thread_data:
+                self._data.ecm[digits].level_data[ecm_level].thread_data[threads] = ProbabilityRunData()
 
-        run_data = self._data.ecm[digits].level_data[ecm_level].thread_data[threads]
+            run_data = self._data.ecm[digits].level_data[ecm_level].thread_data[threads]
 
-        run_data.total_time += execution_time
-        run_data.run_count += 1
+            run_data.total_time += execution_time
+            run_data.run_count += 1
 
-        if success:
-            run_data.success_count += 1
+            if success:
+                run_data.success_count += 1
 
-        self._data_changed = True
-        self._save_data()
+            self._data_changed = True
+            self._save_data()
 
     def get_final_stats(self, method: str, digits: int, threads: int) -> tuple[int, float | None]:
         """Get final factorization statistics for the method with the given statistics key.
@@ -232,18 +239,19 @@ class FactoringStats:
         Returns:
             A tuple containing the number of runs and the average time per run, or None if no data is available.
         """
-        data = getattr(self._data, method)
+        with self._lock:
+            data = getattr(self._data, method)
 
-        if digits in data and threads in data[digits].thread_data:
-            run_data = data[digits].thread_data[threads]
+            if digits in data and threads in data[digits].thread_data:
+                run_data = data[digits].thread_data[threads]
 
-            if run_data.run_count > 0:
-                return (
-                    run_data.run_count,
-                    run_data.total_time / run_data.run_count,
-                )
+                if run_data.run_count > 0:
+                    return (
+                        run_data.run_count,
+                        run_data.total_time / run_data.run_count,
+                    )
 
-        return (0, None)
+            return (0, None)
 
     def get_final_method(self, digits: int, threads: int, methods: Sequence[str]) -> str:
         """Choose the final factoring method for a composite with the given digit count.
@@ -281,16 +289,17 @@ class FactoringStats:
         Returns:
             A tuple containing the number of YAFU runs and the average time per run, or None if no data is available.
         """
-        if digits in self._data.yafu and threads in self._data.yafu[digits].thread_data:
-            run_data = self._data.yafu[digits].thread_data[threads]
+        with self._lock:
+            if digits in self._data.yafu and threads in self._data.yafu[digits].thread_data:
+                run_data = self._data.yafu[digits].thread_data[threads]
 
-            if run_data.run_count > 0:
-                return (
-                    run_data.run_count,
-                    run_data.total_time / run_data.run_count,
-                )
+                if run_data.run_count > 0:
+                    return (
+                        run_data.run_count,
+                        run_data.total_time / run_data.run_count,
+                    )
 
-        return (0, None)
+            return (0, None)
 
     def get_probability_stats(self, digits: int, method: str, threads: int) -> tuple[int, float | None, float | None]:
         """Get probabilistic factorization statistics.
@@ -299,24 +308,25 @@ class FactoringStats:
             A tuple containing the number of runs, the average time per run, and the success probability,
             or None values if no data is available.
         """
-        data = getattr(self._data, method)
+        with self._lock:
+            data = getattr(self._data, method)
 
-        if digits not in data:
+            if digits not in data:
+                return (0, None, None)
+
+            if threads not in data[digits].thread_data:
+                return (0, None, None)
+
+            run_data = data[digits].thread_data[threads]
+
+            if run_data.run_count > 0:
+                return (
+                    run_data.run_count,
+                    run_data.total_time / run_data.run_count,
+                    run_data.success_count / run_data.run_count,
+                )
+
             return (0, None, None)
-
-        if threads not in data[digits].thread_data:
-            return (0, None, None)
-
-        run_data = data[digits].thread_data[threads]
-
-        if run_data.run_count > 0:
-            return (
-                run_data.run_count,
-                run_data.total_time / run_data.run_count,
-                run_data.success_count / run_data.run_count,
-            )
-
-        return (0, None, None)
 
     def get_ecm_stats(self, digits: int, ecm_level: int, threads: int) -> tuple[int, float | None, float | None]:
         """Get ECM factorization statistics.
@@ -325,25 +335,26 @@ class FactoringStats:
             A tuple containing the number of ECM runs, the average time per run, and the success probability,
             or None values if no data is available.
         """
-        if digits not in self._data.ecm:
+        with self._lock:
+            if digits not in self._data.ecm:
+                return (0, None, None)
+
+            if ecm_level not in self._data.ecm[digits].level_data:
+                return (0, None, None)
+
+            if threads not in self._data.ecm[digits].level_data[ecm_level].thread_data:
+                return (0, None, None)
+
+            run_data = self._data.ecm[digits].level_data[ecm_level].thread_data[threads]
+
+            if run_data.run_count > 0:
+                return (
+                    run_data.run_count,
+                    run_data.total_time / run_data.run_count,
+                    run_data.success_count / run_data.run_count,
+                )
+
             return (0, None, None)
-
-        if ecm_level not in self._data.ecm[digits].level_data:
-            return (0, None, None)
-
-        if threads not in self._data.ecm[digits].level_data[ecm_level].thread_data:
-            return (0, None, None)
-
-        run_data = self._data.ecm[digits].level_data[ecm_level].thread_data[threads]
-
-        if run_data.run_count > 0:
-            return (
-                run_data.run_count,
-                run_data.total_time / run_data.run_count,
-                run_data.success_count / run_data.run_count,
-            )
-
-        return (0, None, None)
 
     def get_average_time(
         self, digits: int, maximum_ecm_level: int, threads: int, methods: Sequence[str]
