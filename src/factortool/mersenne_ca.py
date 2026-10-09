@@ -51,11 +51,18 @@ class MersenneCA(BaseBackend):
     submission_unit = "factorizations"
 
     def __init__(self, config: Config, stats: FactoringStats, interrupts: InterruptState | None = None) -> None:
-        """Initialize the mersenne.ca interface."""
+        """Initialize the mersenne.ca interface.
+
+        Raises:
+            ValueError: If no GIMPS login is configured.
+        """
         super().__init__(config, stats, config.mersenne_ca_cooldown_period, config.gimps_login, interrupts)
 
+        # In theory, this should never happen because the configuration would be rejected, but this is provides a
+        # fallback in case of a configuration created without validation.
         if not config.gimps_login:
-            logger.error("No GIMPS login is configured; mersenne.ca requires one to assign and accept work")
+            msg = "No GIMPS login is configured; mersenne.ca requires one to assign and accept work"
+            raise ValueError(msg)
 
     @override
     def _validate_criteria(self, criteria: FetchCriteria) -> None:

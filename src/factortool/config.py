@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal, NamedTuple
 
 from loguru import logger
-from pydantic import BaseModel, ValidationError, field_validator
+from pydantic import BaseModel, ValidationError, field_validator, model_validator
 
 from factortool.constants import FINAL_METHOD_NAMES, NFS_CADO_MIN_DIGITS, NFS_YAFU_MIN_DIGITS
 
@@ -55,25 +55,58 @@ ASCII_RANGE = range(0x20, 0x7F)
 class Config(BaseModel):
     """Configuration for factorization tool."""
 
-    assignment_state_path: Path
+    # Required settings
     backend: Literal["factordb", "mersenne_ca"]
-    batch_state_path: Path
     cado_nfs_path: Path
-    factordb_api_token: str
-    factordb_cooldown_period: float
-    factoring_mode: Literal["standard", "yafu"]
-    gimps_login: str
-    max_siqs_digits: int
     max_threads: int
-    mersenne_ca_cooldown_period: float
-    result_output_path: Path
-    stats_path: Path
-    use_nfs_cado: bool
-    use_nfs_yafu: bool
-    user_agent: str
-    work_path: Path
     yafu_path: Path
-    yafu_ini_path: Path | None
+
+    # Optional settings with defaults
+    assignment_state_path: Path = Path("assignment_state.json")
+    batch_state_path: Path = Path("batch_state.json")
+    factordb_api_token: str = ""
+    factordb_cooldown_period: float = 1.0
+    factoring_mode: Literal["standard", "yafu"] = "standard"
+    gimps_login: str = ""
+    max_siqs_digits: int = 100
+    mersenne_ca_cooldown_period: float = 1.0
+    result_output_path: Path = Path("results")
+    stats_path: Path = Path("stats.json")
+    use_nfs_cado: bool = False
+    use_nfs_yafu: bool = False
+    user_agent: str = ""
+    work_path: Path = Path("work")
+    yafu_ini_path: Path | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def warn_unknown_settings(cls, data: object) -> object:
+        """Warn about unrecognized settings.
+
+        Returns:
+            object: The unmodified input data.
+        """
+        if isinstance(data, dict):
+            for key in sorted(data.keys() - cls.model_fields.keys()):
+                logger.warning(f"Ignoring unrecognized configuration setting: {key}")
+
+        return data
+
+    @model_validator(mode="after")
+    def validate_backend_credentials(self) -> Config:
+        """Require the credentials the selected backend require.
+
+        Returns:
+            Config: The validated configuration object.
+
+        Raises:
+            ValueError: If the mersenne.ca backend is selected without a GIMPS login.
+        """
+        if self.backend == "mersenne_ca" and not self.gimps_login:
+            msg = "the mersenne_ca backend requires gimps_login"
+            raise ValueError(msg)
+
+        return self
 
     @field_validator("user_agent")
     @classmethod
@@ -116,7 +149,14 @@ def read_config(path: Path) -> Config:
         with path.open("r", encoding="utf-8") as f:
             config = Config.model_validate_json(f.read())
     except ValidationError as e:
-        logger.error(f"Error while processing configuration file: {e}")
+        missing = [str(error["loc"][0]) for error in e.errors() if error["type"] == "missing" and error["loc"]]
+
+        if missing:
+            logger.error(f"Configuration file {path} is missing required setting(s): {', '.join(missing)}")
+
+        if len(missing) < e.error_count():
+            logger.error(f"Error while processing configuration file: {e}")
+
         sys.exit(1)
 
     return config

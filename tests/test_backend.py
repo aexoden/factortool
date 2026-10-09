@@ -114,21 +114,13 @@ def config(tmp_path: Path) -> Config:
         backend="factordb",
         batch_state_path=tmp_path / "batch_state.json",
         cado_nfs_path=tmp_path / "cado-nfs.py",
-        factordb_api_token="",
         factordb_cooldown_period=0.0,
-        factoring_mode="standard",
-        gimps_login="",
-        max_siqs_digits=100,
         max_threads=1,
         mersenne_ca_cooldown_period=0.0,
         result_output_path=tmp_path / "results",
         stats_path=tmp_path / "stats.json",
-        use_nfs_cado=True,
-        use_nfs_yafu=True,
-        user_agent="",
         work_path=tmp_path / "work",
         yafu_path=tmp_path / "yafu",
-        yafu_ini_path=None,
     )
 
 

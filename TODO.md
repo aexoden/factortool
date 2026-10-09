@@ -5,8 +5,7 @@
 The following is a list of potential TODO items, roughly in my intended order of
 implementation. There is no guarantee I will actually get to any of this.
 
-* Make upgrades safer with regard to the config file. We should possibly set
-  defaults for the ones that can be defaulted, and then reject unset ones that cannot.
+* Validate that not specifying gimps_login with mersenne_ca backend is an error.
 * Investigate moving away from Tap for argument parsing. If keeping Tap, consider
   replacing underscores with hyphens in option names.
 * Move state files into a directory. Consider changing config to only allow the
@@ -88,8 +87,6 @@ implementation. There is no guarantee I will actually get to any of this.
   also be desirable to extend this to the other pre-ECM factoring methods. This
   may go along with dropping some of the ECM levels, since many of the early ones
   take about the same time and may not add a lot of value doing them all.
-* Reconsider how to best handle fetching larger batches, especially with FactorDB
-  returning a lot of 502 errors right now (which is more likely with larger batches).
 * Add additional tests.
 * Investigate making threads overridable on the command line.
 * Add support for calculating and verifying Aliquot sequences.
@@ -106,9 +103,6 @@ implementation. There is no guarantee I will actually get to any of this.
   adding any factors, so the number is treated as factored. Affects every YAFU
   call. Possible fixes: pass the expression to YAFU on stdin, and/or treat an
   empty factor list as a failure.
-* YAFU calls other than NFS run with an environment containing only
-  `OMP_NUM_THREADS=1` (no `PATH`, `HOME`, etc.). YAFU NFS now gets the full
-  environment plus that variable. Consider doing the same everywhere.
 * The final factoring stages are now grouped per method (SIQS, YAFU NFS,
   CADO-NFS), and each number only goes through its own method's stage. The old
   final NFS stage picked up everything still unfactored, so a number SIQS left

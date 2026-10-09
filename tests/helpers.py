@@ -15,34 +15,13 @@ from factortool.stats import FactoringStats
 
 
 def make_config(**overrides: object) -> Config:
-    """Build a complete configuration the way the application does, via pydantic, so validation matches.
+    """Build a configuration the way the application does, via pydantic, so validation and defaults match.
 
     Returns:
         Config: The validated configuration.
     """
     return Config.model_validate(
-        {
-            "assignment_state_path": "assignment_state.json",
-            "backend": "factordb",
-            "batch_state_path": "batch_state.json",
-            "cado_nfs_path": "cado-nfs.py",
-            "factordb_api_token": "",
-            "factordb_cooldown_period": 1.0,
-            "factoring_mode": "standard",
-            "gimps_login": "",
-            "max_siqs_digits": 100,
-            "max_threads": 1,
-            "mersenne_ca_cooldown_period": 1.0,
-            "result_output_path": "results",
-            "stats_path": "stats.json",
-            "use_nfs_cado": True,
-            "use_nfs_yafu": True,
-            "user_agent": "",
-            "work_path": "work",
-            "yafu_path": "yafu",
-            "yafu_ini_path": None,
-            **overrides,
-        }
+        {"backend": "factordb", "cado_nfs_path": "cado-nfs.py", "max_threads": 1, "yafu_path": "yafu", **overrides}
     )
 
 

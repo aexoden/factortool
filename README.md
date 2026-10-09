@@ -26,8 +26,12 @@ support, you will need either YAFU's NFS configured, or CADO-NFS installed.
 The recommended way to install the program is to have [uv](https://docs.astral.sh/uv/)
 installed, and to simply run the program with `uv run factortool`.
 
-Copy the `config.dist.json` to `config.json` and edit it as appropriate. You may
-then run the program. It accepts the following options:
+Copy the `config.dist.json` to `config.json` and edit it as appropriate. Only
+`backend`, `cado_nfs_path`, `max_threads` and `yafu_path` are required. If you
+are using the `mersenne_ca` backend, you also need to set `gimps_login`. Anything
+unspecified defaults to the values in `config.dist.json`.
+
+You may then run the program. It accepts the following options:
 
 * `--config_path`: To specify a configuration file other than config.json.
 * `--min_digits`: The minimium number of digits fetched composite numbers should

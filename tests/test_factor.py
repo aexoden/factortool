@@ -97,7 +97,7 @@ def test_yafu_nfs_is_not_run_below_its_minimum(monkeypatch: pytest.MonkeyPatch, 
 
 def test_final_factoring_chooses_a_method_for_each_composite(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Test that each remaining composite is factored with the fastest final method eligible for its own size."""
-    config = make_config(use_nfs_yafu=True)
+    config = make_config(use_nfs_cado=True, use_nfs_yafu=True)
     stats = FactoringStats(tmp_path / "stats.json", read_only=True)
 
     for method, execution_time in (("siqs", 100.0), ("nfs_yafu", 50.0), ("nfs_cado", 80.0)):
