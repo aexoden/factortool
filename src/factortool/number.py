@@ -473,16 +473,7 @@ class Number:
 
         # Retrieve statistics from the database. We use the largest remaining composite factor, as that's the largest
         # number we're actually factoring at this point.
-        largest_composite_factor = max(self.composite_factors)
-        digits = len(str(largest_composite_factor))
-        smallest_composite_factor_digits = len(str(min(self.composite_factors)))
-
-        # If the smallest composite factor is smaller than supported by CADO-NFS, just use the true maximum since we
-        # can't do NFS anyway.
-        if smallest_composite_factor_digits < NFS_CADO_MIN_DIGITS:
-            self._maximum_ecm_level = max(ECM_CURVES.keys())
-            return
-
+        digits = len(str(max(self.composite_factors)))
         methods = self._config.final_methods.for_digits(digits)
 
         _, self._maximum_ecm_level = self._stats.get_ecm_cutoffs(digits, self._config.max_threads, methods)

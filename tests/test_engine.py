@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import threading
 import time
 
@@ -17,7 +18,8 @@ import pytest
 
 from factortool.engine import ExitStatus, FactorEngine
 from factortool.interrupt import FINISH_BATCH, STOP_SOON, Interrupted, InterruptState
-from factortool.number import run_tool
+from factortool.number import Number, run_tool
+from factortool.stats import FactoringStats
 
 from .helpers import (
     TOOL_STOP_TIMEOUT,
@@ -28,11 +30,11 @@ from .helpers import (
     wait_for_heartbeat,
 )
 
-if TYPE_CHECKING:
-    from factortool.number import Number
-
 # Composite, so Number does not treat them as already factored.
 COMPOSITES = [100, 102, 104]
+
+# Prime factors of a 41-digit composite, which is too small for CADO-NFS.
+C41_FACTORS = [100000000000000000039, 300000000000000000053]
 
 
 def run_interrupted_on(
@@ -195,3 +197,26 @@ def test_numbers_whose_assignment_has_expired_are_skipped(
     assert engine.run([lapsed, assigned, unassigned]) == ExitStatus.SUCCESS
     assert attempted == {assigned.n, unassigned.n}
     assert not lapsed.factored
+
+
+def test_composites_too_small_for_nfs_are_finished_with_siqs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that a composite below the CADO-NFS minimum is finished with SIQS when only SIQS has statistics."""
+    n = C41_FACTORS[0] * C41_FACTORS[1]
+    stats = FactoringStats(tmp_path / "stats.json", read_only=True)
+    stats.update_final("siqs", len(str(n)), 1, 0.001)
+    config = make_config(work_path=tmp_path)
+    number = Number(n, config, stats, None)
+    methods: list[str] = []
+
+    def yafu(cmd: list[str], *_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        method = cmd[1].split("(", maxsplit=1)[0]
+        methods.append(method)
+        output = "".join(f"P21 = {p}\n" for p in C41_FACTORS) if method == "siqs" else f"C41 = {n}\n"
+        return subprocess.CompletedProcess(cmd, 0, output, "")
+
+    monkeypatch.setattr("factortool.number.run_tool", yafu, raising=True)
+
+    assert FactorEngine(config, 600.0, InterruptState()).run([number]) == ExitStatus.SUCCESS
+    assert methods[-1] == "siqs"
+    assert number.factored
+    assert sorted(number.prime_factors) == C41_FACTORS

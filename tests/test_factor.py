@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 from factortool.number import Number, factor_tf, factor_yafu
 from factortool.stats import FactoringStats
 
-from .helpers import make_config
+from .helpers import make_config, make_number
 
 # Composites on either side of the YAFU NFS minimum.
 C84 = 10**83 + 1
@@ -28,6 +28,20 @@ def test_tf() -> None:
     n = 15825810
     stats = FactoringStats(Path("stats.json"), read_only=True)
     assert factor_tf(n, stats) == [2, 3, 5, 7, 11, 13, 17, 31]
+
+
+def test_small_cofactors_use_statistical_ecm_cutoffs() -> None:
+    """Test that a composite too small for CADO-NFS stops ECM at the learned cutoff rather than the maximum level."""
+    number = make_number(15 * 10**50 + 7)
+    stats = Mock(spec=FactoringStats)
+    stats.get_ecm_cutoffs.return_value = (2, 5)
+    number._stats = stats
+    number.composite_factors = [10**40 + 1]
+
+    number._set_maximum_ecm_level()
+
+    stats.get_ecm_cutoffs.assert_called_once_with(41, number._config.max_threads, ("siqs",))
+    assert number._maximum_ecm_level == 5  # ruff: ignore[magic-value-comparison]
 
 
 def test_yafu_nfs_forces_nfs_and_records_its_own_statistics(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
