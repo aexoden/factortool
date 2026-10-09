@@ -270,7 +270,7 @@ class FactorEngine:
                 number.factor_final()
 
                 if self._interrupts.stop_factoring:
-                    logger.info("Not finishing remaining final factorizations due to interrupt", method_name)
+                    logger.info("Not finishing remaining final factorizations due to interrupt")
                     return ExitStatus.INTERRUPTED
 
                 if self._is_time_limit_exceeded():
