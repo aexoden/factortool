@@ -103,12 +103,13 @@ def abandon_tools() -> None:
             _kill_tool(process)
 
 
-def run_tool(
-    cmd: list[str], cwd: Path, *, env: dict[str, str] | None = None, stdin: str | None = None
-) -> subprocess.CompletedProcess[str]:
+def run_tool(cmd: list[str], cwd: Path, threads: int, *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     """Run an external tool in its own process group, capturing its output.
 
     The separate process group ensures that the process isn't immediately killed in the event of a terminal interrupt.
+
+    The tool inherits the environment, apart from OMP_NUM_THREADS, which is set to the number of threads the tool is
+    allowed, as anything built with OpenMP otherwise uses every available core.
 
     Returns:
         subprocess.CompletedProcess[str]: The finished process and its output.
@@ -127,7 +128,7 @@ def run_tool(
         process = subprocess.Popen(  # ruff: ignore[subprocess-without-shell-equals-true]
             cmd,
             cwd=cwd,
-            env=env,
+            env={**os.environ, "OMP_NUM_THREADS": str(threads)},
             stdin=subprocess.PIPE if stdin is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -166,6 +167,38 @@ def run_tool(
     return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
 
 
+def _run_yafu(expression: str, threads: int, yafu: YafuPaths, *options: str) -> tuple[list[int], float]:
+    """Evaluate an expression using YAFU, allowing it to use the given number of threads.
+
+    Returns:
+        tuple[list[int], float]: A tuple containing the sorted list of factors and the execution time in seconds.
+
+    Raises:
+        YafuError: If YAFU cannot be started or exits with an error.
+    """
+    cmd = [str(yafu.binary), expression, *options]
+    start_time = time.perf_counter_ns()
+
+    try:
+        with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
+            result = run_tool(cmd, work_dir, threads)
+    except (OSError, subprocess.CalledProcessError) as e:
+        msg = f"YAFU failed for {expression}: {_describe_tool_failure(e)}"
+        raise YafuError(msg) from e
+
+    factors: list[int] = []
+
+    for line in result.stdout.strip().split("\n"):
+        matches = re.match(r"(P|C)([0-9]*) = (?P<factor>[0-9]*)", line)
+
+        if matches:
+            factors.append(int(matches["factor"]))
+
+    end_time = time.perf_counter_ns()
+
+    return sorted(factors), (end_time - start_time) / 1_000_000_000.0
+
+
 @cache
 def factor_ecm(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
     n: int, level: int, final_methods: FinalMethods, max_threads: int, yafu: YafuPaths, stats: FactoringStats
@@ -177,7 +210,6 @@ def factor_ecm(  # ruff:ignore[too-many-arguments, too-many-positional-arguments
 
     Raises:
         FinalMethodNeeded: If a final factoring method (SIQS or NFS) is needed for statistics.
-        YafuError: If YAFU cannot be started or exits with an error.
     """
     # If any eligible final method has no statistics data, signal doing an immediate run of it.
     digits = len(str(n))
@@ -192,32 +224,16 @@ def factor_ecm(  # ruff:ignore[too-many-arguments, too-many-positional-arguments
     curves, b1 = ECM_CURVES[level]
 
     # Perform the ECM using YAFU.
-    start_time = time.perf_counter_ns()
-    cmd: list[str] = [str(yafu.binary), f"ecm({n}, {curves})", "-threads", str(max_threads), "-B1ecm", str(b1)]
+    factors, execution_time = _run_yafu(
+        f"ecm({n}, {curves})", max_threads, yafu, "-threads", str(max_threads), "-B1ecm", str(b1)
+    )
 
-    try:
-        with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
-            result = run_tool(cmd, work_dir)
-    except (OSError, subprocess.CalledProcessError) as e:
-        msg = f"YAFU failed for {n} with method ecm: {_describe_tool_failure(e)}"
-        raise YafuError(msg) from e
-
-    factors: list[int] = []
-
-    for line in result.stdout.strip().split("\n"):
-        matches = re.match(r"(P|C)([0-9]*) = (?P<factor>[0-9]*)", line)
-
-        if matches:
-            factors.append(int(matches["factor"]))
-
-    end_time = time.perf_counter_ns()
-    execution_time = (end_time - start_time) / 1_000_000_000.0
-    stats.update_ecm(len(str(n)), level, max_threads, execution_time, success=len(factors) > 1)
+    stats.update_ecm(digits, level, max_threads, execution_time, success=len(factors) > 1)
 
     if len(factors) > 1:
-        log_factor_result(["ECM"], n, sorted(factors))
+        log_factor_result(["ECM"], n, factors)
 
-    return sorted(factors)
+    return factors
 
 
 @cache
@@ -226,9 +242,6 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu: YafuPaths, stats: F
 
     Returns:
         list[int]: List of factors found.
-
-    Raises:
-        YafuError: If YAFU cannot be started or exits with an error.
     """
     digits = len(str(n))
 
@@ -236,39 +249,19 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu: YafuPaths, stats: F
     if method == "nfs" and digits < NFS_YAFU_MIN_DIGITS:
         return [n]
 
-    cmd = [str(yafu.binary), f"{method}({n})", "-inmem", "200"]
+    options = ["-inmem", "200"]
     threads = 1
 
-    # OMP_NUM_THREADS is needed to prevent OpenMP from using all available cores when used by YAFU.
-    env = {**os.environ, "OMP_NUM_THREADS": "1"}
-
+    # Rho and P-1 are single-threaded, so the engine runs several of them at once instead.
     if method not in {"pm1", "rho"}:
-        cmd.extend(["-threads", str(max_threads)])
+        options.extend(["-threads", str(max_threads)])
         threads = max_threads
 
     if method == "nfs":
         # YAFU silently runs SIQS instead of NFS below its QS/NFS crossover.
-        cmd.extend(["-xover", "1"])
+        options.extend(["-xover", "1"])
 
-    start_time = time.perf_counter_ns()
-
-    try:
-        with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
-            result = run_tool(cmd, work_dir, env=env)
-    except (OSError, subprocess.CalledProcessError) as e:
-        msg = f"YAFU failed for {n} with method {method}: {_describe_tool_failure(e)}"
-        raise YafuError(msg) from e
-
-    factors: list[int] = []
-
-    for line in result.stdout.strip().split("\n"):
-        matches = re.match(r"(P|C)([0-9]*) = (?P<factor>[0-9]*)", line)
-
-        if matches:
-            factors.append(int(matches["factor"]))
-
-    end_time = time.perf_counter_ns()
-    execution_time = (end_time - start_time) / 1_000_000_000.0
+    factors, execution_time = _run_yafu(f"{method}({n})", threads, yafu, *options)
 
     if method == "siqs":
         stats.update_final("siqs", digits, threads, execution_time)
@@ -285,9 +278,9 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu: YafuPaths, stats: F
     }
 
     if len(factors) > 1:
-        log_factor_result([methods[method]], n, sorted(factors))
+        log_factor_result([methods[method]], n, factors)
 
-    return sorted(factors)
+    return factors
 
 
 @cache
@@ -296,39 +289,15 @@ def factor_yafu_direct(n: int, max_threads: int, yafu: YafuPaths, stats: Factori
 
     Returns:
         list[int]: List of factors found.
-
-    Raises:
-        YafuError: If YAFU cannot be started or exits with an error.
     """
-    cmd = [str(yafu.binary), f"factor({n})", "-threads", str(max_threads)]
+    factors, execution_time = _run_yafu(f"factor({n})", max_threads, yafu, "-threads", str(max_threads))
 
-    start_time = time.perf_counter_ns()
-
-    try:
-        with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
-            result = run_tool(cmd, work_dir, env={"OMP_NUM_THREADS": "1"})
-    except (OSError, subprocess.CalledProcessError) as e:
-        msg = f"YAFU direct factoring failed for {n}: {_describe_tool_failure(e)}"
-        raise YafuError(msg) from e
-
-    factors: list[int] = []
-
-    for line in result.stdout.strip().split("\n"):
-        matches = re.match(r"(P|C)([0-9]*) = (?P<factor>[0-9]*)", line)
-
-        if matches:
-            factors.append(int(matches["factor"]))
-
-    end_time = time.perf_counter_ns()
-    execution_time = (end_time - start_time) / 1_000_000_000.0
-
-    digits = len(str(n))
-    stats.update_probability(digits, "yafu", max_threads, execution_time, success=len(factors) > 1)
+    stats.update_probability(len(str(n)), "yafu", max_threads, execution_time, success=len(factors) > 1)
 
     if len(factors) > 1:
-        log_factor_result(["YAFU"], n, sorted(factors))
+        log_factor_result(["YAFU"], n, factors)
 
-    return sorted(factors)
+    return factors
 
 
 @cache
@@ -354,7 +323,7 @@ def factor_nfs_cado(n: int, max_threads: int, cado_nfs_path: Path, work_path: Pa
 
     try:
         with get_work_dir(work_path, None, "nfs-cado-") as work_dir:
-            result = run_tool(cmd, work_dir, stdin=str(n))
+            result = run_tool(cmd, work_dir, max_threads, stdin=str(n))
     except (OSError, subprocess.CalledProcessError) as e:
         msg = f"CADO-NFS failed for {n}: {_describe_tool_failure(e)}"
         raise CadoNfsError(msg) from e

@@ -191,7 +191,7 @@ def test_third_interrupt_abandons_tools_running_in_worker_threads(
 
     def factor_yafu(n: int, *_args: object) -> list[int]:
         try:
-            run_tool(make_tool_with_helper(heartbeat), tmp_path)
+            run_tool(make_tool_with_helper(heartbeat), tmp_path, 1)
         finally:
             finished.set()
 
@@ -284,7 +284,7 @@ def test_third_interrupt_abandons_a_worker_outlasting_a_failed_one(
             raise YafuError(message)
 
         try:
-            run_tool(make_tool_with_helper(heartbeat), tmp_path)
+            run_tool(make_tool_with_helper(heartbeat), tmp_path, 1)
         finally:
             finished.set()
 
