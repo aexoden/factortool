@@ -86,20 +86,35 @@ class FactorEngine:
     def _factor_concurrently(self, numbers: Collection[Number], factor: Callable[[Number], None]) -> None:
         """Apply a factoring method to each unfactored number using a pool of worker threads.
 
+        A failure in any worker ends the stage. The numbers still queued are not started, the tools already running are
+        left to finish, and the failure is then raised here as if it had happened in the calling thread.
+
         Raises:
             Interrupted: If the third interrupt arrives, once the work in progress has been abandoned.
         """
+        failed = threading.Event()
 
         def run(number: Number) -> None:
-            if self._interrupts.stop_factoring or self._skip_expired(number):
+            if failed.is_set() or self._interrupts.stop_factoring or self._skip_expired(number):
                 return
 
-            factor(number)
+            try:
+                factor(number)
+            except BaseException:
+                failed.set()
+                raise
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self._config.max_threads) as executor:
             try:
-                futures = [executor.submit(run, number) for number in numbers if not number.factored]
-                concurrent.futures.wait(futures)
+                done, _ = concurrent.futures.wait(
+                    [executor.submit(run, number) for number in numbers if not number.factored],
+                    return_when=concurrent.futures.FIRST_EXCEPTION,
+                )
+                error = next((e for future in done if (e := future.exception()) is not None), None)
+
+                if error is not None:
+                    executor.shutdown(cancel_futures=True)
+                    raise error
             except Interrupted:
                 abandon_tools()
                 executor.shutdown(cancel_futures=True)
@@ -114,6 +129,9 @@ class FactorEngine:
 
         Returns:
             ExitStatus: The exit status of the factorization run.
+
+        Raises:
+            ToolError: If an external tool cannot be started or exits with an error.
         """
         try:
             with self._interrupts.abortable():

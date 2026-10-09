@@ -4,8 +4,12 @@
 
 from __future__ import annotations
 
+import json
+import sys
+
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -14,8 +18,8 @@ import pytest
 
 from factortool.assignments import AssignmentStore
 from factortool.backend import FetchCriteria
-from factortool.cli.main import Arguments, acquire_numbers, preserve_unfinished, validate_arguments
-from factortool.number import Number
+from factortool.cli.main import Arguments, acquire_numbers, main, preserve_unfinished, validate_arguments
+from factortool.number import CadoNfsError, Number, ToolError, YafuError
 from factortool.stats import FactoringStats
 
 from .helpers import make_config
@@ -146,3 +150,25 @@ def test_no_new_work_is_rejected_by_a_backend_that_assigns_nothing() -> None:
         validate_arguments(args, "factordb")
 
     assert error.value.code == 1
+
+
+@pytest.mark.parametrize(("error", "exit_status"), [(YafuError("YAFU failed"), 5), (CadoNfsError("CADO failed"), 4)])
+def test_a_tool_failure_exits_with_the_tool_status_after_cleaning_up(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, error: ToolError, exit_status: int
+) -> None:
+    """Test that a tool failure during the run still saves state before exiting with that tool's status."""
+    config = {"backend": "factordb", "cado_nfs_path": "cado-nfs.py", "max_threads": 1, "yafu_path": "yafu"}
+    (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["factortool", "--batch_size", "3"])
+    monkeypatch.setattr("factortool.cli.main.setup_logger", Mock(), raising=True)
+    monkeypatch.setattr("factortool.cli.main.InterruptState.install", Mock(), raising=True)
+    monkeypatch.setattr("factortool.cli.main.create_backend", Mock(return_value=FakeBackend(assigns_work=False)))
+    monkeypatch.setattr("factortool.cli.main.FactorEngine.run", Mock(side_effect=error), raising=True)
+
+    with pytest.raises(SystemExit) as raised:
+        main()
+
+    assert raised.value.code == exit_status
+    assert (tmp_path / "stats.json").exists()
+    assert len(list((tmp_path / "results").iterdir())) == 1

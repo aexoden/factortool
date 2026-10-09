@@ -11,9 +11,22 @@ from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
 if TYPE_CHECKING:
-    import pytest
+    from collections.abc import Callable
 
-from factortool.number import Number, factor_tf, factor_yafu
+import pytest
+
+from factortool.number import (
+    CadoNfsError,
+    Number,
+    ToolError,
+    YafuError,
+    factor_ecm,
+    factor_nfs_cado,
+    factor_tf,
+    factor_yafu,
+    factor_yafu_direct,
+    run_tool,
+)
 from factortool.stats import FactoringStats
 
 from .helpers import make_config, make_number
@@ -137,3 +150,64 @@ def test_ecm_runs_yafu_nfs_immediately_without_statistics(monkeypatch: pytest.Mo
     number.factor_ecm(2)
 
     factor_yafu.assert_called_once_with(C90, "nfs", *number._yafu_args)
+
+
+def failing_tools(
+    tmp_path: Path, stats: FactoringStats
+) -> dict[str, tuple[Callable[[], object], type[ToolError], int]]:
+    """Build a call to each tool-backed factoring function, with the error and exit status its failure should give.
+
+    Returns:
+        dict[str, tuple[Callable[[], object], type[ToolError], int]]: The call, error type and exit status by name.
+    """
+    config = make_config(work_path=tmp_path, yafu_path=tmp_path / "missing-yafu", cado_nfs_path=tmp_path / "missing")
+    yafu = config.yafu_paths
+
+    return {
+        "ecm": (lambda: factor_ecm(C90, 2, config.final_methods, 1, yafu, stats), YafuError, 5),
+        "yafu": (lambda: factor_yafu(C90, "rho", 1, yafu, stats), YafuError, 5),
+        "yafu_direct": (lambda: factor_yafu_direct(C90, 1, yafu, stats), YafuError, 5),
+        "nfs_cado": (lambda: factor_nfs_cado(C90, 1, config.cado_nfs_path, tmp_path, stats), CadoNfsError, 4),
+    }
+
+
+@pytest.mark.parametrize("tool", ["ecm", "yafu", "yafu_direct", "nfs_cado"])
+def test_tool_exiting_with_an_error_raises_its_tool_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tool: str
+) -> None:
+    """Test that a tool exiting with an error raises that tool's error, carrying its output and exit status."""
+    stats = FactoringStats(tmp_path / "stats.json", read_only=True)
+    stats.update_final("siqs", 90, 1, 1.0)
+    failure = subprocess.CalledProcessError(1, [], "", "something broke\n")
+    monkeypatch.setattr("factortool.number.run_tool", Mock(side_effect=failure), raising=True)
+    call, error_type, exit_status = failing_tools(tmp_path, stats)[tool]
+
+    with pytest.raises(error_type, match=r"something broke$") as raised:
+        call()
+
+    assert raised.value.exit_status == exit_status
+
+
+@pytest.mark.parametrize("tool", ["ecm", "yafu", "yafu_direct", "nfs_cado"])
+def test_tool_that_cannot_be_started_raises_its_tool_error(tmp_path: Path, tool: str) -> None:
+    """Test that a missing tool binary raises that tool's error rather than an unhandled OSError."""
+    stats = FactoringStats(tmp_path / "stats.json", read_only=True)
+    stats.update_final("siqs", 90, 1, 1.0)
+    call, error_type, exit_status = failing_tools(tmp_path, stats)[tool]
+
+    with pytest.raises(error_type, match="missing") as raised:
+        call()
+
+    assert raised.value.exit_status == exit_status
+    assert list(tmp_path.glob("*-*/")) == []
+
+
+def test_tool_start_failure_names_the_tool_when_the_platform_does_not(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that a failure to start a tool names its binary, as Windows reports the error without one."""
+    failure = FileNotFoundError(2, "The system cannot find the file specified")
+    monkeypatch.setattr("factortool.number.subprocess.Popen", Mock(side_effect=failure), raising=True)
+
+    with pytest.raises(FileNotFoundError, match="missing-tool"):
+        run_tool(["missing-tool"], tmp_path)
