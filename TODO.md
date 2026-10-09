@@ -7,13 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- Exceptions raised in the rho and P-1 worker threads are silently discarded,
-  as `_factor_concurrently` waits on its futures without ever retrieving their
-  results. This hides a missing YAFU binary, the `sys.exit(5)` in `factor_yafu`
-  and anything else that goes wrong in those stages.
-- `FactoringStats` is updated from those same worker threads without a lock.
-  Updates can be lost, and serializing the data while another thread adds a key
-  can raise.
 - `factor_yafu_direct` replaces YAFU's entire environment with only
   `OMP_NUM_THREADS` instead of adding to it, so `yafu` mode runs without `PATH`,
   `HOME` or `LD_LIBRARY_PATH`. While there, `factor_ecm` doesn't set
@@ -43,10 +36,11 @@ later ones.
   returns factors that don't multiply back to the number, log it, record no
   statistics, leave the number unfactored and continue with the batch. Abort
   (exit 5 or 4) only after several consecutive failures, as that suggests a
-  broken installation. Not sure if we can reliably detect a hang. The three
-  YAFU functions duplicate their output parsing, so a shared helper that parses
-  and verifies before the statistics update covers all of them. CADO-NFS output
-  is currently passed directly to `int()` after its statistics are recorded.
+  broken installation. Failures are currently raised as a `ToolError`, which
+  ends the run on the first one. Not sure if we can reliably detect a hang. The
+  three   YAFU functions duplicate their output parsing, so a shared helper that
+  parses and verifies before the statistics update covers all of them. CADO-NFS
+  output is currently passed directly to `int()` after its statistics are recorded.
 - `_factor_generic` reassigns `method` when a final method is run immediately
   for statistics, so later composites split by the original method in the same
   call are logged under the final method's name.
@@ -83,6 +77,9 @@ later ones.
 - Two instances sharing a configuration overwrite each other's statistics,
   batch state and assignment state. Take a lock file at startup and refuse to
   run if another instance holds it.
+- Look for any instances of existing tests codifying "odd" behavior. (In other
+  words, the test was written to accept whatever the current behavior was rather
+  than a more objectively correct behavior and implementing the necessary fixes).
 
 ## Minor Features
 

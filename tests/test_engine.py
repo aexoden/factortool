@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import threading
 import time
@@ -18,7 +19,7 @@ import pytest
 
 from factortool.engine import ExitStatus, FactorEngine
 from factortool.interrupt import FINISH_BATCH, STOP_SOON, Interrupted, InterruptState
-from factortool.number import Number, run_tool
+from factortool.number import Number, YafuError, run_tool
 from factortool.stats import FactoringStats
 
 from .helpers import (
@@ -212,6 +213,108 @@ def test_third_interrupt_abandons_tools_running_in_worker_threads(
     assert finished.is_set()
     assert heartbeat_stopped(heartbeat)
     assert number.composite_factors == [COMPOSITES[0]]
+
+
+@pytest.mark.parametrize("error", [YafuError("YAFU failed"), RuntimeError("bug"), SystemExit(5)])
+def test_worker_thread_failure_ends_the_run(monkeypatch: pytest.MonkeyPatch, error: BaseException) -> None:
+    """Test that a failure in a rho worker is raised from the run and stops the numbers still queued from starting."""
+    engine = FactorEngine(make_config(), 600.0, InterruptState())
+    attempted: list[int] = []
+
+    def factor_yafu(n: int, *_args: object) -> list[int]:
+        attempted.append(n)
+        raise error
+
+    monkeypatch.setattr("factortool.number.factor_tf", lambda n, _stats: [n], raising=True)
+    monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
+
+    with pytest.raises(type(error)) as raised:
+        engine.run([make_number(n) for n in COMPOSITES])
+
+    assert raised.value is error
+    assert attempted == [COMPOSITES[0]]
+
+
+def test_worker_thread_failure_keeps_results_already_in_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a factorization running alongside a failed one finishes and keeps its result."""
+    engine = FactorEngine(make_config(max_threads=2), 600.0, InterruptState())
+    failing, succeeding = (make_number(n) for n in COMPOSITES[:2])
+    both_started = threading.Barrier(2, timeout=TOOL_STOP_TIMEOUT)
+    failure_raised = threading.Event()
+
+    def factor_yafu(n: int, *_args: object) -> list[int]:
+        both_started.wait()
+
+        if n == failing.n:
+            failure_raised.set()
+            message = "YAFU failed"
+            raise YafuError(message)
+
+        # Outlast the failure, so this result arrives while the stage is already ending.
+        failure_raised.wait(TOOL_STOP_TIMEOUT)
+        time.sleep(0.1)
+        return [2, 3, 17]
+
+    monkeypatch.setattr("factortool.number.factor_tf", lambda n, _stats: [n], raising=True)
+    monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
+
+    with pytest.raises(YafuError):
+        engine.run([failing, succeeding])
+
+    assert not failing.factored
+    assert sorted(succeeding.prime_factors) == [2, 3, 17]
+
+
+def test_third_interrupt_abandons_a_worker_outlasting_a_failed_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that a third interrupt arriving while a failed stage waits for its other worker kills that worker's tool."""
+    engine = FactorEngine(make_config(max_threads=2), 600.0, InterruptState())
+    failing, outlasting = (make_number(n) for n in COMPOSITES[:2])
+    heartbeat = tmp_path / "heartbeat"
+    finished = threading.Event()
+    shutdown = concurrent.futures.ThreadPoolExecutor.shutdown
+    shutdowns: list[bool] = []
+
+    def factor_yafu(n: int, *_args: object) -> list[int]:
+        if n == failing.n:
+            # Fail only once the other worker's tool is running, so the stage has something to wait for.
+            wait_for_heartbeat(heartbeat)
+            message = "YAFU failed"
+            raise YafuError(message)
+
+        try:
+            run_tool(make_tool_with_helper(heartbeat), tmp_path)
+        finally:
+            finished.set()
+
+        return [n]
+
+    def interrupt_first_shutdown(
+        self: concurrent.futures.ThreadPoolExecutor, *, wait: bool = True, cancel_futures: bool = False
+    ) -> None:
+        shutdowns.append(cancel_futures)
+
+        # The first shutdown is the one the failure started, which would block until the other worker's tool exits.
+        # Raising in its place stands in for the third interrupt arriving during that wait.
+        if len(shutdowns) == 1:
+            raise Interrupted
+
+        shutdown(self, wait=wait, cancel_futures=cancel_futures)
+
+    monkeypatch.setattr("factortool.number.factor_tf", lambda n, _stats: [n], raising=True)
+    monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
+    monkeypatch.setattr(concurrent.futures.ThreadPoolExecutor, "shutdown", interrupt_first_shutdown, raising=True)
+
+    start = time.monotonic()
+
+    assert engine.run([failing, outlasting]) == ExitStatus.INTERRUPTED
+    assert time.monotonic() - start < TOOL_STOP_TIMEOUT
+    assert shutdowns[:2] == [True, True]
+    assert finished.is_set()
+    assert heartbeat_stopped(heartbeat)
+    assert not failing.factored
+    assert outlasting.composite_factors == [COMPOSITES[1]]
 
 
 @pytest.mark.parametrize("mode", ["yafu", "standard"])

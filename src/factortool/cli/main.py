@@ -28,7 +28,7 @@ from factortool.config import read_config
 from factortool.engine import ExitStatus, FactorEngine
 from factortool.http import PermanentHttpError
 from factortool.interrupt import InterruptState
-from factortool.number import Number, format_results
+from factortool.number import Number, ToolError, format_results
 from factortool.stats import FactoringStats, InvalidStatsError
 from factortool.util import setup_logger
 
@@ -269,6 +269,9 @@ def main() -> None:  # ruff: ignore[too-many-statements]
     # engine.
     try:
         status = engine.run(sorted(numbers))
+    except ToolError as e:
+        logger.critical("{}", e)
+        sys.exit(e.exit_status)
     finally:
         duration = time.monotonic() - start_time
         factored_count = len([number for number in numbers if number.factored])

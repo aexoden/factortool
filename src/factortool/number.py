@@ -43,6 +43,36 @@ class FinalMethodNeeded(Exception):  # ruff: ignore[error-suffix-on-exception-na
         self.method = method
 
 
+class ToolError(Exception):
+    """Exception raised when an external tool cannot be started or exits with an error."""
+
+    exit_status: int
+
+
+class YafuError(ToolError):
+    """Exception raised when YAFU fails."""
+
+    exit_status = 5
+
+
+class CadoNfsError(ToolError):
+    """Exception raised when CADO-NFS fails."""
+
+    exit_status = 4
+
+
+def _describe_tool_failure(error: OSError | subprocess.CalledProcessError) -> str:
+    """Describe why a tool failed, preferring its own error output when it ran at all.
+
+    Returns:
+        str: The tool's error output, or the reason it could not be started.
+    """
+    if isinstance(error, subprocess.CalledProcessError):
+        return str(error.stderr).strip() or f"exit status {error.returncode}"
+
+    return str(error)
+
+
 # External tools currently running in any thread.
 _running_tools: set[subprocess.Popen[str]] = set()
 
@@ -84,6 +114,7 @@ def run_tool(
         subprocess.CompletedProcess[str]: The finished process and its output.
 
     Raises:
+        OSError: If the tool cannot be started.
         subprocess.CalledProcessError: If the tool exits with a non-zero status.
         Interrupted: If abandon_tools killed the tool while it was running.
     """
@@ -92,17 +123,26 @@ def run_tool(
     else:
         creationflags, process_group = 0, 0
 
-    with subprocess.Popen(  # ruff: ignore[subprocess-without-shell-equals-true]
-        cmd,
-        cwd=cwd,
-        env=env,
-        stdin=subprocess.PIPE if stdin is not None else None,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        creationflags=creationflags,
-        process_group=process_group,
-    ) as process:
+    try:
+        process = subprocess.Popen(  # ruff: ignore[subprocess-without-shell-equals-true]
+            cmd,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.PIPE if stdin is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=creationflags,
+            process_group=process_group,
+        )
+    except OSError as e:
+        # Windows doesn't say which file it failed to start.
+        if e.filename is None:
+            e.filename = cmd[0]
+
+        raise
+
+    with process:
         with _tools_lock:
             _running_tools.add(process)
 
@@ -137,6 +177,7 @@ def factor_ecm(  # ruff:ignore[too-many-arguments, too-many-positional-arguments
 
     Raises:
         FinalMethodNeeded: If a final factoring method (SIQS or NFS) is needed for statistics.
+        YafuError: If YAFU cannot be started or exits with an error.
     """
     # If any eligible final method has no statistics data, signal doing an immediate run of it.
     digits = len(str(n))
@@ -157,9 +198,9 @@ def factor_ecm(  # ruff:ignore[too-many-arguments, too-many-positional-arguments
     try:
         with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
             result = run_tool(cmd, work_dir)
-    except subprocess.CalledProcessError as e:
-        logger.critical("YAFU ECM failed for {} with method ECM: {}", n, e.stderr)
-        sys.exit(5)
+    except (OSError, subprocess.CalledProcessError) as e:
+        msg = f"YAFU failed for {n} with method ecm: {_describe_tool_failure(e)}"
+        raise YafuError(msg) from e
 
     factors: list[int] = []
 
@@ -185,6 +226,9 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu: YafuPaths, stats: F
 
     Returns:
         list[int]: List of factors found.
+
+    Raises:
+        YafuError: If YAFU cannot be started or exits with an error.
     """
     digits = len(str(n))
 
@@ -211,9 +255,9 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu: YafuPaths, stats: F
     try:
         with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
             result = run_tool(cmd, work_dir, env=env)
-    except subprocess.CalledProcessError as e:
-        logger.critical("YAFU failed for {} with method {}: {}", n, method, e.stderr)
-        sys.exit(5)
+    except (OSError, subprocess.CalledProcessError) as e:
+        msg = f"YAFU failed for {n} with method {method}: {_describe_tool_failure(e)}"
+        raise YafuError(msg) from e
 
     factors: list[int] = []
 
@@ -252,6 +296,9 @@ def factor_yafu_direct(n: int, max_threads: int, yafu: YafuPaths, stats: Factori
 
     Returns:
         list[int]: List of factors found.
+
+    Raises:
+        YafuError: If YAFU cannot be started or exits with an error.
     """
     cmd = [str(yafu.binary), f"factor({n})", "-threads", str(max_threads)]
 
@@ -260,9 +307,9 @@ def factor_yafu_direct(n: int, max_threads: int, yafu: YafuPaths, stats: Factori
     try:
         with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
             result = run_tool(cmd, work_dir, env={"OMP_NUM_THREADS": "1"})
-    except subprocess.CalledProcessError as e:
-        logger.critical("YAFU direct factoring failed for {}: {}", n, e.stderr)
-        sys.exit(5)
+    except (OSError, subprocess.CalledProcessError) as e:
+        msg = f"YAFU direct factoring failed for {n}: {_describe_tool_failure(e)}"
+        raise YafuError(msg) from e
 
     factors: list[int] = []
 
@@ -290,6 +337,9 @@ def factor_nfs_cado(n: int, max_threads: int, cado_nfs_path: Path, work_path: Pa
 
     Returns:
         list[int]: List of factors found.
+
+    Raises:
+        CadoNfsError: If CADO-NFS cannot be started or exits with an error.
     """
     # Abort if the number of digits is too small for CADO-NFS.
     digits = len(str(n))
@@ -305,9 +355,9 @@ def factor_nfs_cado(n: int, max_threads: int, cado_nfs_path: Path, work_path: Pa
     try:
         with get_work_dir(work_path, None, "nfs-cado-") as work_dir:
             result = run_tool(cmd, work_dir, stdin=str(n))
-    except subprocess.CalledProcessError as e:
-        logger.critical("CADO-NFS failed for {}: {}", n, e.stderr)
-        sys.exit(4)
+    except (OSError, subprocess.CalledProcessError) as e:
+        msg = f"CADO-NFS failed for {n}: {_describe_tool_failure(e)}"
+        raise CadoNfsError(msg) from e
 
     end_time = time.perf_counter_ns()
     execution_time = (end_time - start_time) / 1_000_000_000.0
