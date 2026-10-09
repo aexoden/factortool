@@ -37,11 +37,32 @@ def test_small_cofactors_use_statistical_ecm_cutoffs() -> None:
     stats.get_ecm_cutoffs.return_value = (2, 5)
     number._stats = stats
     number.composite_factors = [10**40 + 1]
+    number._ecm_level = 4
 
-    number._set_maximum_ecm_level()
+    assert number.ecm_needed
 
     stats.get_ecm_cutoffs.assert_called_once_with(41, number._config.max_threads, ("siqs",))
-    assert number._maximum_ecm_level == 5  # ruff: ignore[magic-value-comparison]
+
+    number._ecm_level = 5
+    assert not number.ecm_needed
+
+
+def test_ecm_cutoff_follows_the_latest_statistics() -> None:
+    """Test that the ECM cutoff is reevaluated as statistics arrive, and that a finished number stays finished."""
+    number = make_number(10**59 + 1)
+    stats = Mock(spec=FactoringStats)
+    number._stats = stats
+    number._ecm_level = 10
+
+    stats.get_ecm_cutoffs.return_value = (None, 20)
+    assert number.ecm_needed
+
+    stats.get_ecm_cutoffs.return_value = (8, 10)
+    assert not number.ecm_needed
+
+    # Resuming would skip the levels the engine ran in the meantime.
+    stats.get_ecm_cutoffs.return_value = (8, 20)
+    assert not number.ecm_needed
 
 
 def test_yafu_nfs_forces_nfs_and_records_its_own_statistics(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

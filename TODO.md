@@ -1,13 +1,5 @@
 # TODO
 
-## Note on unpushed commits (as of 2026-10-07)
-
-* The other five form one chain, all touching the ECM cutoff code:
-  * `bce4e63` (statistical cutoffs for small cofactors)
-  * `abd1cc2` (dynamic ECM cutoffs) needs `b153baf`. It's logically independent,
-    but moving it earlier means resolving conflicts in `number.py` and
-    `test_factor.py` by hand, then again when `b153baf` is reapplied.
-
 ## Items
 
 The following is a list of potential TODO items, roughly in my intended order of

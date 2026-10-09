@@ -373,7 +373,7 @@ class Number:
     expires_at: float | None
 
     _ecm_level: int
-    _maximum_ecm_level: int
+    _ecm_finished: bool
     _stats: FactoringStats
     _config: Config
     _backend: Backend | None
@@ -388,6 +388,7 @@ class Number:
         self.expires_at = None
 
         self._ecm_level = 0
+        self._ecm_finished = False
 
         if is_prime(n):
             self.composite_factors = []
@@ -396,7 +397,6 @@ class Number:
             self.composite_factors = [n]
             self.prime_factors = []
 
-        self._set_maximum_ecm_level()
         self.methods = []
 
     def __lt__(self, other: object) -> bool:
@@ -446,8 +446,29 @@ class Number:
 
     @property
     def ecm_needed(self) -> bool:
-        """Determine if further ECM factoring is needed."""
-        return self._ecm_level < self._maximum_ecm_level
+        """Determine if further ECM factoring is needed, based on the latest statistics.
+
+        Once a number has finished ECM, it stays finished even if the cutoff shifts later.
+        """
+        if self._ecm_finished or self.factored:
+            return False
+
+        _, target_ecm_level = self.ecm_cutoffs
+
+        if self._ecm_level < target_ecm_level:
+            return True
+
+        self._ecm_finished = True
+        return False
+
+    @property
+    def ecm_cutoffs(self) -> tuple[int | None, int]:
+        """The optimal and target ECM cutoffs for the largest remaining composite factor."""
+        # We use the largest remaining composite factor, as that's the largest number we're still actually factoring.
+        digits = len(str(max(self.composite_factors)))
+        methods = self._config.final_methods.for_digits(digits)
+
+        return self._stats.get_ecm_cutoffs(digits, self._config.max_threads, methods)
 
     @property
     def final_method(self) -> str:
@@ -464,19 +485,6 @@ class Number:
         methods = self._config.final_methods.for_digits(digits)
 
         return self._stats.get_final_method(digits, self._config.max_threads, methods)
-
-    def _set_maximum_ecm_level(self) -> None:
-        # If factored, there is no need for any ECM.
-        if self.factored:
-            self._maximum_ecm_level = self._ecm_level
-            return
-
-        # Retrieve statistics from the database. We use the largest remaining composite factor, as that's the largest
-        # number we're actually factoring at this point.
-        digits = len(str(max(self.composite_factors)))
-        methods = self._config.final_methods.for_digits(digits)
-
-        _, self._maximum_ecm_level = self._stats.get_ecm_cutoffs(digits, self._config.max_threads, methods)
 
     @property
     def _yafu_args(self) -> tuple[int, YafuPaths, FactoringStats]:
@@ -508,9 +516,7 @@ class Number:
         factor_func: Callable[..., list[int]],
         *args: int | str | Path | YafuPaths | FinalMethods | FactoringStats,
         composites: Iterable[int] | None = None,
-    ) -> bool:
-        found_factors = False
-
+    ) -> None:
         for n in list(self.composite_factors if composites is None else composites):
             try:
                 factors = factor_func(n, *args)
@@ -521,7 +527,6 @@ class Number:
 
             if len(factors) > 1:
                 self.methods.append(method)
-                found_factors = True
 
             self.composite_factors.remove(n)
 
@@ -538,35 +543,26 @@ class Number:
             self._backend.submit([self])
             self._submitted = True
 
-        return found_factors
-
     def factor_yafu_direct(self) -> None:
         """Factor using YAFU's automatic method selection."""
         self._factor_generic("YAFU", factor_yafu_direct, *self._yafu_args)
 
     def factor_tf(self) -> None:
         """Factor using trial factoring."""
-        if self._factor_generic("TF", factor_tf, self._stats):
-            self._set_maximum_ecm_level()
+        self._factor_generic("TF", factor_tf, self._stats)
 
     def factor_rho(self) -> None:
         """Factor using Pollard's Rho algorithm."""
-        if self._factor_generic("Rho", factor_yafu, "rho", *self._yafu_args):
-            self._set_maximum_ecm_level()
+        self._factor_generic("Rho", factor_yafu, "rho", *self._yafu_args)
 
     def factor_pm1(self) -> None:
         """Factor using Pollard's P-1 algorithm."""
-        if self._factor_generic("P-1", factor_yafu, "pm1", *self._yafu_args):
-            self._set_maximum_ecm_level()
+        self._factor_generic("P-1", factor_yafu, "pm1", *self._yafu_args)
 
     def factor_ecm(self, level: int) -> None:
         """Factor using ECM at the specified level."""
-        found_factors = self._factor_generic("ECM", factor_ecm, level, self._config.final_methods, *self._yafu_args)
-
+        self._factor_generic("ECM", factor_ecm, level, self._config.final_methods, *self._yafu_args)
         self._ecm_level = level
-
-        if found_factors:
-            self._set_maximum_ecm_level()
 
     def factor_final(self) -> None:
         """Factor each remaining composite using its own fastest final method."""

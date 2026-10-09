@@ -96,6 +96,46 @@ def test_uninterrupted_run_reports_success(monkeypatch: pytest.MonkeyPatch, mode
     assert status == ExitStatus.SUCCESS
 
 
+def test_finished_ecm_number_does_not_resume_when_statistics_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that changing cutoffs between rounds stops ECM without later skipping ahead to resume it."""
+    config = make_config()
+    stats = Mock(spec=FactoringStats)
+    stats.get_ecm_cutoffs.return_value = (2, 4)
+    stats.get_final_method.return_value = "siqs"
+    finished = Number(100, config, stats, None)
+    continuing_stats = Mock(spec=FactoringStats)
+    continuing_stats.get_ecm_cutoffs.return_value = (2, 4)
+    continuing_stats.get_final_method.return_value = "siqs"
+    continuing = Number(102, config, continuing_stats, None)
+    first_level = 2
+    ecm_calls: list[tuple[int, int]] = []
+    final_calls: list[int] = []
+
+    def factor_ecm(n: int, level: int, *_args: object) -> list[int]:
+        ecm_calls.append((n, level))
+        if n == continuing.n:
+            # Lower the first number's cutoff after round 2, then raise it after round 3.
+            # The second number keeps the engine running so round 4 can expose an erroneous resume.
+            stats.get_ecm_cutoffs.return_value = (2, first_level if level == first_level else 4)
+        return [n]
+
+    def factor_yafu(n: int, method: str, *_args: object) -> list[int]:
+        assert method == "siqs"
+        final_calls.append(n)
+        return [2, 2, 5, 5] if n == finished.n else [2, 3, 17]
+
+    for method in ("factor_tf", "factor_rho", "factor_pm1"):
+        monkeypatch.setattr(Number, method, Mock(), raising=True)
+    monkeypatch.setattr("factortool.number.factor_ecm", factor_ecm, raising=True)
+    monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
+
+    assert FactorEngine(config, 600.0, InterruptState()).run([finished, continuing]) == ExitStatus.SUCCESS
+    assert ecm_calls == [(100, 2), (102, 2), (102, 3), (102, 4)]
+    assert final_calls == [100, 102]
+    assert finished.factored
+    assert continuing.factored
+
+
 @pytest.mark.parametrize("mode", ["yafu", "standard"])
 def test_a_single_interrupt_finishes_the_batch(
     monkeypatch: pytest.MonkeyPatch, mode: Literal["standard", "yafu"]
