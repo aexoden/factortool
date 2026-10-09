@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
+import sys
 
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -84,7 +85,6 @@ def test_yafu_nfs_forces_nfs_and_records_its_own_statistics(monkeypatch: pytest.
     output = f"P1 = 7\nP1 = 13\nC88 = {10**87 + 1}\n"
     run_tool = Mock(return_value=subprocess.CompletedProcess([], 0, output, ""))
     monkeypatch.setattr("factortool.number.run_tool", run_tool, raising=True)
-    monkeypatch.setenv("FACTORTOOL_TEST", "1")
 
     factors = factor_yafu(C90, "nfs", 4, make_config(work_path=tmp_path).yafu_paths, stats)
 
@@ -92,7 +92,6 @@ def test_yafu_nfs_forces_nfs_and_records_its_own_statistics(monkeypatch: pytest.
     assert factors == [7, 13, 10**87 + 1]
     assert cmd[1] == f"nfs({C90})"
     assert cmd[cmd.index("-xover") + 1] == "1"
-    assert run_tool.call_args.kwargs["env"]["FACTORTOOL_TEST"] == "1"
     assert stats.get_final_stats("nfs_yafu", 90, 4)[0] == 1
     assert stats.get_final_stats("nfs_cado", 90, 4)[0] == 0
 
@@ -150,6 +149,55 @@ def test_ecm_runs_yafu_nfs_immediately_without_statistics(monkeypatch: pytest.Mo
     number.factor_ecm(2)
 
     factor_yafu.assert_called_once_with(C90, "nfs", *number._yafu_args)
+
+
+def test_tools_inherit_the_environment_with_their_thread_budget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that a tool keeps the surrounding environment, with OpenMP limited to the threads it is allowed."""
+    monkeypatch.setenv("FACTORTOOL_TEST", "inherited")
+    monkeypatch.setenv("OMP_NUM_THREADS", "64")
+    script = "import os; print(os.environ['FACTORTOOL_TEST'], os.environ['OMP_NUM_THREADS'], 'PATH' in os.environ)"
+
+    result = run_tool([sys.executable, "-c", script], tmp_path, 3)
+
+    assert result.stdout.split() == ["inherited", "3", "True"]
+
+
+@pytest.mark.parametrize(
+    ("tool", "threads"),
+    [("ecm", 4), ("rho", 1), ("pm1", 1), ("siqs", 4), ("nfs", 4), ("yafu_direct", 4), ("nfs_cado", 4)],
+)
+def test_tools_are_given_the_threads_their_method_can_use(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tool: str, threads: int
+) -> None:
+    """Test that the single-threaded methods are limited to one thread, and every other method to max_threads.
+
+    The tool's own thread option has to agree with the budget, as OMP_NUM_THREADS only limits what uses OpenMP.
+    """
+    stats = FactoringStats(tmp_path / "stats.json", read_only=True)
+    stats.update_final("siqs", 90, 4, 1.0)
+    output = str(C90) if tool == "nfs_cado" else f"C90 = {C90}\n"
+    run_tool = Mock(return_value=subprocess.CompletedProcess([], 0, output, ""))
+    monkeypatch.setattr("factortool.number.run_tool", run_tool, raising=True)
+    config = make_config(work_path=tmp_path)
+    yafu = config.yafu_paths
+
+    if tool == "ecm":
+        factor_ecm(C90, 2, config.final_methods, 4, yafu, stats)
+    elif tool == "yafu_direct":
+        factor_yafu_direct(C90, 4, yafu, stats)
+    elif tool == "nfs_cado":
+        factor_nfs_cado(C90, 4, config.cado_nfs_path, tmp_path, stats)
+    else:
+        factor_yafu(C90, tool, 4, yafu, stats)
+
+    cmd = run_tool.call_args.args[0]
+    option = "-t" if tool == "nfs_cado" else "-threads"
+
+    # YAFU uses a single thread unless told otherwise.
+    assert (int(cmd[cmd.index(option) + 1]) if option in cmd else 1) == threads
+    assert run_tool.call_args.args[2] == threads
 
 
 def failing_tools(
@@ -210,4 +258,4 @@ def test_tool_start_failure_names_the_tool_when_the_platform_does_not(
     monkeypatch.setattr("factortool.number.subprocess.Popen", Mock(side_effect=failure), raising=True)
 
     with pytest.raises(FileNotFoundError, match="missing-tool"):
-        run_tool(["missing-tool"], tmp_path)
+        run_tool(["missing-tool"], tmp_path, 1)

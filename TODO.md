@@ -7,10 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- `factor_yafu_direct` replaces YAFU's entire environment with only
-  `OMP_NUM_THREADS` instead of adding to it, so `yafu` mode runs without `PATH`,
-  `HOME` or `LD_LIBRARY_PATH`. While there, `factor_ecm` doesn't set
-  `OMP_NUM_THREADS` at all; make the three consistent.
 - The time limit clock starts when the engine is created, which is before the
   fetch. A fetch that has to wait for work can use up the entire limit, and the
   run then exits after the first number.
