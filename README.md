@@ -49,20 +49,26 @@ theory, but this way ensures memory leaks aren't an issue. I find it convenient
 to use a shell script such as the following:
 
 ```sh
-while true ; do
-    uv run factortool --min_digits 55 --batch_size 60 --skip_count 277 ;
-    status=$? ;
-    if [ $status -eq 2 ] || [ $status -eq 6 ]; then exit $status ; fi ;
-    sleep 1 ;
-done
+bash -c '
+    while true ; do
+        uv run factortool --min_digits 55 --batch_size 60 --skip_count 277 ;
+        status=$? ;
+        if [ $status -eq 2 ] || [ $status -eq 6 ]; then exit $status ; fi ;
+        sleep 1 ;
+    done
+'
 ```
 
 I typically run this as a one-liner. It's been split into multiple lines here to
-keep the line length down. To stop the script, simply press Ctrl-C. `factortool`
-will finish the current factorization it is working on, submit any finished results,
-and then exit. The shell script is designed to stop if `factortool` exits due to
-an interrupt such as Ctrl-C (exit status 2) or for a permanent HTTP error (exit
-status 6).
+keep the line length down. The loop runs under `bash -c` so that `exit` only ends
+the loop, rather than the entire shell it was typed into. This also makes it easy
+to prefix the whole loop with another command, such as `taskset -c 12-15` to pin
+`factortool` (and the processes it spawns) to specific CPU cores.
+
+To stop the script, simply press Ctrl-C. `factortool` will finish the current
+factorization it is working on, submit any finished results, and then exit. The
+shell  script is designed to stop if `factortool` exits due to an interrupt such
+as Ctrl-C (exit status 2) or for a permanent HTTP error (exit status 6).
 
 Repeated interrupts escalate:
 

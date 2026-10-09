@@ -5,8 +5,6 @@
 The following is a list of potential TODO items, roughly in my intended order of
 implementation. There is no guarantee I will actually get to any of this.
 
-* The shell script needs to be run with bash -c, otherwise when it exits it exits
-  the current terminal.
 * Make upgrades safer with regard to the config file. We should possibly set
   defaults for the ones that can be defaulted, and then reject unset ones that cannot.
 * Investigate moving away from Tap for argument parsing. If keeping Tap, consider
