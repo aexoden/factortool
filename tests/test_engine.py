@@ -67,7 +67,7 @@ def run_interrupted_on(
         factor(self)
         self._ecm_level = level
 
-    for method in ("factor_yafu_direct", "factor_tf", "factor_rho", "factor_pm1", "factor_siqs", "factor_nfs"):
+    for method in ("factor_yafu_direct", "factor_tf", "factor_rho", "factor_pm1", "factor_final"):
         monkeypatch.setattr(f"factortool.number.Number.{method}", factor, raising=True)
 
     monkeypatch.setattr("factortool.number.Number.factor_ecm", factor_ecm, raising=True)

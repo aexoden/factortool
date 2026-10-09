@@ -4,7 +4,19 @@
 
 from __future__ import annotations
 
-CADO_NFS_MIN_DIGITS = 57
+# Below this, CADO-NFS has gaps in its default parameter files.
+NFS_CADO_MIN_DIGITS = 57
+
+# When overriding the automatic switch to SIQS below the crossover, YAFU's polynomial selection was observed to stall
+# indefinitely at 80 digits and below. That said, there's no good reason to use NFS below the SIQS crossover anyway.
+NFS_YAFU_MIN_DIGITS = 85
+
+# Display names for the final factoring methods.
+FINAL_METHOD_NAMES: dict[str, str] = {
+    "siqs": "SIQS",
+    "nfs_cado": "CADO-NFS",
+    "nfs_yafu": "YAFU NFS",
+}
 
 ECM_P_FACTOR_DEFAULT = 0.1
 ECM_P_FACTOR_DECAY = pow(0.5, 1 / 16)

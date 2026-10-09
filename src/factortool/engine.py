@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
-from factortool.constants import ECM_CURVES
+from factortool.constants import ECM_CURVES, FINAL_METHOD_NAMES
 from factortool.interrupt import Interrupted, InterruptState
 from factortool.number import Number, abandon_tools
 
@@ -156,7 +156,7 @@ class FactorEngine:
 
         return ExitStatus.SUCCESS
 
-    def _run_standard(self, numbers: Collection[Number]) -> ExitStatus:  # ruff: ignore[complex-structure, too-many-branches, too-many-return-statements, too-many-statements]
+    def _run_standard(self, numbers: Collection[Number]) -> ExitStatus:  # ruff: ignore[complex-structure, too-many-branches, too-many-return-statements]
         """Factor numbers using the built-in sequence of methods.
 
         Returns:
@@ -238,52 +238,42 @@ class FactorEngine:
                 if self._is_time_limit_exceeded():
                     return ExitStatus.TIME_LIMIT_EXCEEDED
 
-        # Do SIQS on the remaining numbers that prefer SIQS.
-        overall_number_count = len([x for x in numbers if not x.factored])
-        siqs_numbers = [x for x in numbers if not x.factored and x.prefer_siqs and not self._skip_expired(x)]
-        number_count = len(siqs_numbers)
+        # Finish the remaining numbers with their preferred final method, grouped by method. We generate the groups
+        # first, as the runs could conceivably change the statistics enough for a number's preferred final method to
+        # change. If its new preferred method has already run its group, it would be silently dropped.
+        final_groups: dict[str, list[Number]] = {method: [] for method in FINAL_METHOD_NAMES}
 
-        if number_count > 0:
+        for number in numbers:
+            if not number.factored and not self._skip_expired(number):
+                final_groups[number.final_method].append(number)
+
+        for method, method_name in FINAL_METHOD_NAMES.items():
+            final_numbers = final_groups[method]
+            number_count = len(final_numbers)
+            overall_number_count = len([x for x in numbers if not x.factored])
+
+            if number_count == 0:
+                continue
+
             logger.info(
-                "Attempting SIQS factoring on {} number{} (of {} total remaining)",
+                "Attempting final factoring on {} number{} (of {} total remaining) (initially grouped under {})",
                 number_count,
                 "s" if number_count != 1 else "",
                 overall_number_count,
+                method_name,
             )
 
-            for number in siqs_numbers:
-                if self._skip_expired(number):
+            for number in final_numbers:
+                if number.factored or self._skip_expired(number):
                     continue
 
-                number.factor_siqs()
+                number.factor_final()
 
                 if self._interrupts.stop_factoring:
-                    logger.info("Not finishing remaining SIQS factorizations due to interrupt")
+                    logger.info("Not finishing remaining final factorizations due to interrupt", method_name)
                     return ExitStatus.INTERRUPTED
 
                 if self._is_time_limit_exceeded():
                     return ExitStatus.TIME_LIMIT_EXCEEDED
-
-        # Finish the remaining numbers with NFS.
-        nfs_numbers = [x for x in numbers if not x.factored and not self._skip_expired(x)]
-        number_count = len(nfs_numbers)
-
-        if number_count == 0:
-            return ExitStatus.SUCCESS
-
-        logger.info("Attempting NFS factoring on {} number{}", number_count, "s" if number_count != 1 else "")
-
-        for number in nfs_numbers:
-            if self._skip_expired(number):
-                continue
-
-            number.factor_nfs()
-
-            if self._interrupts.stop_factoring:
-                logger.info("Not finishing remaining NFS factorizations due to interrupt")
-                return ExitStatus.INTERRUPTED
-
-            if self._is_time_limit_exceeded():
-                return ExitStatus.TIME_LIMIT_EXCEEDED
 
         return ExitStatus.SUCCESS

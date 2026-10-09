@@ -12,6 +12,8 @@
   "mersenne_ca_cooldown_period": 1.0,
   "result_output_path": "results",
   "stats_path": "stats.json",
+  "use_nfs_cado": true,
+  "use_nfs_yafu": true,
   "user_agent": "",
   "work_path": "work",
   "yafu_path": "/opt/yafu/yafu",

@@ -123,6 +123,8 @@ def config(tmp_path: Path) -> Config:
         mersenne_ca_cooldown_period=0.0,
         result_output_path=tmp_path / "results",
         stats_path=tmp_path / "stats.json",
+        use_nfs_cado=True,
+        use_nfs_yafu=True,
         user_agent="",
         work_path=tmp_path / "work",
         yafu_path=tmp_path / "yafu",

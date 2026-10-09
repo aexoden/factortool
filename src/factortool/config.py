@@ -13,6 +13,8 @@ from typing import Literal, NamedTuple
 from loguru import logger
 from pydantic import BaseModel, ValidationError, field_validator
 
+from factortool.constants import FINAL_METHOD_NAMES, NFS_CADO_MIN_DIGITS, NFS_YAFU_MIN_DIGITS
+
 
 class YafuPaths(NamedTuple):
     """Paths needed for a yafu invocation."""
@@ -20,6 +22,30 @@ class YafuPaths(NamedTuple):
     binary: Path
     work: Path
     ini: Path
+
+
+class FinalMethods(NamedTuple):
+    """Settings that decide which final factoring methods (SIQS or NFS) may be used."""
+
+    max_siqs_digits: int
+    use_nfs_cado: bool
+    use_nfs_yafu: bool
+
+    def for_digits(self, digits: int) -> tuple[str, ...]:
+        """Determine the final factoring methods eligible for a composite with the given digit count.
+
+        SIQS is used as a last resort if no method is otherwise eligible.
+
+        Returns:
+            tuple[str, ...]: The statistics keys of the eligible methods.
+        """
+        eligible = {
+            "siqs": digits <= self.max_siqs_digits,
+            "nfs_cado": self.use_nfs_cado and digits >= NFS_CADO_MIN_DIGITS,
+            "nfs_yafu": self.use_nfs_yafu and digits >= NFS_YAFU_MIN_DIGITS,
+        }
+
+        return tuple(method for method in FINAL_METHOD_NAMES if eligible[method]) or ("siqs",)
 
 
 ASCII_RANGE = range(0x20, 0x7F)
@@ -42,6 +68,8 @@ class Config(BaseModel):
     mersenne_ca_cooldown_period: float
     result_output_path: Path
     stats_path: Path
+    use_nfs_cado: bool
+    use_nfs_yafu: bool
     user_agent: str
     work_path: Path
     yafu_path: Path
@@ -71,6 +99,11 @@ class Config(BaseModel):
         binary = self.yafu_path.absolute()
         ini = self.yafu_ini_path.absolute() if self.yafu_ini_path is not None else (binary.parent / "yafu.ini")
         return YafuPaths(binary=binary, work=self.work_path, ini=ini)
+
+    @property
+    def final_methods(self) -> FinalMethods:
+        """Settings that decide which final factoring methods may be used."""
+        return FinalMethods(self.max_siqs_digits, self.use_nfs_cado, self.use_nfs_yafu)
 
 
 def read_config(path: Path) -> Config:

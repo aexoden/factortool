@@ -43,3 +43,20 @@ def test_user_agent_rejects_invalid_overrides(user_agent: str) -> None:
         make_config(user_agent=user_agent)
 
     assert [error["loc"] for error in exc_info.value.errors()] == [("user_agent",)]
+
+
+@pytest.mark.parametrize(
+    ("digits", "overrides", "expected"),
+    [
+        pytest.param(56, {}, ("siqs",), id="below-nfs-cado-minimum"),
+        pytest.param(57, {}, ("siqs", "nfs_cado"), id="nfs-cado-minimum"),
+        pytest.param(84, {"use_nfs_yafu": True}, ("siqs", "nfs_cado"), id="below-yafu-minimum"),
+        pytest.param(85, {"use_nfs_yafu": True}, ("siqs", "nfs_cado", "nfs_yafu"), id="yafu-minimum"),
+        pytest.param(101, {"use_nfs_yafu": True}, ("nfs_cado", "nfs_yafu"), id="above-max-siqs-digits"),
+        pytest.param(101, {"use_nfs_cado": False, "use_nfs_yafu": True}, ("nfs_yafu",), id="cado-disabled"),
+        pytest.param(101, {"use_nfs_cado": False, "use_nfs_yafu": False}, ("siqs",), id="siqs-as-last-resort"),
+    ],
+)
+def test_final_methods_for_digits(digits: int, overrides: dict[str, bool], expected: tuple[str, ...]) -> None:
+    """Allow only the enabled final methods suited to the size, falling back to SIQS when none are."""
+    assert make_config(**overrides).final_methods.for_digits(digits) == expected

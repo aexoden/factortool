@@ -8,26 +8,27 @@ import json
 import math
 import time
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from factortool.constants import ECM_CURVES, ECM_P_FACTOR_DECAY, ECM_P_FACTOR_DEFAULT
 from factortool.util import safe_write
 
 
 class FinalRunData(BaseModel):
-    """Time and run count data for final factorization runs (SIQS, NFS)."""
+    """Time and run count data for final factorization runs (SIQS, CADO-NFS, YAFU NFS)."""
 
     total_time: float = Field(default=0.0, description="Total time spent on final factorization of this type")
     run_count: int = Field(default=0, description="Number of final factorization runs of this type")
 
 
 class FinalDigitData(BaseModel):
-    """Data for final factorization runs (SIQS, NFS) for a given digit count, grouped by thread count."""
+    """Data for final factorization runs (SIQS, CADO-NFS, YAFU NFS) for a given digit count, grouped by thread count."""
 
     thread_data: dict[int, FinalRunData] = Field(
         default_factory=dict[int, FinalRunData], description="Final data for each thread count"
@@ -66,8 +67,15 @@ class ProbabilityDigitData(BaseModel):
     )
 
 
+class InvalidStatsError(Exception):
+    """Exception raised for invalid or incompatible statistics data."""
+
+
 class FactoringData(BaseModel):
     """All factoring statistics data."""
+
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal[1]
 
     tf: dict[int, ProbabilityDigitData] = Field(
         default_factory=dict[int, ProbabilityDigitData], description="Trial factoring data for each digit count"
@@ -87,8 +95,11 @@ class FactoringData(BaseModel):
     siqs: dict[int, FinalDigitData] = Field(
         default_factory=dict[int, FinalDigitData], description="SIQS data for each digit count"
     )
-    nfs: dict[int, FinalDigitData] = Field(
-        default_factory=dict[int, FinalDigitData], description="NFS data for each digit count"
+    nfs_cado: dict[int, FinalDigitData] = Field(
+        default_factory=dict[int, FinalDigitData], description="CADO-NFS data for each digit count"
+    )
+    nfs_yafu: dict[int, FinalDigitData] = Field(
+        default_factory=dict[int, FinalDigitData], description="YAFU NFS data for each digit count"
     )
 
 
@@ -113,11 +124,19 @@ class FactoringStats:
         self._load_data()
 
     def _load_data(self) -> None:
-        if self._path.exists():
-            with self._path.open("r", encoding="utf-8") as f:
-                self._data = FactoringData.model_validate_json(f.read())
-        else:
-            self._data = FactoringData()
+        if not self._path.exists():
+            self._data = FactoringData(schema_version=1)
+            return
+
+        try:
+            self._data = FactoringData.model_validate_json(self._path.read_text(encoding="utf-8"))
+        except ValidationError as e:
+            msg = (
+                f"Statistics cache {self._path} is invalid or incompatible. "
+                "Rename or remove it to start with fresh statistics. "
+                "The existing file has not been changed."
+            )
+            raise InvalidStatsError(msg) from e
 
     def _save_data(self, *, force: bool = False) -> None:
         if self._read_only:
@@ -167,31 +186,17 @@ class FactoringStats:
         self._data_changed = True
         self._save_data()
 
-    def update_siqs(self, digits: int, threads: int, execution_time: float) -> None:
-        """Update SIQS factorization data."""
-        if digits not in self._data.siqs:
-            self._data.siqs[digits] = FinalDigitData()
+    def update_final(self, method: str, digits: int, threads: int, execution_time: float) -> None:
+        """Update final factorization data for the method with the given statistics key."""
+        data = getattr(self._data, method)
 
-        if threads not in self._data.siqs[digits].thread_data:
-            self._data.siqs[digits].thread_data[threads] = FinalRunData()
+        if digits not in data:
+            data[digits] = FinalDigitData()
 
-        run_data = self._data.siqs[digits].thread_data[threads]
+        if threads not in data[digits].thread_data:
+            data[digits].thread_data[threads] = FinalRunData()
 
-        run_data.total_time += execution_time
-        run_data.run_count += 1
-
-        self._data_changed = True
-        self._save_data()
-
-    def update_nfs(self, digits: int, threads: int, execution_time: float) -> None:
-        """Update NFS factorization data."""
-        if digits not in self._data.nfs:
-            self._data.nfs[digits] = FinalDigitData()
-
-        if threads not in self._data.nfs[digits].thread_data:
-            self._data.nfs[digits].thread_data[threads] = FinalRunData()
-
-        run_data = self._data.nfs[digits].thread_data[threads]
+        run_data = data[digits].thread_data[threads]
 
         run_data.total_time += execution_time
         run_data.run_count += 1
@@ -221,14 +226,16 @@ class FactoringStats:
         self._data_changed = True
         self._save_data()
 
-    def get_siqs_stats(self, digits: int, threads: int) -> tuple[int, float | None]:
-        """Get SIQS factorization statistics.
+    def get_final_stats(self, method: str, digits: int, threads: int) -> tuple[int, float | None]:
+        """Get final factorization statistics for the method with the given statistics key.
 
         Returns:
-            A tuple containing the number of SIQS runs and the average time per run, or None if no data is available.
+            A tuple containing the number of runs and the average time per run, or None if no data is available.
         """
-        if digits in self._data.siqs and threads in self._data.siqs[digits].thread_data:
-            run_data = self._data.siqs[digits].thread_data[threads]
+        data = getattr(self._data, method)
+
+        if digits in data and threads in data[digits].thread_data:
+            run_data = data[digits].thread_data[threads]
 
             if run_data.run_count > 0:
                 return (
@@ -238,22 +245,35 @@ class FactoringStats:
 
         return (0, None)
 
-    def get_nfs_stats(self, digits: int, threads: int) -> tuple[int, float | None]:
-        """Get NFS factorization statistics.
+    def get_final_method(self, digits: int, threads: int, methods: Sequence[str]) -> str:
+        """Choose the final factoring method for a composite with the given digit count.
+
+        A method with no data is chosen first, so that data is collected for it. Otherwise, the fastest is chosen.
 
         Returns:
-            A tuple containing the number of NFS runs and the average time per run, or None if no data is available.
+            str: The statistics key of the chosen method.
         """
-        if digits in self._data.nfs and threads in self._data.nfs[digits].thread_data:
-            run_data = self._data.nfs[digits].thread_data[threads]
+        times: dict[str, float] = {}
 
-            if run_data.run_count > 0:
-                return (
-                    run_data.run_count,
-                    run_data.total_time / run_data.run_count,
-                )
+        for method in methods:
+            _, final_time = self.get_final_stats(method, digits, threads)
 
-        return (0, None)
+            if final_time is None:
+                return method
+
+            times[method] = final_time
+
+        return min(times, key=lambda method: times[method])
+
+    def get_final_time(self, digits: int, threads: int, methods: Sequence[str]) -> float | None:
+        """Get the average time of the fastest final factoring method with data.
+
+        Returns:
+            float | None: The average time of the fastest method, or None if none of the methods have data.
+        """
+        times = [self.get_final_stats(method, digits, threads)[1] for method in methods]
+
+        return min((x for x in times if x is not None), default=None)
 
     def get_yafu_stats(self, digits: int, threads: int) -> tuple[int, float | None]:
         """Get YAFU factorization statistics.
@@ -325,7 +345,9 @@ class FactoringStats:
 
         return (0, None, None)
 
-    def get_average_time(self, digits: int, maximum_ecm_level: int, threads: int) -> tuple[int, float | None]:
+    def get_average_time(
+        self, digits: int, maximum_ecm_level: int, threads: int, methods: Sequence[str]
+    ) -> tuple[int, float | None]:
         """Estimate the average time to factor a number with the given digit count.
 
         Returns:
@@ -356,42 +378,35 @@ class FactoringStats:
         assert pm1_time is not None  # ruff:ignore[assert]
         assert pm1_p_factor is not None  # ruff:ignore[assert]
 
-        ecm_count, ecm_nfs_time = self.get_ecm_average_time(digits, maximum_ecm_level, threads)
+        ecm_count, ecm_final_time = self.get_ecm_average_time(digits, maximum_ecm_level, threads, methods)
 
-        if ecm_nfs_time is None:
+        if ecm_final_time is None:
             return (0, None)
 
         total_time = tf_time
         total_time += rho_time * (1 - tf_p_factor)
         total_time += pm1_time * (1 - tf_p_factor) * (1 - rho_p_factor)
-        total_time += ecm_nfs_time * (1 - tf_p_factor) * (1 - rho_p_factor) * (1 - pm1_p_factor)
+        total_time += ecm_final_time * (1 - tf_p_factor) * (1 - rho_p_factor) * (1 - pm1_p_factor)
 
         return (ecm_count, total_time)
 
-    def get_ecm_average_time(self, digits: int, maximum_ecm_level: int, threads: int) -> tuple[int, float | None]:
+    def get_ecm_average_time(
+        self, digits: int, maximum_ecm_level: int, threads: int, methods: Sequence[str]
+    ) -> tuple[int, float | None]:
         """Estimate the average time to factor a number with the given digit count, starting from ECM.
 
         Returns:
             tuple[int, float | None]: A tuple containing the estimated number of ECM runs and the average time to factor
                 the number.
         """
-        _, siqs_time = self.get_siqs_stats(digits, threads)
-        _, nfs_time = self.get_nfs_stats(digits, threads)
+        final_time = self.get_final_time(digits, threads, methods)
 
-        if siqs_time is not None or nfs_time is not None:
-            if siqs_time is None:
-                assert nfs_time is not None  # ruff:ignore[assert]
-                final_time = nfs_time
-            elif nfs_time is None:
-                final_time = siqs_time
-            else:
-                final_time = min(siqs_time, nfs_time)
-        else:
+        if final_time is None:
             return (0, None)
 
         return self._get_average_time_internal(digits, threads, final_time, min(ECM_CURVES.keys()), maximum_ecm_level)
 
-    def get_ecm_cutoffs(self, digits: int, threads: int) -> tuple[int | None, int]:
+    def get_ecm_cutoffs(self, digits: int, threads: int, methods: Sequence[str]) -> tuple[int | None, int]:
         """Determine the ECM levels at which to stop doing ECM factoring.
 
         Returns:
@@ -410,7 +425,7 @@ class FactoringStats:
         best_maximum_ecm_level_time = 0.0
 
         for ecm_level in range(min(ECM_CURVES.keys()), maximum_ecm_level + 1):
-            ecm_count, average_time = self.get_ecm_average_time(digits, ecm_level, threads)
+            ecm_count, average_time = self.get_ecm_average_time(digits, ecm_level, threads, methods)
 
             if ecm_count == 0:
                 break
@@ -430,19 +445,14 @@ class FactoringStats:
         if best_maximum_ecm_level is None:
             return (None, digits // 3)
 
-        # Cap the maximum ECM level based on SIQS and NFS statistics. There's no point doing an ECM level if either of
+        # Cap the maximum ECM level based on the final method statistics. There's no point doing an ECM level if any of
         # those are faster. We do apply a fudge factor in case of measurement inaccuracy.
-        siqs_time = self.get_siqs_stats(digits, threads)[1]
-        nfs_time = self.get_nfs_stats(digits, threads)[1]
+        final_time = self.get_final_time(digits, threads, methods)
 
         for ecm_level in range(min(ECM_CURVES.keys()), maximum_ecm_level + 1):
             test_ecm_time = self.get_ecm_stats(digits, ecm_level, threads)[1]
 
-            if siqs_time is not None and test_ecm_time is not None and siqs_time * 1.25 < test_ecm_time:
-                maximum_ecm_level = ecm_level - 1
-                break
-
-            if nfs_time is not None and test_ecm_time is not None and nfs_time * 1.25 < test_ecm_time:
+            if final_time is not None and test_ecm_time is not None and final_time * 1.25 < test_ecm_time:
                 maximum_ecm_level = ecm_level - 1
                 break
 

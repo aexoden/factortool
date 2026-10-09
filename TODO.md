@@ -2,12 +2,8 @@
 
 ## Note on unpushed commits (as of 2026-10-07)
 
-Six commits are ahead of origin/main. Dependencies, from cherry-picking each
-onto origin/main and running the tests:
-
 * The other five form one chain, all touching the ECM cutoff code:
   * `bce4e63` (statistical cutoffs for small cofactors)
-  * `b153baf` (YAFU NFS) needs `bce4e63`.
   * `abd1cc2` (dynamic ECM cutoffs) needs `b153baf`. It's logically independent,
     but moving it earlier means resolving conflicts in `number.py` and
     `test_factor.py` by hand, then again when `b153baf` is reapplied.
@@ -32,7 +28,21 @@ implementation. There is no guarantee I will actually get to any of this.
   the lowest level.
 * Investigate whether the time to factor estimate needs to account for finding all
   factors rather than just the first.
+* Display digit counts even for short numbers (possibly except for trivially
+  short, but probably more than 5 or so starts to become too much to tell at a glance).
+* Potentially switch from the list_by_type endpoint to the download endpoint on
+  FactorDB. The --random parameter reduces the need for offset to minimize
+  overlap (though without knowing exactly how random works, it may not be as
+  good as hoped--it'd be better if it did a random sample of all numbers of the
+  requested digit size, but at least one spot made it seem like it just picks a
+  random starting offset). The other caveat is that it only returns from a single
+  digit level, so if we didnt' get enough work from one digit level, we'd need to
+  request from the next. Another caveat is how we'd design this differently for
+  a long-run/dashboard interface rather than a one-shot interface.
 * Fix the time limit to only occur if target time is enabled.
+* Altered submission strategy (especially for batchable services). Submit if
+  either a) X seconds have passed, b) the current batch is full, or c) everything's
+  done. Retain the submit spacing.
 * Investigate integrating the looping process directly into the tool.
 * Optional alternate buffer dashboard -- more useful once built-in looping (or
   equivalent) is added. Regardless of how this is done, need to retain the

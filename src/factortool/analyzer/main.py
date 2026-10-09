@@ -12,9 +12,9 @@ from pathlib import Path
 from loguru import logger
 from tap import Tap
 
-from factortool.config import read_config
-from factortool.constants import ECM_CURVES
-from factortool.stats import FactoringStats
+from factortool.config import Config, read_config
+from factortool.constants import ECM_CURVES, FINAL_METHOD_NAMES, NFS_CADO_MIN_DIGITS, NFS_YAFU_MIN_DIGITS
+from factortool.stats import FactoringStats, InvalidStatsError
 from factortool.util import setup_logger
 
 
@@ -23,6 +23,26 @@ class Arguments(Tap):
 
     config_path: Path = Path("config.json")  # Path to the JSON-formatted configuration file
     digits: int  # Digits to analyze
+
+
+def _ineligible_reason(method: str, config: Config) -> str:
+    """Describe why an ineligible final factoring method won't be used.
+
+    Returns:
+        str: A short description of the reason.
+    """
+    if method == "siqs":
+        return f"above max_siqs_digits of {config.max_siqs_digits}"
+
+    enabled, setting, min_digits = {
+        "nfs_cado": (config.use_nfs_cado, "use_nfs_cado", NFS_CADO_MIN_DIGITS),
+        "nfs_yafu": (config.use_nfs_yafu, "use_nfs_yafu", NFS_YAFU_MIN_DIGITS),
+    }[method]
+
+    if not enabled:
+        return f"{setting} is disabled"
+
+    return f"below minimum of {min_digits} digits"
 
 
 def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-many-locals, too-many-statements]
@@ -37,7 +57,11 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
         logger.error("Configuration file not found")
         sys.exit(1)
 
-    stats = FactoringStats(config.stats_path, read_only=True)
+    try:
+        stats = FactoringStats(config.stats_path, read_only=True)
+    except InvalidStatsError as e:
+        logger.error("{}", e)
+        sys.exit(1)
 
     min_ecm_level = min(ECM_CURVES.keys())
     max_ecm_level = max(ECM_CURVES.keys())
@@ -75,30 +99,44 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
 
     print()
 
-    siqs_count, siqs_time = stats.get_siqs_stats(args.digits, config.max_threads)
-    nfs_count, nfs_time = stats.get_nfs_stats(args.digits, config.max_threads)
+    final_methods = config.final_methods.for_digits(args.digits)
+    final_stats = {
+        method: stats.get_final_stats(method, args.digits, config.max_threads) for method in FINAL_METHOD_NAMES
+    }
     yafu_count, yafu_time = stats.get_yafu_stats(args.digits, config.max_threads)
 
-    if yafu_count == 0 and siqs_count == 0 and nfs_count == 0:
+    if yafu_count == 0 and all(count == 0 for count, _ in final_stats.values()):
         logger.error("No YAFU, SIQS or NFS data present for this digit count.")
         sys.exit(2)
 
     print(f"ECM Crossover Analysis for {args.digits} digits:")
     print()
 
-    if siqs_time is not None:
-        print(f"Average time for SIQS is {siqs_time:0.3f}s")
-        print()
+    selected_method = stats.get_final_method(args.digits, config.max_threads, final_methods)
 
-    if nfs_time is not None:
-        print(f"Average time for NFS is {nfs_time:0.3f}s")
-        print()
+    print("Final factoring methods:")
+    print(f"  {'Method':<8}  {'Runs':>8}  {'Avg time':>9}  Status")
+
+    for method, method_name in FINAL_METHOD_NAMES.items():
+        final_count, final_time = final_stats[method]
+        final_time_str = f"{final_time:8.3f}s" if final_time is not None else f"{'N/A':>9}"
+
+        if method == selected_method:
+            status = "selected" if final_time is not None else "selected (to collect data)"
+        elif method in final_methods:
+            status = "eligible"
+        else:
+            status = f"not used ({_ineligible_reason(method, config)})"
+
+        print(f"  {method_name:<8}  {final_count:8}  {final_time_str}  {status}")
+
+    print()
 
     if yafu_time is not None:
         print(f"Average time for YAFU (direct) is {yafu_time:0.3f}s")
         print()
 
-    optimal_ecm_level, current_ecm_level = stats.get_ecm_cutoffs(args.digits, config.max_threads)
+    optimal_ecm_level, current_ecm_level = stats.get_ecm_cutoffs(args.digits, config.max_threads, final_methods)
 
     print("Stopping ECM after doing the given level averages:")
     print(f"  {'Lvl':>3}  {'Runs':>8}  {'ECM time':>8}  {'P(fact)':>8}  {'From ECM':>8}  {'Overall':>8}")
@@ -112,10 +150,10 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
 
         assert ecm_p_factor is not None  # ruff:ignore[assert]
 
-        _, ecm_average_time = stats.get_ecm_average_time(args.digits, ecm_level, config.max_threads)
+        _, ecm_average_time = stats.get_ecm_average_time(args.digits, ecm_level, config.max_threads, final_methods)
         ecm_average_time_str = f"{ecm_average_time:7.3f}s" if ecm_average_time else f"{'N/A':8}"
 
-        _, average_time = stats.get_average_time(args.digits, ecm_level, config.max_threads)
+        _, average_time = stats.get_average_time(args.digits, ecm_level, config.max_threads, final_methods)
         average_time_str = f"{average_time:7.3f}s" if average_time else f"{'N/A':8}"
 
         markers = []

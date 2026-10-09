@@ -8,9 +8,9 @@ FactorDB and mersenne.ca.
 ## Features
 
 * Uses multiple factoring methods, including trial factoring, rho, P-1, ECM, SIQS
-  and NFS.
+  and NFS (via CADO-NFS or YAFU's built-in NFS).
 * Automatically measures duration and success rate to determine the optimal ECM
-  crossover threshold and decision between SIQS and NFS.
+  crossover threshold and the final choice of SIQS, YAFU NFS or CADO-NFS.
 * As an alternative to the built-in breadth-first factoring, can also simply
   directly use YAFU for each fetched number.
 * Automatically fetches composite numbers and submits results, either from FactorDB
@@ -20,7 +20,8 @@ FactorDB and mersenne.ca.
 
 `factortool` currently leverages both [YAFU](https://github.com/bbuhrow/yafu) and
 [CADO-NFS](https://gitlab.inria.fr/cado-nfs/cado-nfs) to do most of the factoring
-work. As such, you will need a correctly configured installation of both.
+work. As such, you will need a correctly configured installation of YAFU. For NFS
+support, you will need either YAFU's NFS configured, or CADO-NFS installed.
 
 The recommended way to install the program is to have [uv](https://docs.astral.sh/uv/)
 installed, and to simply run the program with `uv run factortool`.
@@ -78,6 +79,20 @@ If you are using direct YAFU support (by setting `factoring_mode` to `yafu` in
 config.json), I recommend ensuring YAFU's NFS functionality is correctly
 configured.
 
+## Final Factoring Methods
+
+In `standard` mode, once an appropriate amount of ECM is done, each remaining
+composite is finished with one of three methods:
+
+* SIQS, via YAFU, for composites of up to `max_siqs_digits` digits.
+* YAFU's built-in NFS, if `use_nfs_yafu` is `true`, for composites of at least
+  85 digits. Configure YAFU via the `yafu.ini` configuration file, and make sure
+  `nfs()` works in YAFU.
+* CADO-NFS, if `use_nfs_cado` is `true`, for composites of at least 57 digits.
+
+Among the eligible methods, `factortool` picks the one with the lowest average
+time for that digit count. A method without any data is run first to collect a sample.
+
 ## Backends
 
 The `backend` setting in config.json selects the source of composite numbers and
@@ -128,7 +143,7 @@ test. The `standard` mode is left in both for fun and as a historical curiosity.
 
 The program returns the following non-zero error codes:
 
-* 1: Configuration error
+* 1: Configuration error or invalid statistics data
 * 2: Interrupted (any interrupt level)
 * 3: Time limit exceeded
 * 4: Unexpected CADO-NFS failure

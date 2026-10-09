@@ -29,7 +29,7 @@ from factortool.engine import ExitStatus, FactorEngine
 from factortool.http import PermanentHttpError
 from factortool.interrupt import InterruptState
 from factortool.number import Number, format_results
-from factortool.stats import FactoringStats
+from factortool.stats import FactoringStats, InvalidStatsError
 from factortool.util import setup_logger
 
 if TYPE_CHECKING:
@@ -202,7 +202,7 @@ def preserve_unfinished(backend: Backend, assignments: AssignmentStore, numbers:
         assignments.save(x.n for x in untouched)
 
 
-def main() -> None:
+def main() -> None:  # ruff: ignore[too-many-statements]
     """Factor numbers using various methods."""
     setup_logger()
 
@@ -223,7 +223,12 @@ def main() -> None:
     interrupts = InterruptState()
     interrupts.install()
 
-    stats = FactoringStats(config.stats_path)
+    try:
+        stats = FactoringStats(config.stats_path)
+    except InvalidStatsError as e:
+        logger.error("{}", e)
+        sys.exit(1)
+
     backend = start_backend(config, stats, interrupts)
     engine = FactorEngine(config, args.target_duration, interrupts)
 

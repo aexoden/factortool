@@ -35,6 +35,8 @@ def make_config(**overrides: object) -> Config:
             "mersenne_ca_cooldown_period": 1.0,
             "result_output_path": "results",
             "stats_path": "stats.json",
+            "use_nfs_cado": True,
+            "use_nfs_yafu": True,
             "user_agent": "",
             "work_path": "work",
             "yafu_path": "yafu",

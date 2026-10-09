@@ -24,22 +24,23 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from factortool.assignments import assignment_expired
-from factortool.constants import CADO_NFS_MIN_DIGITS, ECM_CURVES
+from factortool.constants import ECM_CURVES, FINAL_METHOD_NAMES, NFS_CADO_MIN_DIGITS, NFS_YAFU_MIN_DIGITS
 from factortool.interrupt import Interrupted
 from factortool.util import SMALL_PRIMES, format_number, get_work_dir, is_prime, log_factor_result
 
 if TYPE_CHECKING:
     from factortool.backend import Backend
-    from factortool.config import Config, YafuPaths
+    from factortool.config import Config, FinalMethods, YafuPaths
     from factortool.stats import FactoringStats
 
 
-class NFSNeeded(Exception):  # ruff:ignore[error-suffix-on-exception-name]
-    """Exception indicating that NFS factoring is needed."""
+class FinalMethodNeeded(Exception):  # ruff: ignore[error-suffix-on-exception-name]
+    """Exception indicating that a final factoring method (SIQS or NFS) is needed for statistics."""
 
-
-class SIQSNeeded(Exception):  # ruff:ignore[error-suffix-on-exception-name]
-    """Exception indicating that SIQS factoring is needed."""
+    def __init__(self, method: str) -> None:
+        """Initialize the exception with the statistics key of the needed method."""
+        super().__init__(method)
+        self.method = method
 
 
 # External tools currently running in any thread.
@@ -127,7 +128,7 @@ def run_tool(
 
 @cache
 def factor_ecm(  # ruff:ignore[too-many-arguments, too-many-positional-arguments]
-    n: int, level: int, max_siqs_digits: int, max_threads: int, yafu: YafuPaths, stats: FactoringStats
+    n: int, level: int, final_methods: FinalMethods, max_threads: int, yafu: YafuPaths, stats: FactoringStats
 ) -> list[int]:
     """Factor a number using ECM via YAFU.
 
@@ -135,21 +136,16 @@ def factor_ecm(  # ruff:ignore[too-many-arguments, too-many-positional-arguments
         list[int]: List of factors found.
 
     Raises:
-        NFSNeeded: If NFS factoring is needed for statistics.
-        SIQSNeeded: If SIQS factoring is needed for statistics.
+        FinalMethodNeeded: If a final factoring method (SIQS or NFS) is needed for statistics.
     """
-    # If there is no NFS statistics data, signal doing an immediate NFS run.
+    # If any eligible final method has no statistics data, signal doing an immediate run of it.
     digits = len(str(n))
-    nfs_run_count, _ = stats.get_nfs_stats(digits, max_threads)
 
-    if digits >= CADO_NFS_MIN_DIGITS and nfs_run_count == 0:
-        raise NFSNeeded
+    for method in final_methods.for_digits(digits):
+        run_count, _ = stats.get_final_stats(method, digits, max_threads)
 
-    # If there is no SIQS statistics data, signal doing an immediate SIQS run.
-    siqs_run_count, _ = stats.get_siqs_stats(digits, max_threads)
-
-    if digits <= max_siqs_digits and siqs_run_count == 0:
-        raise SIQSNeeded
+        if run_count == 0:
+            raise FinalMethodNeeded(method)
 
     # Determine the number of curves and B1.
     curves, b1 = ECM_CURVES[level]
@@ -190,18 +186,31 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu: YafuPaths, stats: F
     Returns:
         list[int]: List of factors found.
     """
+    digits = len(str(n))
+
+    # Abort if the number of digits is too small for YAFU NFS.
+    if method == "nfs" and digits < NFS_YAFU_MIN_DIGITS:
+        return [n]
+
     cmd = [str(yafu.binary), f"{method}({n})", "-inmem", "200"]
     threads = 1
+
+    # OMP_NUM_THREADS is needed to prevent OpenMP from using all available cores when used by YAFU.
+    env = {**os.environ, "OMP_NUM_THREADS": "1"}
 
     if method not in {"pm1", "rho"}:
         cmd.extend(["-threads", str(max_threads)])
         threads = max_threads
 
+    if method == "nfs":
+        # YAFU silently runs SIQS instead of NFS below its QS/NFS crossover.
+        cmd.extend(["-xover", "1"])
+
     start_time = time.perf_counter_ns()
 
     try:
         with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
-            result = run_tool(cmd, work_dir, env={"OMP_NUM_THREADS": "1"})
+            result = run_tool(cmd, work_dir, env=env)
     except subprocess.CalledProcessError as e:
         logger.critical("YAFU failed for {} with method {}: {}", n, method, e.stderr)
         sys.exit(5)
@@ -218,14 +227,17 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu: YafuPaths, stats: F
     execution_time = (end_time - start_time) / 1_000_000_000.0
 
     if method == "siqs":
-        stats.update_siqs(len(str(n)), threads, execution_time)
+        stats.update_final("siqs", digits, threads, execution_time)
+    elif method == "nfs":
+        stats.update_final("nfs_yafu", digits, threads, execution_time)
     else:
-        stats.update_probability(len(str(n)), method, threads, execution_time, success=len(factors) > 1)
+        stats.update_probability(digits, method, threads, execution_time, success=len(factors) > 1)
 
     methods = {
         "rho": "Rho",
         "pm1": "P-1",
         "siqs": "SIQS",
+        "nfs": "YAFU NFS",
     }
 
     if len(factors) > 1:
@@ -273,7 +285,7 @@ def factor_yafu_direct(n: int, max_threads: int, yafu: YafuPaths, stats: Factori
 
 
 @cache
-def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, work_path: Path, stats: FactoringStats) -> list[int]:
+def factor_nfs_cado(n: int, max_threads: int, cado_nfs_path: Path, work_path: Path, stats: FactoringStats) -> list[int]:
     """Factor a number using CADO-NFS.
 
     Returns:
@@ -282,7 +294,7 @@ def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, work_path: Path, s
     # Abort if the number of digits is too small for CADO-NFS.
     digits = len(str(n))
 
-    if digits < CADO_NFS_MIN_DIGITS:
+    if digits < NFS_CADO_MIN_DIGITS:
         return [n]
 
     # Factor the number using CADO-NFS.
@@ -291,20 +303,20 @@ def factor_nfs(n: int, max_threads: int, cado_nfs_path: Path, work_path: Path, s
     start_time = time.perf_counter_ns()
 
     try:
-        with get_work_dir(work_path, None, "nfs-") as work_dir:
+        with get_work_dir(work_path, None, "nfs-cado-") as work_dir:
             result = run_tool(cmd, work_dir, stdin=str(n))
     except subprocess.CalledProcessError as e:
-        logger.critical("NFS failed for {}: {}", n, e.stderr)
+        logger.critical("CADO-NFS failed for {}: {}", n, e.stderr)
         sys.exit(4)
 
     end_time = time.perf_counter_ns()
     execution_time = (end_time - start_time) / 1_000_000_000.0
-    stats.update_nfs(digits, max_threads, execution_time)
+    stats.update_final("nfs_cado", digits, max_threads, execution_time)
 
     factors = list(map(int, result.stdout.strip().split()))
 
     if len(factors) > 1:
-        log_factor_result(["NFS"], n, sorted(factors))
+        log_factor_result(["CADO-NFS"], n, sorted(factors))
 
     return sorted(factors)
 
@@ -376,7 +388,6 @@ class Number:
         self.expires_at = None
 
         self._ecm_level = 0
-        self._prefer_siqs = True
 
         if is_prime(n):
             self.composite_factors = []
@@ -386,7 +397,6 @@ class Number:
             self.prime_factors = []
 
         self._set_maximum_ecm_level()
-        self._set_prefer_siqs()
         self.methods = []
 
     def __lt__(self, other: object) -> bool:
@@ -440,35 +450,20 @@ class Number:
         return self._ecm_level < self._maximum_ecm_level
 
     @property
-    def prefer_siqs(self) -> bool:
-        """Determine if SIQS is preferred over NFS."""
-        return self._prefer_siqs
+    def final_method(self) -> str:
+        """The statistics key of the final factoring method for the largest remaining composite."""
+        return self._choose_final_method(max(self.composite_factors, default=1))
 
     @property
     def factored(self) -> bool:
         """Determine if the number has been fully factored."""
         return len(self.composite_factors) == 0
 
-    def _set_prefer_siqs(self) -> None:
-        largest_composite_factor = max(self.composite_factors)
-        digits = len(str(largest_composite_factor))
+    def _choose_final_method(self, n: int) -> str:
+        digits = len(str(n))
+        methods = self._config.final_methods.for_digits(digits)
 
-        if digits > self._config.max_siqs_digits:
-            self._prefer_siqs = False
-            return
-
-        _, siqs_time = self._stats.get_siqs_stats(digits, self._config.max_threads)
-        _, nfs_time = self._stats.get_nfs_stats(digits, self._config.max_threads)
-
-        if siqs_time is None:
-            self._prefer_siqs = True
-            return
-
-        if nfs_time is None:
-            self._prefer_siqs = False
-            return
-
-        self._prefer_siqs = siqs_time < nfs_time
+        return self._stats.get_final_method(digits, self._config.max_threads, methods)
 
     def _set_maximum_ecm_level(self) -> None:
         # If factored, there is no need for any ECM.
@@ -484,11 +479,13 @@ class Number:
 
         # If the smallest composite factor is smaller than supported by CADO-NFS, just use the true maximum since we
         # can't do NFS anyway.
-        if smallest_composite_factor_digits < CADO_NFS_MIN_DIGITS:
+        if smallest_composite_factor_digits < NFS_CADO_MIN_DIGITS:
             self._maximum_ecm_level = max(ECM_CURVES.keys())
             return
 
-        _, self._maximum_ecm_level = self._stats.get_ecm_cutoffs(digits, self._config.max_threads)
+        methods = self._config.final_methods.for_digits(digits)
+
+        _, self._maximum_ecm_level = self._stats.get_ecm_cutoffs(digits, self._config.max_threads, methods)
 
     @property
     def _yafu_args(self) -> tuple[int, YafuPaths, FactoringStats]:
@@ -496,29 +493,40 @@ class Number:
         return (self._config.max_threads, self._config.yafu_paths, self._stats)
 
     @property
-    def _nfs_args(self) -> tuple[int, Path, Path, FactoringStats]:
+    def _nfs_cado_args(self) -> tuple[int, Path, Path, FactoringStats]:
         """Trailing arguments for the CADO-NFS factoring function."""
         return (self._config.max_threads, self._config.cado_nfs_path, self._config.work_path, self._stats)
+
+    def _factor_final(self, n: int, method: str) -> list[int]:
+        """Factor a composite using the final method with the given statistics key.
+
+        Returns:
+            list[int]: List of factors found.
+        """
+        if method == "siqs":
+            return factor_yafu(n, "siqs", *self._yafu_args)
+
+        if method == "nfs_yafu":
+            return factor_yafu(n, "nfs", *self._yafu_args)
+
+        return factor_nfs_cado(n, *self._nfs_cado_args)
 
     def _factor_generic(
         self,
         method: str,
         factor_func: Callable[..., list[int]],
-        *args: int | str | Path | YafuPaths | FactoringStats,
+        *args: int | str | Path | YafuPaths | FinalMethods | FactoringStats,
+        composites: Iterable[int] | None = None,
     ) -> bool:
         found_factors = False
 
-        for n in self.composite_factors.copy():
+        for n in list(self.composite_factors if composites is None else composites):
             try:
                 factors = factor_func(n, *args)
-            except SIQSNeeded:
-                logger.info("Immediately doing SIQS on {} for statistics", format_number(n))
-                method = "SIQS"
-                factors = factor_yafu(n, "siqs", *self._yafu_args)
-            except NFSNeeded:
-                logger.info("Immediately doing NFS on {} for statistics", format_number(n))
-                method = "NFS"
-                factors = factor_nfs(n, *self._nfs_args)
+            except FinalMethodNeeded as e:
+                method = FINAL_METHOD_NAMES[e.method]
+                logger.info("Immediately doing {} on {} for statistics", method, format_number(n))
+                factors = self._factor_final(n, e.method)
 
             if len(factors) > 1:
                 self.methods.append(method)
@@ -562,20 +570,18 @@ class Number:
 
     def factor_ecm(self, level: int) -> None:
         """Factor using ECM at the specified level."""
-        found_factors = self._factor_generic("ECM", factor_ecm, level, self._config.max_siqs_digits, *self._yafu_args)
+        found_factors = self._factor_generic("ECM", factor_ecm, level, self._config.final_methods, *self._yafu_args)
 
         self._ecm_level = level
 
         if found_factors:
             self._set_maximum_ecm_level()
 
-    def factor_siqs(self) -> None:
-        """Factor using the Self-Initializing Quadratic Sieve (SIQS) algorithm."""
-        self._factor_generic("SIQS", factor_yafu, "siqs", *self._yafu_args)
-
-    def factor_nfs(self) -> None:
-        """Factor using the Number Field Sieve (NFS) algorithm."""
-        self._factor_generic("NFS", factor_nfs, *self._nfs_args)
+    def factor_final(self) -> None:
+        """Factor each remaining composite using its own fastest final method."""
+        for n in self.composite_factors.copy():
+            method = self._choose_final_method(n)
+            self._factor_generic(FINAL_METHOD_NAMES[method], self._factor_final, method, composites=[n])
 
 
 def format_factorization(number: Number, separator: str) -> str:
