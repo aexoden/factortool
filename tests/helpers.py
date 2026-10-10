@@ -4,12 +4,18 @@
 
 from __future__ import annotations
 
+import contextlib
 import sys
 import time
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 from factortool.config import Config
+from factortool.interrupt import InterruptState
 from factortool.number import Number
 from factortool.stats import FactoringStats
 
@@ -32,6 +38,22 @@ def make_number(n: int) -> Number:
         Number: The constructed Number instance.
     """
     return Number(n, make_config(), FactoringStats(Path("stats.json"), read_only=True), None)
+
+
+@contextlib.contextmanager
+def installed_interrupts() -> Generator[InterruptState]:
+    """Provide an interrupt state that is responding to signals, for the duration of the block.
+
+    Yields:
+        InterruptState: The installed interrupt state.
+    """
+    interrupts = InterruptState()
+    interrupts.install()
+
+    try:
+        yield interrupts
+    finally:
+        interrupts.uninstall()
 
 
 # Generous upper bound on how long a killed tool's helper may take to stop.

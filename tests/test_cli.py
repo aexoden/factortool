@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import json
+import signal
 import sys
+import time
 
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -27,7 +29,8 @@ from factortool.cli.main import (
     validate_arguments,
     warn_if_assignments_may_expire,
 )
-from factortool.engine import ExitStatus
+from factortool.engine import ExitStatus, FactorEngine
+from factortool.interrupt import EXIT_STATUS, InterruptState
 from factortool.number import CadoNfsError, Number, ToolError, YafuError
 from factortool.stats import FactoringStats
 
@@ -181,6 +184,41 @@ def test_a_tool_failure_exits_with_the_tool_status_after_cleaning_up(
     assert raised.value.code == exit_status
     assert (tmp_path / "stats.json").exists()
     assert len(list((tmp_path / "results").iterdir())) == 1
+
+
+def test_a_termination_signal_still_saves_state_before_exiting_as_interrupted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that a run ended by SIGTERM saves its state and results, and exits with the interrupted status."""
+    config = {"backend": "factordb", "cado_nfs_path": "cado-nfs.py", "max_threads": 1, "yafu_path": "yafu"}
+    (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    backend = FakeBackend(assigns_work=False)
+    backend.close = Mock()  # type: ignore[method-assign]
+    interrupts = InterruptState()
+
+    def run(_self: FactorEngine, _numbers: Collection[Number], _time_limit: float | None) -> ExitStatus:
+        signal.raise_signal(signal.SIGTERM)
+        time.sleep(0.5)
+
+        return ExitStatus.SUCCESS
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["factortool", "--batch_size", "3"])
+    monkeypatch.setattr("factortool.cli.main.setup_logger", Mock(), raising=True)
+    monkeypatch.setattr("factortool.cli.main.create_backend", Mock(return_value=backend))
+    monkeypatch.setattr("factortool.cli.main.FactorEngine.run", run, raising=True)
+    monkeypatch.setattr("factortool.cli.main.InterruptState", lambda: interrupts, raising=True)
+
+    try:
+        with pytest.raises(SystemExit) as raised:
+            main()
+    finally:
+        interrupts.uninstall()
+
+    assert raised.value.code == EXIT_STATUS
+    assert (tmp_path / "stats.json").exists()
+    assert len(list((tmp_path / "results").iterdir())) == 1
+    backend.close.assert_called_once()
 
 
 def test_an_automatic_batch_is_limited_to_twice_its_target_duration() -> None:

@@ -107,7 +107,7 @@ class FactorEngine:
         left to finish, and the failure is then raised here as if it had happened in the calling thread.
 
         Raises:
-            Interrupted: If the third interrupt arrives, once the work in progress has been abandoned.
+            Interrupted: If a worker's tool is killed because the work is being abandoned.
         """
         failed = threading.Event()
 
@@ -127,20 +127,15 @@ class FactorEngine:
                 raise
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self._config.max_threads) as executor:
-            try:
-                done, _ = concurrent.futures.wait(
-                    [executor.submit(run, number) for number in numbers if not number.factored],
-                    return_when=concurrent.futures.FIRST_EXCEPTION,
-                )
-                error = next((e for future in done if (e := future.exception()) is not None), None)
+            done, _ = concurrent.futures.wait(
+                [executor.submit(run, number) for number in numbers if not number.factored],
+                return_when=concurrent.futures.FIRST_EXCEPTION,
+            )
+            error = next((e for future in done if (e := future.exception()) is not None), None)
 
-                if error is not None:
-                    executor.shutdown(cancel_futures=True)
-                    raise error
-            except Interrupted:
-                abandon_tools()
+            if error is not None:
                 executor.shutdown(cancel_futures=True)
-                raise
+                raise error
 
     #
     # Public Methods
@@ -159,7 +154,7 @@ class FactorEngine:
         self._start_time = time.monotonic()
 
         try:
-            with self._interrupts.abortable():
+            with self._interrupts.abortable(abandon_tools):
                 if self._config.factoring_mode == "yafu":
                     return self._run_yafu(numbers)
 

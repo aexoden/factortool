@@ -7,11 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- Only SIGINT is handled. SIGTERM and SIGHUP end the program without any
-  cleanup: statistics and assignments aren't saved, queued submissions are lost,
-  and the external tools keep running as they're in their own process groups.
-  Both should behave like the third interrupt: kill the running tools, then
-  save state and flush submissions before exiting.
 - The cleanup at the end of `main` is a chain where one failure skips the rest.
   If recording the batch or writing the results fails, statistics aren't saved
   and the backend is never closed, which drops any pending submissions.
@@ -30,10 +25,6 @@ later ones.
 - Validate more input up front: `max_threads` must be at least one,
   `--min_digits` must be at least one (currently an unhandled `ValueError`),
   `--target_duration` must be positive, and `yafu_path` must exist.
-- An interrupt that arrives while a log message is being written loses its own
-  message, as loguru isn't reentrant and the signal handler logs. The interrupt
-  is still counted. Record the level in the handler and log it from the main
-  flow instead.
 - The analyzer currently stops showing ECM data as soon as it encounters a level
   with no data. While comparatively rare, it's possible for there to be gaps as
   numbers can start at arbitrary points if they were added as cofactors. The
@@ -96,6 +87,8 @@ later ones.
 
 - Move all state files into a directory with standardized names, changing the
   configuration to instead specify the directory.
+- Determine how multithreaded YAFU's implementation of SIQS is (may vary by
+  digit count), and consider threading it ourselves like with rho and P-1.
 - Why is `max_siqs_digits` even an option? Is there a historical reason for it?
   At the same time, investigate if there are any other superfluous options.
 - Consider whether the mersenne.ca one-hour assignment window should influence
@@ -106,7 +99,7 @@ later ones.
   The obvious alternatives are click and typer, both of which are far more active
   projects than Tap, but this list isn't exhaustive. If opting to keep Tap, at
   least standardize on using hyphens rather than underscores in option names.
-- Investigate switching from the FactorDB list_by_type endpoing to the download
+- Investigate switching from the FactorDB list_by_type endpoint to the download
   endpoint. The offset option would no longer be supported, but that was largely
   intended to minimize the risk of overlapping work, and the `random` option
   provides much of that benefit. (Though it's not quite as good, as download is
@@ -149,7 +142,11 @@ later ones.
   any sort of consistent distribution, but somehow I doubt this to be consistent.
   If going with theoretical numbers, I have no idea how to calculate the odds of
   the various stages finding factors (e.g. P-1's probability assuming TF and rho
-  have been done).
+  have been done). Also may need to consider how multithreading affects any of
+  these numbers. (You don't want to compare a rho run at 1 thread with a SIQS run
+  at 16 threads without taking into account that 16 rho runs can take place at the
+  same time--obviously this only applies if you have enough numbers to saturate
+  the threads).
 - Refactor to eliminate as many linting exceptions as possible.
 - Dynamic batch sizes can be slow to ramp up. This may not be as bad as it was
   in the past, but it's still worth looking at once more. One cause: after a
