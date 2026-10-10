@@ -6,12 +6,11 @@ from __future__ import annotations
 
 import sys
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, NamedTuple
 
 from loguru import logger
-from pydantic import BaseModel, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from factortool.constants import FINAL_METHOD_NAMES, NFS_CADO_MIN_DIGITS, NFS_YAFU_MIN_DIGITS
 
@@ -51,9 +50,10 @@ class FinalMethods(NamedTuple):
 ASCII_RANGE = range(0x20, 0x7F)
 
 
-@dataclass
 class Config(BaseModel):
     """Configuration for factorization tool."""
+
+    model_config = ConfigDict(frozen=True)
 
     # Required settings
     backend: Literal["factordb", "mersenne_ca"]
