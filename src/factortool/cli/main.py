@@ -35,6 +35,9 @@ from factortool.util import setup_logger
 if TYPE_CHECKING:
     from factortool.config import Config
 
+# How far past the target duration an automatically sized batch may run before the run is cut short.
+TIME_LIMIT_FACTOR = 2.0
+
 
 class Arguments(Tap):
     """Utility for factoring numbers using various methods."""
@@ -43,7 +46,7 @@ class Arguments(Tap):
     config_path: Path = Path("config.json")  # Path to the JSON-formatted configuration file
     min_digits: int = 1  # Minimum number of digits fetched composite numbers should have
     max_digits: int = 0  # Maximum number of digits fetched composite numbers should have (required by mersenne.ca)
-    batch_size: int = 0  # Number of composite numbers to work on at a time (0 for automatic)
+    batch_size: int = 0  # Number of composite numbers to work on at a time (0 for automatic, with a time limit)
     target_duration: float = 600.0  # Target duration in seconds for each batch (only used when batch_size is 0)
     skip_count: int = 0  # Skip this many numbers when fetching from FactorDB (to hopefully avoid conflict)
     no_new_work: bool = False  # Do not fetch new work from the backend. Only supported by mersenne.ca.
@@ -182,10 +185,25 @@ def fetch_numbers(backend: Backend, criteria: FetchCriteria) -> set[Number]:
         sys.exit(6)
 
 
-def warn_if_assignments_may_expire(backend: Backend, target_duration: float) -> None:
+def get_time_limit(args: Arguments) -> float | None:
+    """Determine how long the factoring may run before the run is cut short.
+
+    Returns:
+        float | None: The time limit in seconds, or None if there is no time limit.
+    """
+    if args.batch_size > 0:
+        return None
+
+    return TIME_LIMIT_FACTOR * args.target_duration
+
+
+def warn_if_assignments_may_expire(backend: Backend, time_limit: float | None) -> None:
     """Warn if a run may outlast the assignments it fetches."""
-    if backend.assigns_work and 2.0 * target_duration + ASSIGNMENT_EXPIRY_FUDGE_FACTOR > backend.assignment_lifetime:
-        logger.warning("With a target duration of {:.0f}s, assignments may expire before completion", target_duration)
+    if time_limit is None or not backend.assigns_work:
+        return
+
+    if time_limit + ASSIGNMENT_EXPIRY_FUDGE_FACTOR > backend.assignment_lifetime:
+        logger.warning("With a time limit of {:.0f}s, assignments may expire before completion", time_limit)
 
 
 def preserve_unfinished(backend: Backend, assignments: AssignmentStore, numbers: Collection[Number]) -> None:
@@ -230,7 +248,7 @@ def main() -> None:  # ruff: ignore[too-many-statements]
         sys.exit(1)
 
     backend = start_backend(config, stats, interrupts)
-    engine = FactorEngine(config, args.target_duration, interrupts)
+    time_limit = get_time_limit(args)
 
     logger.info("Using backend: {}", config.backend)
     logger.info("Using factoring mode: {}", config.factoring_mode)
@@ -246,7 +264,7 @@ def main() -> None:  # ruff: ignore[too-many-statements]
     if args.no_new_work:
         logger.info("As requested, not fetching new work")
 
-    warn_if_assignments_may_expire(backend, args.target_duration)
+    warn_if_assignments_may_expire(backend, time_limit)
 
     assignments = AssignmentStore(config.assignment_state_path, config.backend, backend.assignment_lifetime)
     numbers = acquire_numbers(
@@ -268,7 +286,7 @@ def main() -> None:  # ruff: ignore[too-many-statements]
     # Each number retains its own state, so we can safely process them independently, regardless of what happens in the
     # engine.
     try:
-        status = engine.run(sorted(numbers))
+        status = FactorEngine(config, interrupts).run(sorted(numbers), time_limit)
     except ToolError as e:
         logger.critical("{}", e)
         sys.exit(e.exit_status)

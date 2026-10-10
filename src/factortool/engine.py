@@ -35,12 +35,12 @@ class ExitStatus(Enum):
 class FactorEngine:
     """Engine for managing factorization tasks."""
 
-    def __init__(
-        self, config: Config, target_duration: float = 600.0, interrupts: InterruptState | None = None
-    ) -> None:
+    def __init__(self, config: Config, interrupts: InterruptState | None = None) -> None:
         """Initialize the factorization engine."""
         self._config = config
-        self._target_duration = target_duration
+
+        # Both are set at the start of each run.
+        self._time_limit: float | None = None
         self._start_time = time.monotonic()
 
         if interrupts is None:
@@ -69,19 +69,36 @@ class FactorEngine:
         return True
 
     def _is_time_limit_exceeded(self) -> bool:
-        """Check if the current runtime exceeds twice the target duration.
+        """Check if the current run has exceeded its time limit.
 
         Returns:
-            bool: True if runtime exceeds 2 * target_duration, False otherwise.
+            bool: True if the run has a time limit and has exceeded it, False otherwise.
         """
-        elapsed = time.monotonic() - self._start_time
-        if elapsed > 2.0 * self._target_duration:
-            logger.warning(
-                "Time limit exceeded: runtime ({:.1f}s) exceeds ({:.1f}s)", elapsed, 2.0 * self._target_duration
-            )
-            return True
+        return self._time_limit is not None and time.monotonic() - self._start_time > self._time_limit
 
-        return False
+    def _stop_status(self, stage: str | None = None) -> ExitStatus | None:
+        """Check if the run should end early, either due to an interrupt or the time limit.
+
+        If a stage is named, an interrupt is logged as leaving that stage's remaining factorizations unfinished.
+
+        Returns:
+            ExitStatus | None: The status to end the run with, or None if it should continue.
+        """
+        if self._interrupts.stop_factoring:
+            if stage is not None:
+                logger.info("Not finishing remaining {} factorizations due to interrupt", stage)
+
+            return ExitStatus.INTERRUPTED
+
+        if self._is_time_limit_exceeded():
+            logger.warning(
+                "Time limit exceeded: runtime ({:.1f}s) exceeds ({:.1f}s)",
+                time.monotonic() - self._start_time,
+                self._time_limit,
+            )
+            return ExitStatus.TIME_LIMIT_EXCEEDED
+
+        return None
 
     def _factor_concurrently(self, numbers: Collection[Number], factor: Callable[[Number], None]) -> None:
         """Apply a factoring method to each unfactored number using a pool of worker threads.
@@ -95,7 +112,12 @@ class FactorEngine:
         failed = threading.Event()
 
         def run(number: Number) -> None:
-            if failed.is_set() or self._interrupts.stop_factoring or self._skip_expired(number):
+            if (
+                failed.is_set()
+                or self._interrupts.stop_factoring
+                or self._is_time_limit_exceeded()
+                or self._skip_expired(number)
+            ):
                 return
 
             try:
@@ -124,7 +146,7 @@ class FactorEngine:
     # Public Methods
     #
 
-    def run(self, numbers: Collection[Number]) -> ExitStatus:
+    def run(self, numbers: Collection[Number], time_limit: float | None = None) -> ExitStatus:
         """Run factorization using the configured mode.
 
         Returns:
@@ -133,6 +155,9 @@ class FactorEngine:
         Raises:
             ToolError: If an external tool cannot be started or exits with an error.
         """
+        self._time_limit = time_limit
+        self._start_time = time.monotonic()
+
         try:
             with self._interrupts.abortable():
                 if self._config.factoring_mode == "yafu":
@@ -153,11 +178,8 @@ class FactorEngine:
 
         for number in sorted(numbers):
             # Check before each factorization, so a factorization isn't started if an interrupt has been received.
-            if self._interrupts.stop_factoring:
-                return ExitStatus.INTERRUPTED
-
-            if self._is_time_limit_exceeded():
-                return ExitStatus.TIME_LIMIT_EXCEEDED
+            if (status := self._stop_status()) is not None:
+                return status
 
             if self._skip_expired(number):
                 continue
@@ -166,15 +188,12 @@ class FactorEngine:
             number.factor_yafu_direct()
 
         # Check once more for an interrupt that may have occurred during the final factorization.
-        if self._interrupts.stop_factoring:
-            return ExitStatus.INTERRUPTED
-
-        if self._is_time_limit_exceeded():
-            return ExitStatus.TIME_LIMIT_EXCEEDED
+        if (status := self._stop_status()) is not None:
+            return status
 
         return ExitStatus.SUCCESS
 
-    def _run_standard(self, numbers: Collection[Number]) -> ExitStatus:  # ruff: ignore[complex-structure, too-many-branches, too-many-return-statements]
+    def _run_standard(self, numbers: Collection[Number]) -> ExitStatus:  # ruff: ignore[complex-structure, too-many-branches]
         """Factor numbers using the built-in sequence of methods.
 
         Returns:
@@ -189,33 +208,24 @@ class FactorEngine:
 
             number.factor_tf()
 
-            if self._interrupts.stop_factoring:
-                return ExitStatus.INTERRUPTED
-
-            if self._is_time_limit_exceeded():
-                return ExitStatus.TIME_LIMIT_EXCEEDED
+            if (status := self._stop_status()) is not None:
+                return status
 
         # Attempt to find factors via the Rho method.
         logger.info("Attempting rho factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
         self._factor_concurrently(numbers, Number.factor_rho)
 
-        if self._interrupts.stop_factoring:
-            return ExitStatus.INTERRUPTED
-
-        if self._is_time_limit_exceeded():
-            return ExitStatus.TIME_LIMIT_EXCEEDED
+        if (status := self._stop_status()) is not None:
+            return status
 
         # Attempt to find factors via P-1.
         logger.info("Attempting P-1 factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
         self._factor_concurrently(numbers, Number.factor_pm1)
 
-        if self._interrupts.stop_factoring:
-            return ExitStatus.INTERRUPTED
-
-        if self._is_time_limit_exceeded():
-            return ExitStatus.TIME_LIMIT_EXCEEDED
+        if (status := self._stop_status()) is not None:
+            return status
 
         # Attempt to factor each number via ECM.
         minimum_ecm_level = min(ECM_CURVES.keys())
@@ -249,12 +259,8 @@ class FactorEngine:
 
                 number.factor_ecm(ecm_level)
 
-                if self._interrupts.stop_factoring:
-                    logger.info("Not finishing remaining ECM factorizations due to interrupt")
-                    return ExitStatus.INTERRUPTED
-
-                if self._is_time_limit_exceeded():
-                    return ExitStatus.TIME_LIMIT_EXCEEDED
+                if (status := self._stop_status("ECM")) is not None:
+                    return status
 
         # Finish the remaining numbers with their preferred final method, grouped by method. We generate the groups
         # first, as the runs could conceivably change the statistics enough for a number's preferred final method to
@@ -287,11 +293,7 @@ class FactorEngine:
 
                 number.factor_final()
 
-                if self._interrupts.stop_factoring:
-                    logger.info("Not finishing remaining final factorizations due to interrupt")
-                    return ExitStatus.INTERRUPTED
-
-                if self._is_time_limit_exceeded():
-                    return ExitStatus.TIME_LIMIT_EXCEEDED
+                if (status := self._stop_status("final")) is not None:
+                    return status
 
         return ExitStatus.SUCCESS

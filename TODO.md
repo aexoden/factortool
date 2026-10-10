@@ -7,10 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- The time limit clock starts when the engine is created, which is before the
-  fetch. A fetch that has to wait for work can use up the entire limit, and the
-  run then exits after the first number.
-- Ensure the time limit only takes effect if target time is enabled.
 - One level of ECM is always done, even when the cutoff says none is worthwhile.
   `ecm_needed` compares the level already done (zero) to the target, so a
   target of one still runs level two, and `get_ecm_cutoffs` never considers
