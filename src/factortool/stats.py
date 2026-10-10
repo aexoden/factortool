@@ -366,15 +366,38 @@ class FactoringStats:
 
             return (0, None, None)
 
+    def get_ecm_levels(self, digits: int, threads: int) -> list[int]:
+        """Get the ECM levels with data for the given digit count, which need not be consecutive.
+
+        A number that is a cofactor of a larger one starts ECM at whichever level found it, so there may be no data for
+        the levels before that.
+
+        Returns:
+            list[int]: The levels with at least one run, in ascending order.
+        """
+        with self._lock:
+            if digits not in self._data.ecm:
+                return []
+
+            return sorted(
+                level
+                for level, level_data in self._data.ecm[digits].level_data.items()
+                if threads in level_data.thread_data and level_data.thread_data[threads].run_count > 0
+            )
+
     def get_average_time(
         self, digits: int, maximum_ecm_level: int, threads: int, methods: Sequence[str]
     ) -> tuple[int, float | None]:
-        """Estimate the average time to factor a number with the given digit count.
+        """Estimate the average time to factor a number with the given digit count, starting from trial factoring.
 
         Returns:
             A tuple containing the estimated number of ECM runs and the average time to factor the number,
             or None if insufficient data is available.
         """
+        # A number starting from trial factoring does every ECM level from the first, so the estimate needs them all.
+        if maximum_ecm_level >= ECM_MIN_LEVEL and self.get_ecm_levels(digits, threads)[:1] != [ECM_MIN_LEVEL]:
+            return (0, None)
+
         tf_count, tf_time, tf_p_factor = self.get_probability_stats(digits, "tf", 1)
 
         if tf_count == 0:
@@ -416,19 +439,23 @@ class FactoringStats:
     ) -> tuple[int, float | None]:
         """Estimate the average time to factor a number with the given digit count, starting from ECM.
 
+        The estimate starts from the first ECM level with data, as if the levels before it were already done.
+
         Returns:
             tuple[int, float | None]: A tuple containing the estimated number of ECM runs and the average time to factor
-                the number.
+                the number, or None if insufficient data is available.
         """
         final_time = self.get_final_time(digits, threads, methods)
 
         if final_time is None:
             return (0, None)
 
-        if maximum_ecm_level < ECM_MIN_LEVEL:
+        first_ecm_level = next(iter(self.get_ecm_levels(digits, threads)), ECM_MIN_LEVEL)
+
+        if maximum_ecm_level < first_ecm_level:
             return (0, final_time)
 
-        return self._get_average_time_internal(digits, threads, final_time, ECM_MIN_LEVEL, maximum_ecm_level)
+        return self._get_average_time_internal(digits, threads, final_time, first_ecm_level, maximum_ecm_level)
 
     def get_ecm_cutoffs(self, digits: int, threads: int, methods: Sequence[str]) -> ECMCutoffs:
         """Determine the ECM levels at which to stop doing ECM factoring.
@@ -436,9 +463,6 @@ class FactoringStats:
         Returns:
             ECMCutoffs: The optimal ECM level and the target ECM level to stop at.
         """
-        # Stopping at the level before the first is the same as doing no ECM at all.
-        no_ecm_level = ECM_MIN_LEVEL - 1
-
         # Establish a semi-arbitrary limit on our maximum ECM level. The smallest factors should never have more than
         # about half the digits of the number, so do a few levels beyond that (as ECM may miss factors).
         maximum_ecm_level = digits // 2 + 10
@@ -451,16 +475,22 @@ class FactoringStats:
         if final_time is None:
             return initial_cutoffs
 
-        # Collect data on the statistics based on stopping ECM at a given level, starting from doing no ECM at all,
-        # which leaves only the final method. Once we've reached the first level with no data, simply abort. Along the
-        # way, we'll note which ECM level was fastest on average.
+        # Start from the first level with data. The levels before it cost the same whichever later level ECM stops at,
+        # so they don't affect which of those is fastest. Stopping at the level before it is doing no further ECM or
+        # none at all if it is the first level.
+        first_ecm_level = next(iter(self.get_ecm_levels(digits, threads)), ECM_MIN_LEVEL)
+        no_ecm_level = first_ecm_level - 1
+
+        # Collect data on the statistics based on stopping ECM at a given level, starting from no further ECM, which
+        # leaves only the final method. Once we've reached the next level with no data, simply abort. Along the way,
+        # we'll note which ECM level was fastest on average.
         ecm_counts: dict[int, int] = {}
         best_maximum_ecm_level = no_ecm_level
         best_maximum_ecm_level_time = final_time
 
-        for ecm_level in range(ECM_MIN_LEVEL, maximum_ecm_level + 1):
+        for ecm_level in range(first_ecm_level, maximum_ecm_level + 1):
             ecm_count, average_time = self._get_average_time_internal(
-                digits, threads, final_time, ECM_MIN_LEVEL, ecm_level
+                digits, threads, final_time, first_ecm_level, ecm_level
             )
 
             if ecm_count == 0:
@@ -495,7 +525,8 @@ class FactoringStats:
         # from the minimum up to the test level because in certain situations, the numbers won't be monotonically
         # decreasing.
         test_ecm_level = best_maximum_ecm_level + 1
-        lowest_ecm_count = min(ecm_counts.get(ecm_level, 0) for ecm_level in range(ECM_MIN_LEVEL, test_ecm_level + 1))
+        test_ecm_levels = range(first_ecm_level, test_ecm_level + 1)
+        lowest_ecm_count = min(ecm_counts.get(ecm_level, 0) for ecm_level in test_ecm_levels)
         lowest_ecm_count = max(lowest_ecm_count, 1)
 
         extra_ecm_levels = max(0, math.ceil(-math.log2(lowest_ecm_count) + 10))

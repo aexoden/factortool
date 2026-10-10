@@ -8,18 +8,21 @@ from __future__ import annotations
 import sys
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 from loguru import logger
 
 from factortool.config import Config, read_config
 from factortool.constants import (
-    ECM_MAX_LEVEL,
     ECM_MIN_LEVEL,
     FINAL_METHOD_NAMES,
     NFS_CADO_MIN_DIGITS,
     NFS_YAFU_MIN_DIGITS,
 )
-from factortool.stats import FactoringStats, InvalidStatsError
+from factortool.stats import ECMCutoffs, FactoringStats, InvalidStatsError
 from factortool.util import ArgumentParser, setup_logger
 
 
@@ -48,6 +51,68 @@ def _ineligible_reason(method: str, config: Config) -> str:
         return f"{setting} is disabled"
 
     return f"below minimum of {min_digits} digits"
+
+
+def _format_time(seconds: float | None) -> str:
+    """Format a time for a table column, or as unavailable if there is none.
+
+    Returns:
+        str: The formatted time.
+    """
+    return f"{seconds:7.3f}s" if seconds is not None else f"{'N/A':>8}"
+
+
+def _print_ecm_table(
+    stats: FactoringStats, digits: int, threads: int, final_methods: Sequence[str], cutoffs: ECMCutoffs
+) -> None:
+    """Print the estimated average times from stopping ECM after each level with data."""
+    levels = stats.get_ecm_levels(digits, threads)
+
+    # A level of zero is doing no ECM at all. The cutoffs are shown even without data, as they may be beyond it.
+    shown_levels = {0, *levels, cutoffs.target}
+
+    if cutoffs.optimal is not None:
+        shown_levels.add(cutoffs.optimal)
+
+    print("Stopping ECM after doing the given level averages:")
+    print(f"  {'Lvl':>4}  {'Runs':>8}  {'ECM time':>8}  {'P(fact)':>8}  {'From ECM':>8}  {'Overall':>8}")
+
+    previous_level = 0
+
+    for ecm_level in sorted(shown_levels):
+        # There can be gaps, as cofactors start ECM at whichever level found them.
+        if ecm_level > max(previous_level + 1, ECM_MIN_LEVEL):
+            print(f"  {'...':>4}")
+
+        previous_level = ecm_level
+
+        ecm_count, ecm_time, ecm_p_factor = stats.get_ecm_stats(digits, ecm_level, threads)
+        _, ecm_average_time = stats.get_ecm_average_time(digits, ecm_level, threads, final_methods)
+        _, average_time = stats.get_average_time(digits, ecm_level, threads, final_methods)
+
+        markers = []
+
+        if ecm_level == cutoffs.optimal:
+            markers.append("optimal")
+
+        if ecm_level == cutoffs.target:
+            markers.append("current")
+
+        marker_str = f"  <- {', '.join(markers)}" if markers else ""
+
+        if ecm_level == 0:
+            ecm_str = f"{'none':>4}  {'-':>8}  {'-':>8}  {'-':>8}"
+        elif ecm_p_factor is None:
+            ecm_str = f"{ecm_level:4}  {ecm_count:8}  {'-':>8}  {'-':>8}"
+        else:
+            ecm_str = f"{ecm_level:4}  {ecm_count:8}  {_format_time(ecm_time)}  {ecm_p_factor * 100:7.3f}%"
+
+        print(f"  {ecm_str}  {_format_time(ecm_average_time)}  {_format_time(average_time)}{marker_str}")
+
+    if levels and levels[0] > ECM_MIN_LEVEL:
+        print()
+        print(f"There is no ECM data below level {levels[0]}. The From ECM times assume the levels before it are done.")
+        print("The Overall times can't be estimated without data for those levels.")
 
 
 def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-many-locals, too-many-statements]
@@ -142,42 +207,10 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
         print(f"Average time for YAFU (direct) is {yafu_time:0.3f}s")
         print()
 
-    optimal_ecm_level, current_ecm_level = stats.get_ecm_cutoffs(args.digits, config.max_threads, final_methods)
+    cutoffs = stats.get_ecm_cutoffs(args.digits, config.max_threads, final_methods)
+    optimal_ecm_level, current_ecm_level = cutoffs
 
-    print("Stopping ECM after doing the given level averages:")
-    print(f"  {'Lvl':>4}  {'Runs':>8}  {'ECM time':>8}  {'P(fact)':>8}  {'From ECM':>8}  {'Overall':>8}")
-
-    # A level of zero is doing no ECM at all.
-    for ecm_level in (0, *range(ECM_MIN_LEVEL, ECM_MAX_LEVEL + 1)):
-        ecm_count, ecm_time, ecm_p_factor = stats.get_ecm_stats(args.digits, ecm_level, config.max_threads)
-
-        # If there is no ECM data for this level, we've reached the end of the table.
-        if ecm_level > 0 and ecm_count == 0:
-            break
-
-        _, ecm_average_time = stats.get_ecm_average_time(args.digits, ecm_level, config.max_threads, final_methods)
-        ecm_average_time_str = f"{ecm_average_time:7.3f}s" if ecm_average_time else f"{'N/A':8}"
-
-        _, average_time = stats.get_average_time(args.digits, ecm_level, config.max_threads, final_methods)
-        average_time_str = f"{average_time:7.3f}s" if average_time else f"{'N/A':8}"
-
-        markers = []
-
-        if ecm_level == optimal_ecm_level:
-            markers.append("optimal")
-
-        if ecm_level == current_ecm_level:
-            markers.append("current")
-
-        marker_str = f"  <- {', '.join(markers)}" if markers else ""
-
-        if ecm_level == 0:
-            ecm_str = f"{'none':>4}  {'-':>8}  {'-':>8}  {'-':>8}"
-        else:
-            assert ecm_p_factor is not None  # ruff: ignore[assert]
-            ecm_str = f"{ecm_level:4}  {ecm_count:8}  {ecm_time:7.3f}s  {ecm_p_factor * 100:7.3f}%"
-
-        print(f"  {ecm_str}  {ecm_average_time_str}  {average_time_str}{marker_str}")
+    _print_ecm_table(stats, args.digits, config.max_threads, final_methods, cutoffs)
 
     print()
 
