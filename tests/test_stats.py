@@ -14,8 +14,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from pathlib import Path
 
-from factortool.constants import ECM_CURVES
-from factortool.stats import FactoringStats
+import pytest
+
+from factortool.constants import ECM_MIN_LEVEL
+from factortool.stats import ECMCutoffs, FactoringStats
 
 THREADS = 8
 UPDATES = 100
@@ -23,7 +25,10 @@ UPDATES = 100
 # The digit count of the entries every thread shares.
 DIGITS = 50
 
-ECM_LEVEL = min(ECM_CURVES)
+ECM_LEVEL = ECM_MIN_LEVEL
+
+# Enough samples of an ECM level that no further levels are done just to collect data.
+ECM_SETTLED_SAMPLES = 1024
 
 
 def run_threads(workers: Sequence[Callable[[], None]], background: Sequence[Callable[[], None]] = ()) -> None:
@@ -69,6 +74,81 @@ def run_threads(workers: Sequence[Callable[[], None]], background: Sequence[Call
         sys.setswitchinterval(interval)
 
     assert errors == []
+
+
+def make_ecm_stats(
+    tmp_path: Path, final_time: float | None, levels: Sequence[tuple[float, int, int]]
+) -> FactoringStats:
+    """Build statistics for DIGITS from a final method time and each ECM level's time, run count and success count.
+
+    Returns:
+        FactoringStats: The statistics, with the ECM levels starting from the first.
+    """
+    stats = FactoringStats(tmp_path / "stats.json", read_only=True)
+
+    if final_time is not None:
+        stats.update_final("siqs", DIGITS, 1, final_time)
+
+    for level, (ecm_time, runs, successes) in enumerate(levels, ECM_MIN_LEVEL):
+        for run in range(runs):
+            stats.update_ecm(DIGITS, level, 1, ecm_time, success=run < successes)
+
+    return stats
+
+
+def test_ecm_cutoffs_use_an_initial_estimate_without_data(tmp_path: Path) -> None:
+    """Test that the cutoff falls back to a third of the digit count until there is both ECM and final method data."""
+    estimate = ECMCutoffs(None, DIGITS // 3)
+
+    assert make_ecm_stats(tmp_path, None, []).get_ecm_cutoffs(DIGITS, 1, ["siqs"]) == estimate
+    assert make_ecm_stats(tmp_path, 10.0, []).get_ecm_cutoffs(DIGITS, 1, ["siqs"]) == estimate
+    assert make_ecm_stats(tmp_path, None, [(1.0, 4, 2)]).get_ecm_cutoffs(DIGITS, 1, ["siqs"]) == estimate
+
+
+@pytest.mark.parametrize(("digits", "target"), [(2, 0), (5, 0), (6, 2), (8, 2), (9, 3)])
+def test_initial_ecm_estimate_below_the_first_level_is_no_ecm(tmp_path: Path, digits: int, target: int) -> None:
+    """Test that an initial estimate too low to reach the first ECM level is reported as doing no ECM."""
+    stats = FactoringStats(tmp_path / "stats.json", read_only=True)
+
+    assert stats.get_ecm_cutoffs(digits, 1, ["siqs"]) == ECMCutoffs(None, target)
+
+
+def test_ecm_cutoffs_choose_the_level_with_the_lowest_average_time(tmp_path: Path) -> None:
+    """Test that ECM stops at the last level that lowers the estimated average time, once the data has settled."""
+    # The first two levels each save more final factoring than they cost, and the third costs more than it saves.
+    levels = [
+        (1.0, ECM_SETTLED_SAMPLES, ECM_SETTLED_SAMPLES // 2),
+        (1.0, ECM_SETTLED_SAMPLES, ECM_SETTLED_SAMPLES // 2),
+        (9.0, ECM_SETTLED_SAMPLES, ECM_SETTLED_SAMPLES // 2),
+    ]
+    stats = make_ecm_stats(tmp_path, 10.0, levels)
+
+    assert stats.get_ecm_cutoffs(DIGITS, 1, ["siqs"]) == ECMCutoffs(ECM_MIN_LEVEL + 1, ECM_MIN_LEVEL + 1)
+
+
+def test_ecm_cutoffs_choose_no_ecm_when_none_is_worthwhile(tmp_path: Path) -> None:
+    """Test that no ECM at all is done when even the first level costs more than the final factoring it saves."""
+    stats = make_ecm_stats(tmp_path, 1.0, [(0.9, ECM_SETTLED_SAMPLES, ECM_SETTLED_SAMPLES // 2)])
+
+    assert stats.get_ecm_cutoffs(DIGITS, 1, ["siqs"]) == ECMCutoffs(0, 0)
+    assert stats.get_ecm_average_time(DIGITS, 0, 1, ["siqs"]) == (0, 1.0)
+
+
+def test_ecm_cutoffs_keep_collecting_data_when_no_ecm_is_optimal(tmp_path: Path) -> None:
+    """Test that ECM continues past an optimum of none for as long as the first level has few samples."""
+    stats = make_ecm_stats(tmp_path, 1.0, [(0.9, 4, 0)])
+
+    # Four samples allow eight extra levels beyond doing no ECM.
+    assert stats.get_ecm_cutoffs(DIGITS, 1, ["siqs"]) == ECMCutoffs(0, ECM_MIN_LEVEL + 7)
+
+
+def test_ecm_cutoffs_stop_before_a_level_slower_than_the_final_method(tmp_path: Path) -> None:
+    """Test that a level slower than the final method is not run to collect data, even as the very first level."""
+    stats = make_ecm_stats(tmp_path, 1.0, [(2.0, 4, 2)])
+    assert stats.get_ecm_cutoffs(DIGITS, 1, ["siqs"]) == ECMCutoffs(0, 0)
+
+    stats = make_ecm_stats(tmp_path, 10.0, [(1.0, 4, 2), (20.0, 4, 2)])
+    assert stats.get_ecm_cutoffs(DIGITS, 1, ["siqs"]) == ECMCutoffs(ECM_MIN_LEVEL, ECM_MIN_LEVEL)
 
 
 def test_concurrent_updates_are_all_recorded_and_saved(tmp_path: Path) -> None:

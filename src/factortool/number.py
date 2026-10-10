@@ -31,7 +31,7 @@ from factortool.util import SMALL_PRIMES, format_number, get_work_dir, is_prime,
 if TYPE_CHECKING:
     from factortool.backend import Backend
     from factortool.config import Config, FinalMethods, YafuPaths
-    from factortool.stats import FactoringStats
+    from factortool.stats import ECMCutoffs, FactoringStats
 
 
 class FinalMethodNeeded(Exception):  # ruff: ignore[error-suffix-on-exception-name]
@@ -472,16 +472,14 @@ class Number:
         if self._ecm_finished or self.factored:
             return False
 
-        _, target_ecm_level = self.ecm_cutoffs
-
-        if self._ecm_level < target_ecm_level:
+        if self._ecm_level < self.ecm_cutoffs.target:
             return True
 
         self._ecm_finished = True
         return False
 
     @property
-    def ecm_cutoffs(self) -> tuple[int | None, int]:
+    def ecm_cutoffs(self) -> ECMCutoffs:
         """The optimal and target ECM cutoffs for the largest remaining composite factor."""
         # We use the largest remaining composite factor, as that's the largest number we're still actually factoring.
         digits = len(str(max(self.composite_factors)))

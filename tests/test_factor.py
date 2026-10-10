@@ -28,7 +28,7 @@ from factortool.number import (
     factor_yafu_direct,
     run_tool,
 )
-from factortool.stats import FactoringStats
+from factortool.stats import ECMCutoffs, FactoringStats
 
 from .helpers import make_config, make_number
 
@@ -48,7 +48,7 @@ def test_small_cofactors_use_statistical_ecm_cutoffs() -> None:
     """Test that a composite too small for CADO-NFS stops ECM at the learned cutoff rather than the maximum level."""
     number = make_number(15 * 10**50 + 7)
     stats = Mock(spec=FactoringStats)
-    stats.get_ecm_cutoffs.return_value = (2, 5)
+    stats.get_ecm_cutoffs.return_value = ECMCutoffs(2, 5)
     number._stats = stats
     number.composite_factors = [10**40 + 1]
     number._ecm_level = 4
@@ -61,6 +61,16 @@ def test_small_cofactors_use_statistical_ecm_cutoffs() -> None:
     assert not number.ecm_needed
 
 
+def test_no_ecm_is_needed_when_the_cutoff_is_none() -> None:
+    """Test that a number that has done no ECM does none when the cutoff says none is worthwhile."""
+    number = make_number(10**59 + 1)
+    stats = Mock(spec=FactoringStats)
+    stats.get_ecm_cutoffs.return_value = ECMCutoffs(0, 0)
+    number._stats = stats
+
+    assert not number.ecm_needed
+
+
 def test_ecm_cutoff_follows_the_latest_statistics() -> None:
     """Test that the ECM cutoff is reevaluated as statistics arrive, and that a finished number stays finished."""
     number = make_number(10**59 + 1)
@@ -68,14 +78,14 @@ def test_ecm_cutoff_follows_the_latest_statistics() -> None:
     number._stats = stats
     number._ecm_level = 10
 
-    stats.get_ecm_cutoffs.return_value = (None, 20)
+    stats.get_ecm_cutoffs.return_value = ECMCutoffs(None, 20)
     assert number.ecm_needed
 
-    stats.get_ecm_cutoffs.return_value = (8, 10)
+    stats.get_ecm_cutoffs.return_value = ECMCutoffs(8, 10)
     assert not number.ecm_needed
 
     # Resuming would skip the levels the engine ran in the meantime.
-    stats.get_ecm_cutoffs.return_value = (8, 20)
+    stats.get_ecm_cutoffs.return_value = ECMCutoffs(8, 20)
     assert not number.ecm_needed
 
 

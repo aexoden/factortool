@@ -7,10 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- One level of ECM is always done, even when the cutoff says none is worthwhile.
-  `ecm_needed` compares the level already done (zero) to the target, so a
-  target of one still runs level two, and `get_ecm_cutoffs` never considers
-  doing no ECM at all as it starts its search at level two.
 - FactorDB submissions drop the largest distinct prime as trivial, so a prime
   power (such as p²) submits nothing at all.
 - `Config` carries a stray `@dataclass` decorator, which replaces pydantic's
@@ -159,9 +155,7 @@ later ones.
   any sort of consistent distribution, but somehow I doubt this to be consistent.
   If going with theoretical numbers, I have no idea how to calculate the odds of
   the various stages finding factors (e.g. P-1's probability assuming TF and rho
-  have been done). The current code seems to always do one level of ECM, even
-  though for some smaller digit counts, it would be faster to just jump straight
-  to SIQS at that point. It's possible a tweaked ECM schedule could change that.
+  have been done).
 - Refactor to eliminate as many linting exceptions as possible.
 - Dynamic batch sizes can be slow to ramp up. This may not be as bad as it was
   in the past, but it's still worth looking at once more. One cause: after a

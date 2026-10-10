@@ -92,3 +92,6 @@ ECM_CURVES: dict[int, tuple[int, int]] = {
     69: (10393, 6050000000),
     70: (11253, 7760000000),
 }
+
+ECM_MIN_LEVEL = min(ECM_CURVES)
+ECM_MAX_LEVEL = max(ECM_CURVES)

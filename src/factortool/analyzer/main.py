@@ -13,7 +13,13 @@ from loguru import logger
 from tap import Tap
 
 from factortool.config import Config, read_config
-from factortool.constants import ECM_CURVES, FINAL_METHOD_NAMES, NFS_CADO_MIN_DIGITS, NFS_YAFU_MIN_DIGITS
+from factortool.constants import (
+    ECM_MAX_LEVEL,
+    ECM_MIN_LEVEL,
+    FINAL_METHOD_NAMES,
+    NFS_CADO_MIN_DIGITS,
+    NFS_YAFU_MIN_DIGITS,
+)
 from factortool.stats import FactoringStats, InvalidStatsError
 from factortool.util import setup_logger
 
@@ -62,9 +68,6 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
     except InvalidStatsError as e:
         logger.error("{}", e)
         sys.exit(1)
-
-    min_ecm_level = min(ECM_CURVES.keys())
-    max_ecm_level = max(ECM_CURVES.keys())
 
     tf_count, tf_time, tf_p_factor = stats.get_probability_stats(args.digits, "tf", 1)
 
@@ -139,16 +142,15 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
     optimal_ecm_level, current_ecm_level = stats.get_ecm_cutoffs(args.digits, config.max_threads, final_methods)
 
     print("Stopping ECM after doing the given level averages:")
-    print(f"  {'Lvl':>3}  {'Runs':>8}  {'ECM time':>8}  {'P(fact)':>8}  {'From ECM':>8}  {'Overall':>8}")
+    print(f"  {'Lvl':>4}  {'Runs':>8}  {'ECM time':>8}  {'P(fact)':>8}  {'From ECM':>8}  {'Overall':>8}")
 
-    for ecm_level in range(min_ecm_level, max_ecm_level + 1):
+    # A level of zero is doing no ECM at all.
+    for ecm_level in (0, *range(ECM_MIN_LEVEL, ECM_MAX_LEVEL + 1)):
         ecm_count, ecm_time, ecm_p_factor = stats.get_ecm_stats(args.digits, ecm_level, config.max_threads)
 
         # If there is no ECM data for this level, we've reached the end of the table.
-        if ecm_count == 0:
+        if ecm_level > 0 and ecm_count == 0:
             break
-
-        assert ecm_p_factor is not None  # ruff:ignore[assert]
 
         _, ecm_average_time = stats.get_ecm_average_time(args.digits, ecm_level, config.max_threads, final_methods)
         ecm_average_time_str = f"{ecm_average_time:7.3f}s" if ecm_average_time else f"{'N/A':8}"
@@ -166,25 +168,26 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
 
         marker_str = f"  <- {', '.join(markers)}" if markers else ""
 
-        print(
-            f"  {ecm_level:3}  {ecm_count:8}  {ecm_time:7.3f}s  {ecm_p_factor * 100:7.3f}%"
-            f"  {ecm_average_time_str}  {average_time_str}{marker_str}"
-        )
+        if ecm_level == 0:
+            ecm_str = f"{'none':>4}  {'-':>8}  {'-':>8}  {'-':>8}"
+        else:
+            assert ecm_p_factor is not None  # ruff: ignore[assert]
+            ecm_str = f"{ecm_level:4}  {ecm_count:8}  {ecm_time:7.3f}s  {ecm_p_factor * 100:7.3f}%"
+
+        print(f"  {ecm_str}  {ecm_average_time_str}  {average_time_str}{marker_str}")
 
     print()
 
     if optimal_ecm_level is None:
         print("Optimal ECM cutoff: N/A (insufficient data)")
     else:
-        print(f"Optimal ECM cutoff: {optimal_ecm_level}")
+        print(f"Optimal ECM cutoff: {optimal_ecm_level or 'none'}")
 
     if optimal_ecm_level is None:
         extra_text = " (initial estimate; insufficient data)"
     elif current_ecm_level > optimal_ecm_level:
         extra_text = " (extended to gather data)"
-    elif current_ecm_level < optimal_ecm_level:
-        extra_text = " (adjusted below estimated optimum)"
     else:
         extra_text = ""
 
-    print(f"Current ECM cutoff: {current_ecm_level}{extra_text}")
+    print(f"Current ECM cutoff: {current_ecm_level or 'none'}{extra_text}")
