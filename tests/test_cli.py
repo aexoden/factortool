@@ -18,7 +18,16 @@ import pytest
 
 from factortool.assignments import AssignmentStore
 from factortool.backend import FetchCriteria
-from factortool.cli.main import Arguments, acquire_numbers, main, preserve_unfinished, validate_arguments
+from factortool.cli.main import (
+    Arguments,
+    acquire_numbers,
+    get_time_limit,
+    main,
+    preserve_unfinished,
+    validate_arguments,
+    warn_if_assignments_may_expire,
+)
+from factortool.engine import ExitStatus
 from factortool.number import CadoNfsError, Number, ToolError, YafuError
 from factortool.stats import FactoringStats
 
@@ -172,3 +181,46 @@ def test_a_tool_failure_exits_with_the_tool_status_after_cleaning_up(
     assert raised.value.code == exit_status
     assert (tmp_path / "stats.json").exists()
     assert len(list((tmp_path / "results").iterdir())) == 1
+
+
+def test_an_automatic_batch_is_limited_to_twice_its_target_duration() -> None:
+    """Test that a run with an automatic batch size may take up to twice the target duration."""
+    assert get_time_limit(Arguments().parse_args(["--target_duration", "300"])) == pytest.approx(600.0)
+
+
+def test_an_explicit_batch_size_has_no_time_limit() -> None:
+    """Test that the target duration imposes no time limit when the batch size was chosen by the user."""
+    assert get_time_limit(Arguments().parse_args(["--batch_size", "3", "--target_duration", "300"])) is None
+
+
+@pytest.mark.parametrize(("time_limit", "warned"), [(3600.0, True), (1200.0, False), (None, False)])
+def test_a_time_limit_that_may_outlast_assignments_is_warned_about(
+    monkeypatch: pytest.MonkeyPatch, time_limit: float | None, *, warned: bool
+) -> None:
+    """Test that the expiry warning depends on the time limit, and is skipped when there is none."""
+    warning = Mock()
+    monkeypatch.setattr("factortool.cli.main.logger.warning", warning, raising=True)
+
+    warn_if_assignments_may_expire(FakeBackend(), time_limit)
+
+    assert warning.called == warned
+
+
+@pytest.mark.parametrize(("arguments", "time_limit"), [([], 1200.0), (["--batch_size", "3"], None)])
+def test_the_run_is_given_the_time_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, arguments: list[str], time_limit: float | None
+) -> None:
+    """Test that the time limit reaches the engine with the run rather than when the engine is created."""
+    config = {"backend": "factordb", "cado_nfs_path": "cado-nfs.py", "max_threads": 1, "yafu_path": "yafu"}
+    (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    run = Mock(return_value=ExitStatus.SUCCESS)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["factortool", *arguments])
+    monkeypatch.setattr("factortool.cli.main.setup_logger", Mock(), raising=True)
+    monkeypatch.setattr("factortool.cli.main.InterruptState.install", Mock(), raising=True)
+    monkeypatch.setattr("factortool.cli.main.create_backend", Mock(return_value=FakeBackend(assigns_work=False)))
+    monkeypatch.setattr("factortool.cli.main.FactorEngine.run", run, raising=True)
+
+    main()
+
+    assert run.call_args.args[1] == time_limit

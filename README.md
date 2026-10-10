@@ -38,10 +38,12 @@ You may then run the program. It accepts the following options:
   have.
 * `--max_digits`: The maximum number of digits fetched composite numbers should
   have. Required by the mersenne.ca backend.
-* `--batch_size`: The number of composite numbers to fetch from FactorDB. A value
-  of 0 (default) attempts to use an automatic batch size to meet a target time.
+* `--batch_size`: The number of composite numbers to fetch. A value of 0 (default)
+  attempts to use an automatic batch size to meet a target time.
 * `--target_duration`: The number of seconds to target when using an automatic
-  batch size. The default is 600 seconds (ten minutes).
+  batch size. The default is 600 seconds (ten minutes). If factoring takes more
+  than twice this long, the run ends after the current factorization. A run with
+  an explicit `--batch_size` has no time limit.
 * `--skip_count`: How many composite numbers to skip on FactorDB. Useful for working
   at an offset to avoid conflicts. Not supported by the mersenne.ca backend (which
   assigns distinct work to each user).
@@ -77,7 +79,7 @@ as Ctrl-C (exit status 2) or for a permanent HTTP error (exit status 6).
 Repeated interrupts escalate:
 
 * The first stops `factortool` from fetching any more work, but lets the already
-  fetched batch run to completion as normal (subject to the normal time limit).
+  fetched batch run to completion as normal (subject to the time limit, if any).
 * The second gives up on the rest of the batch, but completes the current
   factorization. Any partial factorizations are reported and untouched assigned
   work (on the mersenne.ca backend) is retained for the next run.
