@@ -8,12 +8,12 @@ import datetime
 import sys
 import time
 
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Callable, Collection
 
 import requests
 
@@ -39,6 +39,18 @@ if TYPE_CHECKING:
 # How far past the target duration an automatically sized batch may run before the run is cut short.
 TIME_LIMIT_FACTOR = 2.0
 
+# The exit status of a run that is cut short by its time limit.
+TIME_LIMIT_EXIT_STATUS = 3
+
+# The exit status of a run with a permanent HTTP error.
+PERMANENT_HTTP_ERROR_EXIT_STATUS = 6
+
+# The exit status of a run that could not save its state or results or shut down its backend.
+CLEANUP_FAILED_EXIT_STATUS = 7
+
+# Exit statuses that do not report an error, and so give way to a cleanup failure.
+NON_ERROR_EXIT_STATUSES = frozenset({0, INTERRUPTED_EXIT_STATUS, TIME_LIMIT_EXIT_STATUS})
+
 
 class Arguments(Tap):
     """Utility for factoring numbers using various methods."""
@@ -51,6 +63,36 @@ class Arguments(Tap):
     target_duration: float = 600.0  # Target duration in seconds for each batch (only used when batch_size is 0)
     skip_count: int = 0  # Skip this many numbers when fetching from FactorDB (to hopefully avoid conflict)
     no_new_work: bool = False  # Do not fetch new work from the backend. Only supported by mersenne.ca.
+
+
+class Cleanup:
+    """Runs cleanup steps independently."""
+
+    def __init__(self) -> None:
+        """Initialize the cleanup."""
+        self.failed = False
+
+    def run[**P](self, description: str, step: Callable[P, object], /, *args: P.args, **kwargs: P.kwargs) -> None:
+        """Run a step, logging a failure instead of raising it."""
+        try:
+            step(*args, **kwargs)
+        except OSError as e:
+            logger.error("Failed to {}: {}", description, e)
+            self.failed = True
+        except Exception:  # ruff: ignore[blind-except] (A bug in one step must not skip the rest)
+            logger.exception("Failed to {}", description)
+            self.failed = True
+
+
+@dataclass(frozen=True)
+class Session:
+    """State that lasts for a factoring session, rather than a single batch."""
+
+    config: Config
+    stats: FactoringStats
+    backend: Backend
+    interrupts: InterruptState
+    cleanup: Cleanup = field(default_factory=Cleanup)
 
 
 def validate_arguments(args: Arguments, backend_name: str) -> None:
@@ -135,6 +177,9 @@ def acquire_numbers(  # ruff: ignore[too-many-arguments]
 
     Returns:
         set[Number]: A set of numbers to factor, which may be empty.
+
+    Raises:
+        PermanentHttpError: If the backend reports a permanent error while fetching.
     """
     numbers: set[Number] = set()
 
@@ -145,7 +190,7 @@ def acquire_numbers(  # ruff: ignore[too-many-arguments]
 
     if fetch and remaining > 0:
         logger.info("Fetching {} composite numbers from {}", remaining, config.backend)
-        fetched = fetch_numbers(backend, replace(criteria, count=remaining))
+        fetched = backend.fetch(replace(criteria, count=remaining))
 
         if backend.assigns_work:
             assignments.note_assigned(x.n for x in fetched)
@@ -169,20 +214,6 @@ def start_backend(config: Config, stats: FactoringStats, interrupts: InterruptSt
         return create_backend(config, stats, interrupts)
     except requests.RequestException as e:
         logger.error("Unable to start the {} backend: {}", config.backend, e)
-        sys.exit(6)
-
-
-def fetch_numbers(backend: Backend, criteria: FetchCriteria) -> set[Number]:
-    """Fetch new work, exiting if the backend reports a permanent error.
-
-    Returns:
-        set[Number]: The fetched numbers.
-    """
-    try:
-        return backend.fetch(criteria)
-    except PermanentHttpError as e:
-        logger.error("Unable to fetch numbers: {}", e)
-        backend.close()
         sys.exit(6)
 
 
@@ -221,7 +252,90 @@ def preserve_unfinished(backend: Backend, assignments: AssignmentStore, numbers:
         assignments.save(x.n for x in untouched)
 
 
-def main() -> None:  # ruff: ignore[too-many-statements]
+def run_batch(args: Arguments, session: Session) -> int:
+    """Acquire a batch of numbers, factor them, and save state and results.
+
+    Returns:
+        int: The exit status for the batch, not counting any cleanup failure.
+    """
+    config, stats, backend = session.config, session.stats, session.backend
+    time_limit = get_time_limit(args)
+
+    max_digits = args.max_digits if args.max_digits > 0 else None
+    batch_controller = BatchController(
+        args.target_duration,
+        BatchKey(backend=config.backend, min_digits=args.min_digits, max_digits=max_digits, skip_count=args.skip_count),
+        config.batch_state_path,
+    )
+    batch_size = args.batch_size if args.batch_size > 0 else batch_controller.batch_size
+
+    if args.no_new_work:
+        logger.info("As requested, not fetching new work")
+
+    warn_if_assignments_may_expire(backend, time_limit)
+
+    assignments = AssignmentStore(config.assignment_state_path, config.backend, backend.assignment_lifetime)
+
+    try:
+        numbers = acquire_numbers(
+            backend,
+            assignments,
+            config,
+            stats,
+            FetchCriteria(
+                count=batch_size, min_digits=args.min_digits, max_digits=max_digits, skip_count=args.skip_count
+            ),
+            fetch=not args.no_new_work,
+        )
+    except PermanentHttpError as e:
+        logger.error("Unable to fetch numbers: {}", e)
+        return PERMANENT_HTTP_ERROR_EXIT_STATUS
+
+    if not numbers:
+        logger.warning("No numbers to factor")
+        return INTERRUPTED_EXIT_STATUS if session.interrupts.interrupted else 0
+
+    status = ExitStatus.SUCCESS
+    tool_error: ToolError | None = None
+    start_time = time.monotonic()
+
+    # Each number retains its own state, so we can safely process them independently, regardless of what happens in the
+    # engine.
+    try:
+        status = FactorEngine(config, session.interrupts).run(sorted(numbers), time_limit)
+    except ToolError as e:
+        logger.critical("{}", e)
+        tool_error = e
+    finally:
+        duration = time.monotonic() - start_time
+        factored_count = len([number for number in numbers if number.factored])
+
+        logger.info("Factored {} numbers in {:.2f} seconds", factored_count, duration)
+
+        cleanup = session.cleanup
+
+        # Record the batch only if new work was fetched.
+        if not args.no_new_work:
+            cleanup.run("record the batch", batch_controller.record_batch, factored_count, duration)
+
+        cleanup.run("preserve unfinished work", preserve_unfinished, backend, assignments, numbers)
+        cleanup.run("report summary", report_summary, numbers)
+        cleanup.run("write results", write_results, numbers, config.result_output_path)
+        cleanup.run("save statistics", stats.save_data)
+
+    if tool_error is not None:
+        return tool_error.exit_status
+
+    if status == ExitStatus.INTERRUPTED or session.interrupts.interrupted:
+        return INTERRUPTED_EXIT_STATUS
+
+    if status == ExitStatus.TIME_LIMIT_EXCEEDED:
+        return TIME_LIMIT_EXIT_STATUS
+
+    return 0
+
+
+def main() -> None:
     """Factor numbers using various methods."""
     setup_logger()
 
@@ -248,69 +362,23 @@ def main() -> None:  # ruff: ignore[too-many-statements]
         logger.error("{}", e)
         sys.exit(1)
 
-    backend = start_backend(config, stats, interrupts)
-    time_limit = get_time_limit(args)
+    session = Session(config, stats, start_backend(config, stats, interrupts), interrupts)
 
     logger.info("Using backend: {}", config.backend)
     logger.info("Using factoring mode: {}", config.factoring_mode)
 
-    max_digits = args.max_digits if args.max_digits > 0 else None
-    batch_controller = BatchController(
-        args.target_duration,
-        BatchKey(backend=config.backend, min_digits=args.min_digits, max_digits=max_digits, skip_count=args.skip_count),
-        config.batch_state_path,
-    )
-    batch_size = args.batch_size if args.batch_size > 0 else batch_controller.batch_size
-
-    if args.no_new_work:
-        logger.info("As requested, not fetching new work")
-
-    warn_if_assignments_may_expire(backend, time_limit)
-
-    assignments = AssignmentStore(config.assignment_state_path, config.backend, backend.assignment_lifetime)
-    numbers = acquire_numbers(
-        backend,
-        assignments,
-        config,
-        stats,
-        FetchCriteria(count=batch_size, min_digits=args.min_digits, max_digits=max_digits, skip_count=args.skip_count),
-        fetch=not args.no_new_work,
-    )
-
-    if not numbers:
-        logger.warning("No numbers to factor")
-        backend.close()
-        sys.exit(INTERRUPTED_EXIT_STATUS if interrupts.interrupted else 0)
-
-    start_time = time.monotonic()
-
-    # Each number retains its own state, so we can safely process them independently, regardless of what happens in the
-    # engine.
+    # The backend is closed last, as flushing its pending submissions can take some time.
     try:
-        status = FactorEngine(config, interrupts).run(sorted(numbers), time_limit)
-    except ToolError as e:
-        logger.critical("{}", e)
-        sys.exit(e.exit_status)
+        status = run_batch(args, session)
     finally:
-        duration = time.monotonic() - start_time
-        factored_count = len([number for number in numbers if number.factored])
+        session.cleanup.run("close the backend", session.backend.close)
 
-        logger.info("Factored {} numbers in {:.2f} seconds", factored_count, duration)
+    # An interrupt may have arrived while the backend was flushing its submissions.
+    if interrupts.interrupted and status in NON_ERROR_EXIT_STATUSES:
+        status = INTERRUPTED_EXIT_STATUS
 
-        # Record the batch only if new work was fetched.
-        if not args.no_new_work:
-            batch_controller.record_batch(factored_count, duration)
+    if session.cleanup.failed and status in NON_ERROR_EXIT_STATUSES:
+        status = CLEANUP_FAILED_EXIT_STATUS
 
-        preserve_unfinished(backend, assignments, numbers)
-
-        report_summary(numbers)
-        write_results(numbers, config.result_output_path)
-
-        stats.save_data()
-        backend.close()
-
-    if status == ExitStatus.INTERRUPTED or interrupts.interrupted:
-        sys.exit(INTERRUPTED_EXIT_STATUS)
-
-    if status == ExitStatus.TIME_LIMIT_EXCEEDED:
-        sys.exit(3)
+    if status != 0:
+        sys.exit(status)
