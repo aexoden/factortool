@@ -87,6 +87,10 @@ Repeated interrupts escalate:
 
 All three submit whatever results are in hand before exiting.
 
+SIGTERM, SIGHUP and, on Windows, Ctrl-Break have the same effect as the third
+interrupt. Once the current factorization has been abandoned, one more signal
+exits immediately, without saving anything further or submitting the remaining results.
+
 If you are using direct YAFU support (by setting `factoring_mode` to `yafu` in
 config.json), I recommend ensuring YAFU's NFS functionality is correctly
 configured.
@@ -156,7 +160,7 @@ test. The `standard` mode is left in both for fun and as a historical curiosity.
 The program returns the following non-zero error codes:
 
 * 1: Configuration error or invalid statistics data
-* 2: Interrupted (any interrupt level)
+* 2: Interrupted (any interrupt level) or asked to end by a signal
 * 3: Time limit exceeded
 * 4: Unexpected CADO-NFS failure
 * 5: Unexpected YAFU failure

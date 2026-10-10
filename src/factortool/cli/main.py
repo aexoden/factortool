@@ -27,6 +27,7 @@ from factortool.batch import BatchController, BatchKey
 from factortool.config import read_config
 from factortool.engine import ExitStatus, FactorEngine
 from factortool.http import PermanentHttpError
+from factortool.interrupt import EXIT_STATUS as INTERRUPTED_EXIT_STATUS
 from factortool.interrupt import InterruptState
 from factortool.number import Number, ToolError, format_results
 from factortool.stats import FactoringStats, InvalidStatsError
@@ -279,7 +280,7 @@ def main() -> None:  # ruff: ignore[too-many-statements]
     if not numbers:
         logger.warning("No numbers to factor")
         backend.close()
-        sys.exit(2 if interrupts.interrupted else 0)
+        sys.exit(INTERRUPTED_EXIT_STATUS if interrupts.interrupted else 0)
 
     start_time = time.monotonic()
 
@@ -309,7 +310,7 @@ def main() -> None:  # ruff: ignore[too-many-statements]
         backend.close()
 
     if status == ExitStatus.INTERRUPTED or interrupts.interrupted:
-        sys.exit(2)
+        sys.exit(INTERRUPTED_EXIT_STATUS)
 
     if status == ExitStatus.TIME_LIMIT_EXCEEDED:
         sys.exit(3)
