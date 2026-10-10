@@ -34,8 +34,9 @@ from factortool.cli.main import (
 from factortool.engine import ExitStatus, FactorEngine
 from factortool.http import PermanentHttpError
 from factortool.interrupt import EXIT_STATUS, InterruptState
-from factortool.number import CadoNfsError, Number, ToolError, YafuError
+from factortool.number import Number
 from factortool.stats import FactoringStats
+from factortool.tools import CadoNfsError, ToolError, YafuError
 
 from .helpers import make_config
 

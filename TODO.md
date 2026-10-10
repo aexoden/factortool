@@ -7,18 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- Properly handle YAFU and CADO-NFS failures. If a tool exits with an error or
-  returns factors that don't multiply back to the number, log it, record no
-  statistics, leave the number unfactored and continue with the batch. Abort
-  (exit 5 or 4) only after several consecutive failures, as that suggests a
-  broken installation. Failures are currently raised as a `ToolError`, which
-  ends the run on the first one. Not sure if we can reliably detect a hang. The
-  three   YAFU functions duplicate their output parsing, so a shared helper that
-  parses and verifies before the statistics update covers all of them. CADO-NFS
-  output is currently passed directly to `int()` after its statistics are recorded.
-- `_factor_generic` reassigns `method` when a final method is run immediately
-  for statistics, so later composites split by the original method in the same
-  call are logged under the final method's name.
 - Validate more input up front: `max_threads` must be at least one,
   `--min_digits` must be at least one (currently an unhandled `ValueError`),
   `--target_duration` must be positive, and `yafu_path` must exist.
@@ -27,20 +15,6 @@ later ones.
   numbers can start at arbitrary points if they were added as cofactors. The
   same assumption is in `_get_average_time_internal`, so a digit count mostly
   reached via cofactors never leaves the initial fallback cutoff.
-- The final factoring stages are now grouped per method (SIQS, YAFU NFS,
-  CADO-NFS), and each number only goes through its own method's stage. The old
-  final NFS stage picked up everything still unfactored, so a number SIQS left
-  unfinished would be retried with NFS; that no longer happens. Possibly part of
-  the YAFU error handling/fallback item above.
-- YAFU reads stdin as a batch file whenever stdin isn't a terminal (cron, systemd,
-  `< /dev/null`, a heredoc), ignoring the expression passed on the command line.
-  It then prints no factors, and `_factor_generic` removes the composite without
-  adding any factors, so the number is treated as factored. Affects every YAFU
-  call. Possible fixes: pass the expression to YAFU on stdin, and/or treat an
-  empty factor list as a failure. The bogus run is also recorded in the
-  statistics with a near-zero time, which skews the final method choice and the
-  ECM cutoffs. The verification in the failure handling item above would catch
-  this, but YAFU should still be given the expression in a way it honors.
 - Submissions are retried forever and can't be interrupted, so a service outage
   hangs the shutdown. A 429 without a `Retry-After` header waits an hour, and a
   supplied value isn't clamped. Give up after a bounded time, write the unsent
@@ -57,7 +31,11 @@ later ones.
 - Add an option to disable the time limit and adjust the time limit directly,
   rather than always defaulting to double the target time. While there, consider
   if the time limit should abort immediately or finish the current factorization
-  (or some happy medium).
+  (or some happy medium). Killing the running tool at some hard limit is also
+  the only realiable defense against a tool that hangs, which is otherwise never
+  detected. It might be worth checking if YAFU and CADO-NFS regularly generate
+  log output for monitoring. Could also consider looking at their CPU usage, but
+  that wouldn't help with a spinlock.
 - Display digit counts even for smaller numbers.
 - For backends that batch submissions, consider a more intelligent submission
   strategy: Submit if X seconds have passed, the current batch is full or if
