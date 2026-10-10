@@ -86,7 +86,11 @@ class AssignmentStore:
 
         if expired > 0:
             logger.warning("Discarding {} composite{} with an expired assignment", expired, "" if expired == 1 else "s")
-            self._write(pending)
+
+            try:
+                self._write(pending)
+            except OSError as e:
+                logger.warning("Failed to update assignment state at {}: {}", self._state_path, e)
 
         if pending:
             logger.info("Resuming {} composite{} from a previous run", len(pending), "" if len(pending) == 1 else "s")
@@ -111,7 +115,11 @@ class AssignmentStore:
         return self._expiry.get(n)
 
     def save(self, composites: Iterable[int]) -> None:
-        """Record the composites to be retained for the next run, omitting any expired assignments."""
+        """Record the composites to be retained for the next run, omitting any expired assignments.
+
+        Raises:
+            OSError: If the state file cannot be written.
+        """
         pending: list[Assignment] = []
         unknown: list[int] = []
         expired = 0
@@ -134,29 +142,17 @@ class AssignmentStore:
                 "" if expired == 1 else "s",
             )
 
-        if not self._write(pending):
-            return
+        self._write(pending)
 
         if pending:
             logger.info(
                 "Saved {} unfinished composite{} for the next run", len(pending), "" if len(pending) == 1 else "s"
             )
 
-    def _write(self, assignments: list[Assignment]) -> bool:
-        """Write the given assignments to the state file.
-
-        Returns:
-            bool: Whether the state was written successfully.
-        """
+    def _write(self, assignments: list[Assignment]) -> None:
+        """Write the given assignments to the state file."""
         state = AssignmentState(last_update=time.time(), backend=self._backend_name, assignments=assignments)
-
-        try:
-            safe_write(self._state_path, state.model_dump_json().encode("utf-8"))
-        except OSError as e:
-            logger.error("Failed to save assignment state to {}: {}", self._state_path, e)
-            return False
-
-        return True
+        safe_write(self._state_path, state.model_dump_json().encode("utf-8"))
 
     def clear(self) -> None:
         """Clear the assignment state."""

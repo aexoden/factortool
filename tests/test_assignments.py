@@ -199,3 +199,25 @@ def test_preserve_unfinished_keeps_work_left_by_a_completed_run(tmp_path: Path) 
 
     partially_factored.report_partial.assert_called_once_with()
     assert store.load() == [300]
+
+
+def test_save_raises_when_the_state_cannot_be_written(tmp_path: Path) -> None:
+    """Test that a failure to retain assignments reaches the caller instead of being swallowed."""
+    store = AssignmentStore(tmp_path / "missing" / "assignments.json", "mersenne_ca", LIFETIME)
+    store.note_assigned([100])
+
+    with pytest.raises(OSError, match="missing"):
+        store.save([100])
+
+
+def test_load_survives_being_unable_to_remove_expired_assignments(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that the remaining assignments are still resumed when the expired ones cannot be removed from the state."""
+    state_path = tmp_path / "assignments.json"
+    assignments = [{"n": 100, "expires_at": time.time() + LIFETIME}, {"n": 200, "expires_at": 0.0}]
+    write_state(state_path, {"assignments": assignments})
+
+    monkeypatch.setattr("factortool.assignments.safe_write", Mock(side_effect=OSError("disk full")), raising=True)
+
+    assert AssignmentStore(state_path, "mersenne_ca", LIFETIME).load() == [100]

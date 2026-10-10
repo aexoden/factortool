@@ -165,6 +165,7 @@ The program returns the following non-zero error codes:
 * 4: Unexpected CADO-NFS failure
 * 5: Unexpected YAFU failure
 * 6: Permanent HTTP error in the backend
+* 7: Error saving state or results or during shutdown
 
 ## License
 

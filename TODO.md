@@ -7,9 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- The cleanup at the end of `main` is a chain where one failure skips the rest.
-  If recording the batch or writing the results fails, statistics aren't saved
-  and the backend is never closed, which drops any pending submissions.
 - Properly handle YAFU and CADO-NFS failures. If a tool exits with an error or
   returns factors that don't multiply back to the number, log it, record no
   statistics, leave the number unfactored and continue with the batch. Abort
@@ -72,8 +69,9 @@ later ones.
 - Make `cado_nfs_path` optional, requiring it only if `use_nfs_cado` is enabled
   (as `gimps_login` is only required by the mersenne.ca backend).
 - Change the README's shell loop to stop on any exit status other than 0 and 3.
-  It currently only stops on 2 and 6, so a configuration error or tool failure
-  retries every second. Note that argument errors also exit with status 2.
+  It currently only stops on 2 and 6, so a configuration error, tool failure or
+  cleanup failure (7) retries every second. Note that argument errors also exit
+  with status 2.
 - Verify whether `cado-nfs.py` uses its own directory under `/tmp` unless given
   `--workdir`. If so, pass the managed working directory so an aborted run
   doesn't leave it behind. The `stdin` passed to it also looks unnecessary.

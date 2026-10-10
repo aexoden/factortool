@@ -21,7 +21,9 @@ import pytest
 from factortool.assignments import AssignmentStore
 from factortool.backend import FetchCriteria
 from factortool.cli.main import (
+    CLEANUP_FAILED_EXIT_STATUS,
     Arguments,
+    Cleanup,
     acquire_numbers,
     get_time_limit,
     main,
@@ -30,11 +32,15 @@ from factortool.cli.main import (
     warn_if_assignments_may_expire,
 )
 from factortool.engine import ExitStatus, FactorEngine
+from factortool.http import PermanentHttpError
 from factortool.interrupt import EXIT_STATUS, InterruptState
 from factortool.number import CadoNfsError, Number, ToolError, YafuError
 from factortool.stats import FactoringStats
 
 from .helpers import make_config
+
+# The exit status of a run ended by a permanent HTTP error in the backend.
+PERMANENT_HTTP_ERROR_EXIT_STATUS = 6
 
 CRITERIA = FetchCriteria(count=3, min_digits=1, max_digits=100)
 
@@ -262,3 +268,173 @@ def test_the_run_is_given_the_time_limit(
     main()
 
     assert run.call_args.args[1] == time_limit
+
+
+def test_a_failed_cleanup_step_does_not_skip_the_rest() -> None:
+    """Test that every cleanup step runs, whether an earlier one failed as expected or unexpectedly."""
+    cleanup = Cleanup()
+    last = Mock()
+
+    cleanup.run("write a file", Mock(side_effect=OSError("disk full")))
+    cleanup.run("do something else", Mock(side_effect=RuntimeError("bug")))
+    cleanup.run("finish", last, 1, key="value")
+
+    last.assert_called_once_with(1, key="value")
+    assert cleanup.failed
+
+
+def test_a_cleanup_without_failures_is_not_failed() -> None:
+    """Test that steps that succeed leave the cleanup unfailed."""
+    cleanup = Cleanup()
+
+    cleanup.run("finish", Mock())
+
+    assert not cleanup.failed
+
+
+def run_main(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    run: Mock,
+    *,
+    backend: FakeBackend | None = None,
+    close: Mock | None = None,
+) -> tuple[int, Mock]:
+    """Run main against a fake backend and a stand-in for the engine.
+
+    Returns:
+        tuple[int, Mock]: The exit status and the mock standing in for closing the backend.
+    """
+    config = {"backend": "factordb", "cado_nfs_path": "cado-nfs.py", "max_threads": 1, "yafu_path": "yafu"}
+    (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    backend = FakeBackend(assigns_work=False) if backend is None else backend
+    close = Mock() if close is None else close
+    backend.close = close  # type: ignore[method-assign]
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["factortool"])
+    monkeypatch.setattr("factortool.cli.main.setup_logger", Mock(), raising=True)
+    monkeypatch.setattr("factortool.cli.main.InterruptState.install", Mock(), raising=True)
+    monkeypatch.setattr("factortool.cli.main.create_backend", Mock(return_value=backend))
+    monkeypatch.setattr("factortool.cli.main.FactorEngine.run", run, raising=True)
+
+    try:
+        main()
+    except SystemExit as e:
+        status = e.code
+    else:
+        status = 0
+
+    assert isinstance(status, int)
+
+    return status, close
+
+
+@pytest.mark.parametrize("failing", ["BatchController.record_batch", "write_results", "report_summary"])
+def test_a_failed_cleanup_step_still_saves_the_rest_and_closes_the_backend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failing: str
+) -> None:
+    """Test that a cleanup failure leaves the later steps to run, and is reported by the exit status."""
+    monkeypatch.setattr(f"factortool.cli.main.{failing}", Mock(side_effect=OSError("disk full")), raising=True)
+
+    status, close = run_main(monkeypatch, tmp_path, Mock(return_value=ExitStatus.SUCCESS))
+
+    assert status == CLEANUP_FAILED_EXIT_STATUS
+    assert (tmp_path / "stats.json").exists()
+    close.assert_called_once_with()
+
+
+def test_a_failure_to_save_assignments_is_reported_by_the_exit_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that losing track of unfinished assignments counts as a cleanup failure, without skipping later steps."""
+    monkeypatch.setattr("factortool.cli.main.AssignmentStore.save", Mock(side_effect=OSError("disk full")))
+
+    status, close = run_main(monkeypatch, tmp_path, Mock(return_value=ExitStatus.SUCCESS), backend=FakeBackend())
+
+    assert status == CLEANUP_FAILED_EXIT_STATUS
+    assert len(list((tmp_path / "results").iterdir())) == 1
+    close.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    ("run", "exit_status"),
+    [
+        (Mock(side_effect=YafuError("YAFU failed")), 5),
+        (Mock(return_value=ExitStatus.INTERRUPTED), CLEANUP_FAILED_EXIT_STATUS),
+        (Mock(return_value=ExitStatus.TIME_LIMIT_EXCEEDED), CLEANUP_FAILED_EXIT_STATUS),
+    ],
+)
+def test_a_cleanup_failure_only_gives_way_to_another_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run: Mock, exit_status: int
+) -> None:
+    """Test that a tool failure keeps its own exit status, while an interrupt or time limit yields to the failure."""
+    monkeypatch.setattr("factortool.cli.main.write_results", Mock(side_effect=OSError("disk full")), raising=True)
+
+    status, close = run_main(monkeypatch, tmp_path, run)
+
+    assert status == exit_status
+    close.assert_called_once_with()
+
+
+def test_a_failure_to_close_the_backend_is_reported_by_the_exit_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that a backend that cannot shut down cleanly is reported once everything else has been saved."""
+    close = Mock(side_effect=RuntimeError("bug"))
+
+    status, _ = run_main(monkeypatch, tmp_path, Mock(return_value=ExitStatus.SUCCESS), close=close)
+
+    assert status == CLEANUP_FAILED_EXIT_STATUS
+    assert (tmp_path / "stats.json").exists()
+    assert len(list((tmp_path / "results").iterdir())) == 1
+
+
+def test_an_unexpected_engine_failure_still_cleans_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that a failure other than a tool error is raised only after the state is saved and the backend closed."""
+    close = Mock()
+
+    with pytest.raises(RuntimeError, match="bug"):
+        run_main(monkeypatch, tmp_path, Mock(side_effect=RuntimeError("bug")), close=close)
+
+    assert (tmp_path / "stats.json").exists()
+    assert len(list((tmp_path / "results").iterdir())) == 1
+    close.assert_called_once_with()
+
+
+def test_a_permanent_fetch_error_closes_the_backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that a fetch the backend permanently refuses ends the run with its status after closing the backend."""
+    backend = FakeBackend(assigns_work=False)
+    backend.fetch = Mock(side_effect=PermanentHttpError("forbidden"))  # type: ignore[method-assign]
+    run = Mock()
+
+    status, close = run_main(monkeypatch, tmp_path, run, backend=backend)
+
+    assert status == PERMANENT_HTTP_ERROR_EXIT_STATUS
+    run.assert_not_called()
+    close.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    ("run", "close_error", "exit_status"),
+    [
+        (Mock(return_value=ExitStatus.SUCCESS), None, EXIT_STATUS),
+        (Mock(return_value=ExitStatus.TIME_LIMIT_EXCEEDED), None, EXIT_STATUS),
+        (Mock(side_effect=YafuError("YAFU failed")), None, 5),
+        (Mock(return_value=ExitStatus.SUCCESS), RuntimeError("bug"), CLEANUP_FAILED_EXIT_STATUS),
+    ],
+)
+def test_an_interrupt_while_closing_the_backend_is_reported_by_the_exit_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run: Mock, close_error: Exception | None, exit_status: int
+) -> None:
+    """Test that an interrupt during the final flush still ends the run as interrupted, unless an error outranks it."""
+
+    def interrupt_during_close() -> None:
+        monkeypatch.setattr(InterruptState, "interrupted", True)
+
+        if close_error is not None:
+            raise close_error
+
+    status, _ = run_main(monkeypatch, tmp_path, run, close=Mock(side_effect=interrupt_during_close))
+
+    assert status == exit_status
