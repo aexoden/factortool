@@ -29,8 +29,9 @@ from factortool.engine import ExitStatus, FactorEngine
 from factortool.http import PermanentHttpError
 from factortool.interrupt import EXIT_STATUS as INTERRUPTED_EXIT_STATUS
 from factortool.interrupt import InterruptState
-from factortool.number import Number, ToolError, format_results
+from factortool.number import Number, format_results
 from factortool.stats import FactoringStats, InvalidStatsError
+from factortool.tools import ToolError
 from factortool.util import setup_logger
 
 if TYPE_CHECKING:

@@ -18,7 +18,8 @@ from loguru import logger
 
 from factortool.constants import ECM_CURVES, ECM_MAX_LEVEL, ECM_MIN_LEVEL, FINAL_METHOD_NAMES
 from factortool.interrupt import Interrupted, InterruptState
-from factortool.number import Number, abandon_tools
+from factortool.number import Number
+from factortool.tools import abandon_tools, tool_failures
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -103,8 +104,8 @@ class FactorEngine:
     def _factor_concurrently(self, numbers: Collection[Number], factor: Callable[[Number], None]) -> None:
         """Apply a factoring method to each unfactored number using a pool of worker threads.
 
-        A failure in any worker ends the stage. The numbers still queued are not started, the tools already running are
-        left to finish, and the failure is then raised here as if it had happened in the calling thread.
+        An exception in any worker ends the stage. The numbers still queued are not started, the tools already running
+        are left to finish, and the exception is then raised here as if it had happened in the calling thread.
 
         Raises:
             Interrupted: If a worker's tool is killed because the work is being abandoned.
@@ -128,7 +129,7 @@ class FactorEngine:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self._config.max_threads) as executor:
             done, _ = concurrent.futures.wait(
-                [executor.submit(run, number) for number in numbers if not number.factored],
+                [executor.submit(run, number) for number in numbers if number.active],
                 return_when=concurrent.futures.FIRST_EXCEPTION,
             )
             error = next((e for future in done if (e := future.exception()) is not None), None)
@@ -147,21 +148,30 @@ class FactorEngine:
         Returns:
             ExitStatus: The exit status of the factorization run.
 
+        A number that an external tool fails on is left unfactored, and the run continues with the rest.
+
         Raises:
-            ToolError: If an external tool cannot be started or exits with an error.
+            ToolError: If an external tool fails several times in a row, or every time it is run.
         """
         self._time_limit = time_limit
         self._start_time = time.monotonic()
+        tool_failures.reset()
 
         try:
             with self._interrupts.abortable(abandon_tools):
                 if self._config.factoring_mode == "yafu":
-                    return self._run_yafu(numbers)
-
-                return self._run_standard(numbers)
+                    status = self._run_yafu(numbers)
+                else:
+                    status = self._run_standard(numbers)
         except Interrupted:
             logger.warning("Abandoned the factorization in progress")
-            return ExitStatus.INTERRUPTED
+            status = ExitStatus.INTERRUPTED
+
+        # An interrupted run is too incomplete to judge the tools.
+        if status != ExitStatus.INTERRUPTED:
+            tool_failures.check()
+
+        return status
 
     def _run_yafu(self, numbers: Collection[Number]) -> ExitStatus:
         """Factor numbers using direct YAFU calls.
@@ -224,7 +234,7 @@ class FactorEngine:
 
         # Attempt to factor each number via ECM.
         for ecm_level in range(ECM_MIN_LEVEL, ECM_MAX_LEVEL + 1):
-            overall_number_count = len([x for x in numbers if not x.factored])
+            overall_number_count = len([x for x in numbers if x.active])
             ecm_numbers = [x for x in numbers if x.ecm_needed and not self._skip_expired(x)]
             ecm_number_count = len(ecm_numbers)
 
@@ -260,13 +270,13 @@ class FactorEngine:
         final_groups: dict[str, list[Number]] = {method: [] for method in FINAL_METHOD_NAMES}
 
         for number in numbers:
-            if not number.factored and not self._skip_expired(number):
+            if number.active and not self._skip_expired(number):
                 final_groups[number.final_method].append(number)
 
         for method, method_name in FINAL_METHOD_NAMES.items():
             final_numbers = final_groups[method]
             number_count = len(final_numbers)
-            overall_number_count = len([x for x in numbers if not x.factored])
+            overall_number_count = len([x for x in numbers if x.active])
 
             if number_count == 0:
                 continue
@@ -280,7 +290,7 @@ class FactorEngine:
             )
 
             for number in final_numbers:
-                if number.factored or self._skip_expired(number):
+                if not number.active or self._skip_expired(number):
                     continue
 
                 number.factor_final()

@@ -91,6 +91,13 @@ SIGTERM, SIGHUP and, on Windows, Ctrl-Break have the same effect as the third
 interrupt. Once the current factorization has been abandoned, one more signal
 exits immediately, without saving anything further or submitting the remaining results.
 
+If YAFU or CADO-NFS fail on a number (by exiting with an error or returning an
+incomplete factorization), the failure is logged and the batch continues. A
+final factoring method that fails is first retried with the other eligible final
+methods. If the same method fails three times in a row, or a tool fails every
+time it is run during a batch, the installation is assumed to be broken and
+`factortool` exits with status 5 (YAFU) or 4 (CADO-NFS).
+
 If you are using direct YAFU support (by setting `factoring_mode` to `yafu` in
 config.json), I recommend ensuring YAFU's NFS functionality is correctly
 configured.

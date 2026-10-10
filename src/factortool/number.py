@@ -4,14 +4,7 @@
 
 from __future__ import annotations
 
-import contextlib
 import math
-import os
-import re
-import signal
-import subprocess  # ruff: ignore[suspicious-subprocess-import]
-import sys
-import threading
 import time
 
 from functools import cache
@@ -25,13 +18,20 @@ from loguru import logger
 
 from factortool.assignments import assignment_expired
 from factortool.constants import ECM_CURVES, FINAL_METHOD_NAMES, NFS_CADO_MIN_DIGITS, NFS_YAFU_MIN_DIGITS
-from factortool.interrupt import Interrupted
-from factortool.util import SMALL_PRIMES, format_number, get_work_dir, is_prime, log_factor_result
+from factortool.tools import ToolFailure, run_cado_nfs, run_yafu
+from factortool.util import SMALL_PRIMES, format_number, is_prime, log_factor_result
 
 if TYPE_CHECKING:
     from factortool.backend import Backend
     from factortool.config import Config, FinalMethods, YafuPaths
     from factortool.stats import ECMCutoffs, FactoringStats
+
+YAFU_METHOD_NAMES: dict[str, str] = {
+    "rho": "Rho",
+    "pm1": "P-1",
+    "siqs": FINAL_METHOD_NAMES["siqs"],
+    "nfs": FINAL_METHOD_NAMES["nfs_yafu"],
+}
 
 
 class FinalMethodNeeded(Exception):  # ruff: ignore[error-suffix-on-exception-name]
@@ -41,162 +41,6 @@ class FinalMethodNeeded(Exception):  # ruff: ignore[error-suffix-on-exception-na
         """Initialize the exception with the statistics key of the needed method."""
         super().__init__(method)
         self.method = method
-
-
-class ToolError(Exception):
-    """Exception raised when an external tool cannot be started or exits with an error."""
-
-    exit_status: int
-
-
-class YafuError(ToolError):
-    """Exception raised when YAFU fails."""
-
-    exit_status = 5
-
-
-class CadoNfsError(ToolError):
-    """Exception raised when CADO-NFS fails."""
-
-    exit_status = 4
-
-
-def _describe_tool_failure(error: OSError | subprocess.CalledProcessError) -> str:
-    """Describe why a tool failed, preferring its own error output when it ran at all.
-
-    Returns:
-        str: The tool's error output, or the reason it could not be started.
-    """
-    if isinstance(error, subprocess.CalledProcessError):
-        return str(error.stderr).strip() or f"exit status {error.returncode}"
-
-    return str(error)
-
-
-# External tools currently running in any thread.
-_running_tools: set[subprocess.Popen[str]] = set()
-
-# External tools that abandon_tools has killed.
-_abandoned_tools: set[subprocess.Popen[str]] = set()
-
-_tools_lock = threading.Lock()
-
-
-def _kill_tool(process: subprocess.Popen[str]) -> None:
-    """Kill a tool along with every helper process it may have started."""
-    if sys.platform == "win32":
-        subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
-            ["taskkill", "/F", "/T", "/PID", str(process.pid)],  # ruff: ignore[start-process-with-partial-path]
-            capture_output=True,
-            check=False,
-        )
-    else:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
-
-
-def abandon_tools() -> None:
-    """Kill every running external tool."""
-    with _tools_lock:
-        for process in _running_tools:
-            _abandoned_tools.add(process)
-            _kill_tool(process)
-
-
-def run_tool(cmd: list[str], cwd: Path, threads: int, *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
-    """Run an external tool in its own process group, capturing its output.
-
-    The separate process group ensures that the process isn't immediately killed in the event of a terminal interrupt.
-
-    The tool inherits the environment, apart from OMP_NUM_THREADS, which is set to the number of threads the tool is
-    allowed, as anything built with OpenMP otherwise uses every available core.
-
-    Returns:
-        subprocess.CompletedProcess[str]: The finished process and its output.
-
-    Raises:
-        OSError: If the tool cannot be started.
-        subprocess.CalledProcessError: If the tool exits with a non-zero status.
-        Interrupted: If abandon_tools killed the tool while it was running.
-    """
-    if sys.platform == "win32":
-        creationflags, process_group = subprocess.CREATE_NEW_PROCESS_GROUP, None
-    else:
-        creationflags, process_group = 0, 0
-
-    try:
-        process = subprocess.Popen(  # ruff: ignore[subprocess-without-shell-equals-true]
-            cmd,
-            cwd=cwd,
-            env={**os.environ, "OMP_NUM_THREADS": str(threads)},
-            stdin=subprocess.PIPE if stdin is not None else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            creationflags=creationflags,
-            process_group=process_group,
-        )
-    except OSError as e:
-        # Windows doesn't say which file it failed to start.
-        if e.filename is None:
-            e.filename = cmd[0]
-
-        raise
-
-    with process:
-        with _tools_lock:
-            _running_tools.add(process)
-
-        try:
-            stdout, stderr = process.communicate(stdin)
-        except BaseException:
-            _kill_tool(process)
-            raise
-        finally:
-            with _tools_lock:
-                _running_tools.discard(process)
-                abandoned = process in _abandoned_tools
-                _abandoned_tools.discard(process)
-
-    if abandoned:
-        raise Interrupted
-
-    if process.returncode != 0:
-        raise subprocess.CalledProcessError(process.returncode, cmd, stdout, stderr)
-
-    return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
-
-
-def _run_yafu(expression: str, threads: int, yafu: YafuPaths, *options: str) -> tuple[list[int], float]:
-    """Evaluate an expression using YAFU, allowing it to use the given number of threads.
-
-    Returns:
-        tuple[list[int], float]: A tuple containing the sorted list of factors and the execution time in seconds.
-
-    Raises:
-        YafuError: If YAFU cannot be started or exits with an error.
-    """
-    cmd = [str(yafu.binary), expression, *options]
-    start_time = time.perf_counter_ns()
-
-    try:
-        with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
-            result = run_tool(cmd, work_dir, threads)
-    except (OSError, subprocess.CalledProcessError) as e:
-        msg = f"YAFU failed for {expression}: {_describe_tool_failure(e)}"
-        raise YafuError(msg) from e
-
-    factors: list[int] = []
-
-    for line in result.stdout.strip().split("\n"):
-        matches = re.match(r"(P|C)([0-9]*) = (?P<factor>[0-9]*)", line)
-
-        if matches:
-            factors.append(int(matches["factor"]))
-
-    end_time = time.perf_counter_ns()
-
-    return sorted(factors), (end_time - start_time) / 1_000_000_000.0
 
 
 @cache
@@ -224,8 +68,8 @@ def factor_ecm(  # ruff:ignore[too-many-arguments, too-many-positional-arguments
     curves, b1 = ECM_CURVES[level]
 
     # Perform the ECM using YAFU.
-    factors, execution_time = _run_yafu(
-        f"ecm({n}, {curves})", max_threads, yafu, "-threads", str(max_threads), "-B1ecm", str(b1)
+    factors, execution_time = run_yafu(
+        "ECM", n, f"ecm({n}, {curves})", max_threads, yafu, "-threads", str(max_threads), "-B1ecm", str(b1)
     )
 
     stats.update_ecm(digits, level, max_threads, execution_time, success=len(factors) > 1)
@@ -261,7 +105,10 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu: YafuPaths, stats: F
         # YAFU silently runs SIQS instead of NFS below its QS/NFS crossover.
         options.extend(["-xover", "1"])
 
-    factors, execution_time = _run_yafu(f"{method}({n})", threads, yafu, *options)
+    # The final methods are expected to find a factor, so failure is considered an error.
+    factors, execution_time = run_yafu(
+        YAFU_METHOD_NAMES[method], n, f"{method}({n})", threads, yafu, *options, must_split=method in {"siqs", "nfs"}
+    )
 
     if method == "siqs":
         stats.update_final("siqs", digits, threads, execution_time)
@@ -270,15 +117,8 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu: YafuPaths, stats: F
     else:
         stats.update_probability(digits, method, threads, execution_time, success=len(factors) > 1)
 
-    methods = {
-        "rho": "Rho",
-        "pm1": "P-1",
-        "siqs": "SIQS",
-        "nfs": "YAFU NFS",
-    }
-
     if len(factors) > 1:
-        log_factor_result([methods[method]], n, factors)
+        log_factor_result([YAFU_METHOD_NAMES[method]], n, factors)
 
     return factors
 
@@ -290,12 +130,12 @@ def factor_yafu_direct(n: int, max_threads: int, yafu: YafuPaths, stats: Factori
     Returns:
         list[int]: List of factors found.
     """
-    factors, execution_time = _run_yafu(f"factor({n})", max_threads, yafu, "-threads", str(max_threads))
+    factors, execution_time = run_yafu(
+        "YAFU", n, f"factor({n})", max_threads, yafu, "-threads", str(max_threads), must_split=True
+    )
 
-    stats.update_probability(len(str(n)), "yafu", max_threads, execution_time, success=len(factors) > 1)
-
-    if len(factors) > 1:
-        log_factor_result(["YAFU"], n, factors)
+    stats.update_probability(len(str(n)), "yafu", max_threads, execution_time, success=True)
+    log_factor_result(["YAFU"], n, factors)
 
     return factors
 
@@ -306,9 +146,6 @@ def factor_nfs_cado(n: int, max_threads: int, cado_nfs_path: Path, work_path: Pa
 
     Returns:
         list[int]: List of factors found.
-
-    Raises:
-        CadoNfsError: If CADO-NFS cannot be started or exits with an error.
     """
     # Abort if the number of digits is too small for CADO-NFS.
     digits = len(str(n))
@@ -316,28 +153,12 @@ def factor_nfs_cado(n: int, max_threads: int, cado_nfs_path: Path, work_path: Pa
     if digits < NFS_CADO_MIN_DIGITS:
         return [n]
 
-    # Factor the number using CADO-NFS.
-    cmd = [str(cado_nfs_path.absolute()), str(n), "-t", str(max_threads)]
+    factors, execution_time = run_cado_nfs(FINAL_METHOD_NAMES["nfs_cado"], n, max_threads, cado_nfs_path, work_path)
 
-    start_time = time.perf_counter_ns()
-
-    try:
-        with get_work_dir(work_path, None, "nfs-cado-") as work_dir:
-            result = run_tool(cmd, work_dir, max_threads, stdin=str(n))
-    except (OSError, subprocess.CalledProcessError) as e:
-        msg = f"CADO-NFS failed for {n}: {_describe_tool_failure(e)}"
-        raise CadoNfsError(msg) from e
-
-    end_time = time.perf_counter_ns()
-    execution_time = (end_time - start_time) / 1_000_000_000.0
     stats.update_final("nfs_cado", digits, max_threads, execution_time)
+    log_factor_result([FINAL_METHOD_NAMES["nfs_cado"]], n, factors)
 
-    factors = list(map(int, result.stdout.strip().split()))
-
-    if len(factors) > 1:
-        log_factor_result(["CADO-NFS"], n, sorted(factors))
-
-    return sorted(factors)
+    return factors
 
 
 @cache
@@ -390,6 +211,7 @@ class Number:
     methods: list[str]
 
     expires_at: float | None
+    tool_failed: bool
 
     _ecm_level: int
     _ecm_finished: bool
@@ -405,6 +227,7 @@ class Number:
         self._backend = backend
         self._submitted = False
         self.expires_at = None
+        self.tool_failed = False
 
         self._ecm_level = 0
         self._ecm_finished = False
@@ -448,6 +271,14 @@ class Number:
         return self.expires_at is not None and assignment_expired(self.expires_at)
 
     @property
+    def active(self) -> bool:
+        """Whether this number is still actively being factored.
+
+        Numbers are considered active until they're fully factored or until a tool fails on it.
+        """
+        return not self.factored and not self.tool_failed
+
+    @property
     def attempted(self) -> bool:
         """Whether any factoring method has been run against this number."""
         return len(self.methods) > 0
@@ -469,7 +300,7 @@ class Number:
 
         Once a number has finished ECM, it stays finished even if the cutoff shifts later.
         """
-        if self._ecm_finished or self.factored:
+        if self._ecm_finished or not self.active:
             return False
 
         if self._ecm_level < self.ecm_cutoffs.target:
@@ -513,7 +344,7 @@ class Number:
         """Trailing arguments for the CADO-NFS factoring function."""
         return (self._config.max_threads, self._config.cado_nfs_path, self._config.work_path, self._stats)
 
-    def _factor_final(self, n: int, method: str) -> list[int]:
+    def _run_final(self, n: int, method: str) -> list[int]:
         """Factor a composite using the final method with the given statistics key.
 
         Returns:
@@ -527,38 +358,98 @@ class Number:
 
         return factor_nfs_cado(n, *self._nfs_cado_args)
 
+    def _set_aside(self, failure: ToolFailure) -> None:
+        """Give up on this number for the rest of the run, after a tool failed on it."""
+        logger.warning("{}. Leaving {} unfactored", failure, format_number(self.n))
+        self.tool_failed = True
+
+    def _replace_composite(self, n: int, method: str, factors: list[int]) -> list[int]:
+        """Replace a composite factor with the factors a method found for it.
+
+        Returns:
+            list[int]: The factors that are themselves composite.
+        """
+        if len(factors) > 1:
+            self.methods.append(method)
+
+        self.composite_factors.remove(n)
+        composites: list[int] = []
+
+        for factor in factors:
+            if is_prime(factor):
+                self.prime_factors.append(factor)
+            else:
+                self.composite_factors.append(factor)
+                composites.append(factor)
+
+        return composites
+
+    def _finish(self) -> None:
+        """Log and submit the factorization if complete."""
+        if not self.factored:
+            return
+
+        if len(self.methods) > 1:
+            log_factor_result(set(self.methods), self.n, self.prime_factors)
+
+        if not self._submitted and self._backend is not None:
+            self._backend.submit([self])
+            self._submitted = True
+
+    def _factor_final(self, n: int, first_method: str | None = None) -> None:
+        """Completely factor a composite using the final methods.
+
+        The fastest eligible method is tried first, unless another is given. If a method fails or does not fully factor
+        the number, the remaining eligible methods are tried in turn, and the number is set aside once none are left.
+        Any factors that are themselves composite are then factored in the same way.
+        """
+        digits = len(str(n))
+        methods = list(self._config.final_methods.for_digits(digits))
+        method = first_method
+
+        while self.active and methods:
+            if method is None:
+                method = self._stats.get_final_method(digits, self._config.max_threads, methods)
+
+            methods.remove(method)
+
+            try:
+                factors = self._run_final(n, method)
+            except ToolFailure as e:
+                if not methods:
+                    self._set_aside(e)
+                    return
+
+                logger.warning("{}. Trying another method", e)
+                factors = [n]
+
+            if len(factors) > 1:
+                for composite in self._replace_composite(n, FINAL_METHOD_NAMES[method], factors):
+                    self._factor_final(composite)
+
+                return
+
+            method = None
+
     def _factor_generic(
         self,
         method: str,
         factor_func: Callable[..., list[int]],
         *args: int | str | Path | YafuPaths | FinalMethods | FactoringStats,
-        composites: Iterable[int] | None = None,
     ) -> None:
-        for n in list(self.composite_factors if composites is None else composites):
+        for n in list(self.composite_factors):
             try:
-                factors = factor_func(n, *args)
+                self._replace_composite(n, method, factor_func(n, *args))
             except FinalMethodNeeded as e:
-                method = FINAL_METHOD_NAMES[e.method]
-                logger.info("Immediately doing {} on {} for statistics", method, format_number(n))
-                factors = self._factor_final(n, e.method)
+                logger.info("Immediately doing {} on {} for statistics", FINAL_METHOD_NAMES[e.method], format_number(n))
+                self._factor_final(n, e.method)
+            except ToolFailure as e:
+                self._set_aside(e)
 
-            if len(factors) > 1:
-                self.methods.append(method)
+            if not self.active:
+                break
 
-            self.composite_factors.remove(n)
-
-            for factor in factors:
-                if is_prime(factor):
-                    self.prime_factors.append(factor)
-                else:
-                    self.composite_factors.append(factor)
-
-        if self.factored and len(self.methods) > 1:
-            log_factor_result(set(self.methods), self.n, self.prime_factors)
-
-        if not self._submitted and self.factored and self._backend is not None:
-            self._backend.submit([self])
-            self._submitted = True
+        self._finish()
 
     def factor_yafu_direct(self) -> None:
         """Factor using YAFU's automatic method selection."""
@@ -582,10 +473,11 @@ class Number:
         self._ecm_level = level
 
     def factor_final(self) -> None:
-        """Factor each remaining composite using its own fastest final method."""
+        """Factor each remaining composite using its own fastest final method, falling back to the others."""
         for n in self.composite_factors.copy():
-            method = self._choose_final_method(n)
-            self._factor_generic(FINAL_METHOD_NAMES[method], self._factor_final, method, composites=[n])
+            self._factor_final(n)
+
+        self._finish()
 
 
 def format_factorization(number: Number, separator: str) -> str:

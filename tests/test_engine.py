@@ -13,14 +13,16 @@ from typing import TYPE_CHECKING, Literal
 from unittest.mock import Mock
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 import pytest
 
 from factortool.engine import ExitStatus, FactorEngine
 from factortool.interrupt import ABORT, FINISH_BATCH, POLL_INTERVAL, STOP_SOON, Interrupted, InterruptState
-from factortool.number import Number, YafuError, run_tool
+from factortool.number import Number
 from factortool.stats import ECMCutoffs, FactoringStats
+from factortool.tools import YafuError, run_tool
 
 from .helpers import (
     TOOL_STOP_TIMEOUT,
@@ -261,6 +263,108 @@ def test_an_abort_kills_a_tool_started_after_it(monkeypatch: pytest.MonkeyPatch,
     assert time.monotonic() - start < TOOL_STOP_TIMEOUT
     assert not heartbeat.exists() or heartbeat_stopped(heartbeat)
     assert number.composite_factors == [COMPOSITES[0]]
+
+
+def run_yafu_mode_with_15_failing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, numbers: list[Number]) -> ExitStatus:
+    """Run the engine in YAFU mode with a YAFU that exits with an error for 15 and factors 21.
+
+    Returns:
+        ExitStatus: The status the engine reported.
+    """
+
+    def yafu(cmd: list[str], *_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if cmd[1] == "factor(15)":
+            raise subprocess.CalledProcessError(1, cmd, "", "it broke")
+
+        return subprocess.CompletedProcess(cmd, 0, "***factors found***\nP1 = 3\nP1 = 7\n", "")
+
+    monkeypatch.setattr("factortool.tools.run_tool", yafu, raising=True)
+    config = make_config(work_path=tmp_path, factoring_mode="yafu")
+
+    for number in numbers:
+        number._config = config
+
+    return FactorEngine(config, InterruptState()).run(numbers)
+
+
+def test_a_tool_failure_leaves_its_number_unfactored_and_continues(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that a number a tool fails on is left unfactored while the rest of the batch is still factored."""
+    failing, succeeding = make_number(15), make_number(21)
+
+    assert run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [failing, succeeding]) == ExitStatus.SUCCESS
+    assert failing.composite_factors == [15]
+    assert sorted(succeeding.prime_factors) == [3, 7]
+
+
+def test_direct_yafu_returning_a_composite_unsplit_is_a_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that direct YAFU mode treats an unchanged composite as a tool failure rather than a finished run."""
+    config = make_config(work_path=tmp_path, factoring_mode="yafu")
+    stats = FactoringStats(tmp_path / "stats.json", read_only=True)
+    number = Number(15, config, stats, None)
+    run_tool = Mock(return_value=subprocess.CompletedProcess([], 0, "***factors found***\nC2 = 15\n", ""))
+    monkeypatch.setattr("factortool.tools.run_tool", run_tool, raising=True)
+
+    with pytest.raises(YafuError, match="failed every time it was run"):
+        FactorEngine(config, InterruptState()).run([number])
+
+    assert number.tool_failed
+    assert stats.get_yafu_stats(2, 1) == (0, None)
+
+
+def test_a_tool_that_failed_every_time_ends_the_run_with_its_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that a batch too small for repeated failures still reports a tool that never worked."""
+    with pytest.raises(YafuError, match="failed every time it was run") as raised:
+        run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [make_number(15)])
+
+    assert raised.value.exit_status == YafuError.exit_status
+
+
+def test_an_interrupted_run_is_not_judged_by_its_tool_failures(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that a run cut short by an interrupt is reported as interrupted, even if its only tool run failed."""
+    interrupts = InterruptState()
+    interrupts._level = FINISH_BATCH
+    numbers = [make_number(15), make_number(21)]
+
+    def yafu(cmd: list[str], *_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.CalledProcessError(1, cmd, "", "it broke")
+
+    monkeypatch.setattr("factortool.tools.run_tool", yafu, raising=True)
+    monkeypatch.setattr("factortool.engine.FactorEngine._stop_status", Mock(side_effect=[None, ExitStatus.INTERRUPTED]))
+    config = make_config(work_path=tmp_path, factoring_mode="yafu")
+
+    for number in numbers:
+        number._config = config
+
+    assert FactorEngine(config, interrupts).run(numbers) == ExitStatus.INTERRUPTED
+    assert numbers[0].tool_failed
+
+
+def test_a_number_set_aside_is_skipped_by_the_later_stages(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a number a tool failed on during rho is not attempted again by P-1, ECM or the final methods."""
+    engine = FactorEngine(make_config(), InterruptState())
+    failing, other = (make_number(n) for n in COMPOSITES[:2])
+    attempted: list[tuple[str, int]] = []
+
+    def factor_rho(self: Number) -> None:
+        self.tool_failed = self.n == failing.n
+
+    def record(stage: str) -> Callable[..., None]:
+        return lambda self, *_args: attempted.append((stage, self.n))
+
+    monkeypatch.setattr("factortool.number.Number.factor_tf", Mock(), raising=True)
+    monkeypatch.setattr("factortool.number.Number.factor_rho", factor_rho, raising=True)
+    monkeypatch.setattr("factortool.number.Number.factor_pm1", record("pm1"), raising=True)
+    monkeypatch.setattr("factortool.number.Number.factor_final", record("final"), raising=True)
+    monkeypatch.setattr("factortool.number.Number.ecm_cutoffs", ECMCutoffs(0, 0), raising=True)
+
+    assert engine.run([failing, other]) == ExitStatus.SUCCESS
+    assert attempted == [("pm1", other.n), ("final", other.n)]
 
 
 @pytest.mark.parametrize("error", [YafuError("YAFU failed"), RuntimeError("bug"), SystemExit(5)])
@@ -515,7 +619,7 @@ def test_composites_too_small_for_nfs_are_finished_with_siqs(monkeypatch: pytest
         output = "".join(f"P21 = {p}\n" for p in C41_FACTORS) if method == "siqs" else f"C41 = {n}\n"
         return subprocess.CompletedProcess(cmd, 0, output, "")
 
-    monkeypatch.setattr("factortool.number.run_tool", yafu, raising=True)
+    monkeypatch.setattr("factortool.tools.run_tool", yafu, raising=True)
 
     assert FactorEngine(config, InterruptState()).run([number]) == ExitStatus.SUCCESS
     assert methods[-1] == "siqs"
