@@ -27,23 +27,29 @@ The recommended way to install the program is to have [uv](https://docs.astral.s
 installed, and to simply run the program with `uv run factortool`.
 
 Copy the `config.dist.json` to `config.json` and edit it as appropriate. Only
-`backend`, `cado_nfs_path`, `max_threads` and `yafu_path` are required. If you
-are using the `mersenne_ca` backend, you also need to set `gimps_login`. Anything
-unspecified defaults to the values in `config.dist.json`.
+`backend`, `max_threads` and `yafu_path` are required. If you are using the
+`mersenne_ca` backend, you also need to set `gimps_login`, and if you enable
+`use_nfs_cado`, you also need to set `cado_nfs_path`. Anything unspecified
+defaults to the values in `config.dist.json`.
+
+The configuration and the options below are checked before any work is fetched.
+`max_threads` must be at least 1, `yafu_path` must be an executable file, as
+must `cado_nfs_path` if `use_nfs_cado` is enabled, and `yafu_ini_path` must
+exist if it is set.
 
 You may then run the program. It accepts the following options:
 
 * `--config_path`: To specify a configuration file other than config.json.
 * `--min_digits`: The minimium number of digits fetched composite numbers should
-  have.
+  have. Must be at least 1.
 * `--max_digits`: The maximum number of digits fetched composite numbers should
   have. Required by the mersenne.ca backend.
 * `--batch_size`: The number of composite numbers to fetch. A value of 0 (default)
   attempts to use an automatic batch size to meet a target time.
 * `--target_duration`: The number of seconds to target when using an automatic
-  batch size. The default is 600 seconds (ten minutes). If factoring takes more
-  than twice this long, the run ends after the current factorization. A run with
-  an explicit `--batch_size` has no time limit.
+  batch size. Must be positive. The default is 600 seconds (ten minutes). If
+  factoring takes more than twice this long, the run ends after the current
+  factorization. A run with an explicit `--batch_size` has no time limit.
 * `--skip_count`: How many composite numbers to skip on FactorDB. Useful for working
   at an offset to avoid conflicts. Not supported by the mersenne.ca backend (which
   assigns distinct work to each user).
@@ -166,7 +172,7 @@ test. The `standard` mode is left in both for fun and as a historical curiosity.
 
 The program returns the following non-zero error codes:
 
-* 1: Configuration error or invalid statistics data
+* 1: Configuration error, invalid arguments or invalid statistics data
 * 2: Interrupted (any interrupt level) or asked to end by a signal
 * 3: Time limit exceeded
 * 4: Unexpected CADO-NFS failure

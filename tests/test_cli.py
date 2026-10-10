@@ -50,6 +50,12 @@ CARRIED_OVER = [100, 102]
 FETCHED = [104, 106, 108]
 
 
+def write_config(tmp_path: Path, **overrides: object) -> None:
+    """Write a configuration file whose tools are present, with any executable standing in for YAFU."""
+    config = {"backend": "factordb", "max_threads": 1, "yafu_path": sys.executable, **overrides}
+    (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
+
+
 class FakeBackend:
     """A backend that records requests, assigning work unless told otherwise."""
 
@@ -171,13 +177,82 @@ def test_no_new_work_is_rejected_by_a_backend_that_assigns_nothing() -> None:
     assert error.value.code == 1
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--min_digits", "0"],
+        ["--min_digits", "-3"],
+        ["--batch_size", "-1"],
+        ["--skip_count", "-1"],
+        ["--target_duration", "0"],
+        ["--target_duration", "-600"],
+        ["--target_duration", "nan"],
+        ["--target_duration", "inf"],
+        ["--max_digits", "-1"],
+        ["--min_digits", "60", "--max_digits", "50"],
+    ],
+)
+def test_out_of_range_arguments_are_rejected(arguments: list[str]) -> None:
+    """Test that arguments no run could honor are refused up front."""
+    args = Arguments().parse_args(arguments)
+
+    with pytest.raises(SystemExit) as error:
+        validate_arguments(args, "factordb")
+
+    assert error.value.code == 1
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [[], ["--min_digits", "1", "--max_digits", "1"], ["--batch_size", "5", "--skip_count", "0"]],
+)
+def test_arguments_at_the_edge_of_their_range_are_accepted(arguments: list[str]) -> None:
+    """Test that the smallest usable values are not refused."""
+    validate_arguments(Arguments().parse_args(arguments), "factordb")
+
+
+@pytest.mark.parametrize("arguments", [["--min_digits", "many"], ["--no_such_option"]])
+def test_unparseable_arguments_exit_as_a_usage_error(arguments: list[str]) -> None:
+    """Test that arguments the parser rejects don't exit with the status that means interrupted."""
+    with pytest.raises(SystemExit) as error:
+        Arguments().parse_args(arguments)
+
+    assert error.value.code == 1
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"yafu_path": "missing-yafu"},
+        {"yafu_ini_path": "missing.ini"},
+        {"cado_nfs_path": "missing-cado-nfs.py", "use_nfs_cado": True},
+    ],
+)
+def test_missing_tools_end_the_run_before_the_backend_is_started(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, overrides: dict[str, object]
+) -> None:
+    """Test that a tool that isn't there is reported before work is fetched for it."""
+    write_config(tmp_path, **overrides)
+    create_backend = Mock()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["factortool"])
+    monkeypatch.setattr("factortool.cli.main.setup_logger", Mock(), raising=True)
+    monkeypatch.setattr("factortool.cli.main.InterruptState.install", Mock(), raising=True)
+    monkeypatch.setattr("factortool.cli.main.create_backend", create_backend)
+
+    with pytest.raises(SystemExit) as raised:
+        main()
+
+    assert raised.value.code == 1
+    create_backend.assert_not_called()
+
+
 @pytest.mark.parametrize(("error", "exit_status"), [(YafuError("YAFU failed"), 5), (CadoNfsError("CADO failed"), 4)])
 def test_a_tool_failure_exits_with_the_tool_status_after_cleaning_up(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, error: ToolError, exit_status: int
 ) -> None:
     """Test that a tool failure during the run still saves state before exiting with that tool's status."""
-    config = {"backend": "factordb", "cado_nfs_path": "cado-nfs.py", "max_threads": 1, "yafu_path": "yafu"}
-    (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    write_config(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["factortool", "--batch_size", "3"])
     monkeypatch.setattr("factortool.cli.main.setup_logger", Mock(), raising=True)
@@ -197,8 +272,7 @@ def test_a_termination_signal_still_saves_state_before_exiting_as_interrupted(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Test that a run ended by SIGTERM saves its state and results, and exits with the interrupted status."""
-    config = {"backend": "factordb", "cado_nfs_path": "cado-nfs.py", "max_threads": 1, "yafu_path": "yafu"}
-    (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    write_config(tmp_path)
     backend = FakeBackend(assigns_work=False)
     backend.close = Mock()  # type: ignore[method-assign]
     interrupts = InterruptState()
@@ -256,8 +330,7 @@ def test_the_run_is_given_the_time_limit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, arguments: list[str], time_limit: float | None
 ) -> None:
     """Test that the time limit reaches the engine with the run rather than when the engine is created."""
-    config = {"backend": "factordb", "cado_nfs_path": "cado-nfs.py", "max_threads": 1, "yafu_path": "yafu"}
-    (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    write_config(tmp_path)
     run = Mock(return_value=ExitStatus.SUCCESS)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["factortool", *arguments])
@@ -306,8 +379,7 @@ def run_main(
     Returns:
         tuple[int, Mock]: The exit status and the mock standing in for closing the backend.
     """
-    config = {"backend": "factordb", "cado_nfs_path": "cado-nfs.py", "max_threads": 1, "yafu_path": "yafu"}
-    (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    write_config(tmp_path)
     backend = FakeBackend(assigns_work=False) if backend is None else backend
     close = Mock() if close is None else close
     backend.close = close  # type: ignore[method-assign]

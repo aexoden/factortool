@@ -8,7 +8,7 @@ import math
 import time
 
 from functools import cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -342,7 +342,10 @@ class Number:
     @property
     def _nfs_cado_args(self) -> tuple[int, Path, Path, FactoringStats]:
         """Trailing arguments for the CADO-NFS factoring function."""
-        return (self._config.max_threads, self._config.cado_nfs_path, self._config.work_path, self._stats)
+        # CADO-NFS is only ever eligible if the path is provided in the configuration.
+        cado_nfs_path = cast("Path", self._config.cado_nfs_path)
+
+        return (self._config.max_threads, cado_nfs_path, self._config.work_path, self._stats)
 
     def _run_final(self, n: int, method: str) -> list[int]:
         """Factor a composite using the final method with the given statistics key.

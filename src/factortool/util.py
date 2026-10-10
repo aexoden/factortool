@@ -12,7 +12,7 @@ import tempfile
 
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 import gmpy2
 
 from loguru import logger
+from tap import Tap
 
 
 def generate_primes(limit: int = 10**6) -> list[int]:
@@ -39,6 +40,18 @@ def generate_primes(limit: int = 10**6) -> list[int]:
 
 
 SMALL_PRIMES: list[int] = generate_primes()
+
+# The exit status of a run that was given an invalid configuration or invalid arguments.
+INVALID_USAGE_EXIT_STATUS = 1
+
+
+class ArgumentParser(Tap):
+    """An argument parser that reports invalid arguments with the same exit status as an invalid configuration."""
+
+    def error(self, message: str) -> NoReturn:
+        """Report invalid arguments and exit, without argparse's exit status of 2."""
+        self.print_usage(sys.stderr)
+        self.exit(INVALID_USAGE_EXIT_STATUS, f"{self.prog}: error: {message}\n")
 
 
 def format_number(n: int, max_width: int = 32) -> str:

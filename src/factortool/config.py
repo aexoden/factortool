@@ -4,13 +4,15 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 import sys
 
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import Annotated, Literal, NamedTuple
 
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, ValidationError, field_validator, model_validator
 
 from factortool.constants import FINAL_METHOD_NAMES, NFS_CADO_MIN_DIGITS, NFS_YAFU_MIN_DIGITS
 
@@ -49,6 +51,17 @@ class FinalMethods(NamedTuple):
 
 ASCII_RANGE = range(0x20, 0x7F)
 
+CooldownPeriod = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+
+
+def _is_executable_file(path: Path) -> bool:
+    """Check if the given path is an executable file.
+
+    Returns:
+        bool: True if the path is an executable file, or on Windows, becomes one once an omitted extension is added.
+    """
+    return (path.is_file() and os.access(path, os.X_OK)) or shutil.which(path) is not None
+
 
 class Config(BaseModel):
     """Configuration for factorization tool."""
@@ -57,19 +70,19 @@ class Config(BaseModel):
 
     # Required settings
     backend: Literal["factordb", "mersenne_ca"]
-    cado_nfs_path: Path
-    max_threads: int
+    max_threads: PositiveInt
     yafu_path: Path
 
     # Optional settings with defaults
     assignment_state_path: Path = Path("assignment_state.json")
     batch_state_path: Path = Path("batch_state.json")
+    cado_nfs_path: Path | None = None
     factordb_api_token: str = ""
-    factordb_cooldown_period: float = 1.0
+    factordb_cooldown_period: CooldownPeriod = 1.0
     factoring_mode: Literal["standard", "yafu"] = "standard"
     gimps_login: str = ""
-    max_siqs_digits: int = 100
-    mersenne_ca_cooldown_period: float = 1.0
+    max_siqs_digits: PositiveInt = 100
+    mersenne_ca_cooldown_period: CooldownPeriod = 1.0
     result_output_path: Path = Path("results")
     stats_path: Path = Path("stats.json")
     use_nfs_cado: bool = False
@@ -108,6 +121,22 @@ class Config(BaseModel):
 
         return self
 
+    @model_validator(mode="after")
+    def validate_cado_nfs_path(self) -> Config:
+        """Require the path to CADO-NFS when it is enabled.
+
+        Returns:
+            Config: The validated configuration object.
+
+        Raises:
+            ValueError: If CADO-NFS is enabled without a path to it.
+        """
+        if self.use_nfs_cado and self.cado_nfs_path is None:
+            msg = "use_nfs_cado requires cado_nfs_path"
+            raise ValueError(msg)
+
+        return self
+
     @field_validator("user_agent")
     @classmethod
     def validate_user_agent(cls, value: str) -> str:
@@ -137,6 +166,27 @@ class Config(BaseModel):
     def final_methods(self) -> FinalMethods:
         """Settings that decide which final factoring methods may be used."""
         return FinalMethods(self.max_siqs_digits, self.use_nfs_cado, self.use_nfs_yafu)
+
+    def find_tool_problems(self) -> list[str]:
+        """Look for the external tools and files this configuration needs.
+
+        Returns:
+            list[str]: A description of each one that is missing or unusable.
+        """
+        problems: list[str] = []
+        tools = {"yafu_path": self.yafu_path}
+
+        if self.use_nfs_cado and self.cado_nfs_path is not None:
+            tools["cado_nfs_path"] = self.cado_nfs_path
+
+        for setting, path in sorted(tools.items()):
+            if not _is_executable_file(path.absolute()):
+                problems.append(f"{setting} ({path}) is not an executable file")
+
+        if self.yafu_ini_path is not None and not self.yafu_ini_path.is_file():
+            problems.append(f"yafu_ini_path ({self.yafu_ini_path}) is not a file")
+
+        return problems
 
 
 def read_config(path: Path) -> Config:

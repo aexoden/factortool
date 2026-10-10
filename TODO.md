@@ -7,9 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- Validate more input up front: `max_threads` must be at least one,
-  `--min_digits` must be at least one (currently an unhandled `ValueError`),
-  `--target_duration` must be positive, and `yafu_path` must exist.
 - The analyzer currently stops showing ECM data as soon as it encounters a level
   with no data. While comparatively rare, it's possible for there to be gaps as
   numbers can start at arbitrary points if they were added as cofactors. The
@@ -44,12 +41,9 @@ later ones.
 - Allow temporarily setting max_threads via a command-line parameter. Along with
   backend, it's probably the option people are most likely to want to change
   between runs.
-- Make `cado_nfs_path` optional, requiring it only if `use_nfs_cado` is enabled
-  (as `gimps_login` is only required by the mersenne.ca backend).
 - Change the README's shell loop to stop on any exit status other than 0 and 3.
-  It currently only stops on 2 and 6, so a configuration error, tool failure or
-  cleanup failure (7) retries every second. Note that argument errors also exit
-  with status 2.
+  It currently only stops on 2 and 6, so a configuration error, invalid
+  argument, tool failure or cleanup failure (7) retries every second.
 - Verify whether `cado-nfs.py` uses its own directory under `/tmp` unless given
   `--workdir`. If so, pass the managed working directory so an aborted run
   doesn't leave it behind. The `stdin` passed to it also looks unnecessary.
@@ -72,9 +66,12 @@ later ones.
   the default of ten minutes), it's fine, but perhaps a warning if the user tries
   to use too large a duration such that their assignments risk expiring.
 - Investigate moving away from Tap (Typed Argument Parser) for argument parsing.
-  The obvious alternatives are click and typer, both of which are far more active
-  projects than Tap, but this list isn't exhaustive. If opting to keep Tap, at
-  least standardize on using hyphens rather than underscores in option names.
+  The obvious alternatives are click and typer, both of which are far more
+  active projects than Tap, but this list isn't exhaustive. If opting to keep
+  Tap, at least standardize on using hyphens rather than underscores in option
+  names. At the same time, consider looking at the current exit status codes,
+  and see if there are changes that can be made to improve the codes or to
+  better follow any standards.
 - Investigate switching from the FactorDB list_by_type endpoint to the download
   endpoint. The offset option would no longer be supported, but that was largely
   intended to minimize the risk of overlapping work, and the `random` option

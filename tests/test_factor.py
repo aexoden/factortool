@@ -128,7 +128,7 @@ def test_yafu_nfs_is_not_run_below_its_minimum(monkeypatch: pytest.MonkeyPatch, 
 
 def test_final_factoring_chooses_a_method_for_each_composite(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Test that each remaining composite is factored with the fastest final method eligible for its own size."""
-    config = make_config(use_nfs_cado=True, use_nfs_yafu=True)
+    config = make_config(cado_nfs_path="cado-nfs.py", use_nfs_cado=True, use_nfs_yafu=True)
     stats = FactoringStats(tmp_path / "stats.json", read_only=True)
 
     for method, execution_time in (("siqs", 100.0), ("nfs_yafu", 50.0), ("nfs_cado", 80.0)):
@@ -212,7 +212,7 @@ def test_tools_are_given_the_threads_their_method_can_use(
     elif tool == "yafu_direct":
         factor_yafu_direct(C90, 4, yafu, stats)
     elif tool == "nfs_cado":
-        factor_nfs_cado(C90, 4, config.cado_nfs_path, tmp_path, stats)
+        factor_nfs_cado(C90, 4, Path("cado-nfs.py"), tmp_path, stats)
     else:
         factor_yafu(C90, tool, 4, yafu, stats)
 
@@ -230,7 +230,7 @@ def failing_tools(tmp_path: Path, stats: FactoringStats) -> dict[str, tuple[Call
     Returns:
         dict[str, tuple[Callable[[], object], type[ToolError]]]: The call and error type by name.
     """
-    config = make_config(work_path=tmp_path, yafu_path=tmp_path / "missing-yafu", cado_nfs_path=tmp_path / "missing")
+    config = make_config(work_path=tmp_path, yafu_path=tmp_path / "missing-yafu")
     yafu = config.yafu_paths
 
     return {
@@ -238,7 +238,7 @@ def failing_tools(tmp_path: Path, stats: FactoringStats) -> dict[str, tuple[Call
         "rho": (lambda: factor_yafu(C90, "rho", 1, yafu, stats), YafuError),
         "siqs": (lambda: factor_yafu(C90, "siqs", 1, yafu, stats), YafuError),
         "yafu_direct": (lambda: factor_yafu_direct(C90, 1, yafu, stats), YafuError),
-        "nfs_cado": (lambda: factor_nfs_cado(C90, 1, config.cado_nfs_path, tmp_path, stats), CadoNfsError),
+        "nfs_cado": (lambda: factor_nfs_cado(C90, 1, tmp_path / "missing", tmp_path, stats), CadoNfsError),
     }
 
 
@@ -379,7 +379,7 @@ def final_number(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, results: dict[
     monkeypatch.setattr("factortool.number.Number._run_final", run_final, raising=True)
     monkeypatch.setattr("factortool.number.is_prime", lambda n: n != C90, raising=True)
 
-    return Number(C90, make_config(use_nfs_cado=True, use_nfs_yafu=True), stats, None)
+    return Number(C90, make_config(cado_nfs_path="cado-nfs.py", use_nfs_cado=True, use_nfs_yafu=True), stats, None)
 
 
 def test_a_failed_final_method_falls_back_to_the_next_fastest(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
