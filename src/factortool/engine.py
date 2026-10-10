@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
-from factortool.constants import ECM_CURVES, FINAL_METHOD_NAMES
+from factortool.constants import ECM_CURVES, ECM_MAX_LEVEL, ECM_MIN_LEVEL, FINAL_METHOD_NAMES
 from factortool.interrupt import Interrupted, InterruptState
 from factortool.number import Number, abandon_tools
 
@@ -228,10 +228,7 @@ class FactorEngine:
             return status
 
         # Attempt to factor each number via ECM.
-        minimum_ecm_level = min(ECM_CURVES.keys())
-        maximum_ecm_level = max(ECM_CURVES.keys())
-
-        for ecm_level in range(minimum_ecm_level, maximum_ecm_level + 1):
+        for ecm_level in range(ECM_MIN_LEVEL, ECM_MAX_LEVEL + 1):
             overall_number_count = len([x for x in numbers if not x.factored])
             ecm_numbers = [x for x in numbers if x.ecm_needed and not self._skip_expired(x)]
             ecm_number_count = len(ecm_numbers)
