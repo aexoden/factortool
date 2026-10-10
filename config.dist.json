@@ -2,7 +2,7 @@
   "assignment_state_path": "assignment_state.json",
   "backend": "factordb",
   "batch_state_path": "batch_state.json",
-  "cado_nfs_path": "/opt/cado-nfs/cado-nfs.py",
+  "cado_nfs_path": null,
   "factordb_api_token": "",
   "factordb_cooldown_period": 1.0,
   "factoring_mode": "standard",

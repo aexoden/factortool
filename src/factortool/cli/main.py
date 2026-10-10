@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import datetime
+import math
 import sys
 import time
 
@@ -18,7 +19,6 @@ if TYPE_CHECKING:
 import requests
 
 from loguru import logger
-from tap import Tap
 
 from factortool.__about__ import __version__
 from factortool.assignments import ASSIGNMENT_EXPIRY_FUDGE_FACTOR, AssignmentStore, select_unfinished
@@ -32,7 +32,7 @@ from factortool.interrupt import InterruptState
 from factortool.number import Number, format_results
 from factortool.stats import FactoringStats, InvalidStatsError
 from factortool.tools import ToolError
-from factortool.util import setup_logger
+from factortool.util import ArgumentParser, setup_logger
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -53,7 +53,7 @@ CLEANUP_FAILED_EXIT_STATUS = 7
 NON_ERROR_EXIT_STATUSES = frozenset({0, INTERRUPTED_EXIT_STATUS, TIME_LIMIT_EXIT_STATUS})
 
 
-class Arguments(Tap):
+class Arguments(ArgumentParser):
     """Utility for factoring numbers using various methods."""
 
     version: bool = False  # Show the version of the utility and exit
@@ -96,8 +96,12 @@ class Session:
     cleanup: Cleanup = field(default_factory=Cleanup)
 
 
-def validate_arguments(args: Arguments, backend_name: str) -> None:
-    """Reject argument combinations the selected backend cannot honor."""
+def validate_argument_ranges(args: Arguments) -> None:
+    """Reject arguments that are out of range."""
+    if args.min_digits < 1:
+        logger.error("--min_digits ({}) must be at least 1", args.min_digits)
+        sys.exit(1)
+
     if args.max_digits < 0:
         logger.error("--max_digits ({}) cannot be negative", args.max_digits)
         sys.exit(1)
@@ -105,6 +109,23 @@ def validate_arguments(args: Arguments, backend_name: str) -> None:
     if 0 < args.max_digits < args.min_digits:
         logger.error("--max_digits ({}) is below --min_digits ({})", args.max_digits, args.min_digits)
         sys.exit(1)
+
+    if args.batch_size < 0:
+        logger.error("--batch_size ({}) cannot be negative", args.batch_size)
+        sys.exit(1)
+
+    if not (math.isfinite(args.target_duration) and args.target_duration > 0):
+        logger.error("--target_duration ({}) must be a positive number of seconds", args.target_duration)
+        sys.exit(1)
+
+    if args.skip_count < 0:
+        logger.error("--skip_count ({}) cannot be negative", args.skip_count)
+        sys.exit(1)
+
+
+def validate_arguments(args: Arguments, backend_name: str) -> None:
+    """Reject arguments that are out of range and combinations the selected backend cannot honor."""
+    validate_argument_ranges(args)
 
     if backend_name == "mersenne_ca":
         if args.max_digits <= 0:
@@ -117,6 +138,17 @@ def validate_arguments(args: Arguments, backend_name: str) -> None:
     elif args.no_new_work:
         # FactorDB doesn't assign work, and we don't retain unfinished work, so this option would have no effect.
         logger.error("The FactorDB backend does not support --no_new_work, since it does not assign work.")
+        sys.exit(1)
+
+
+def validate_tools(config: Config) -> None:
+    """Reject a configuration whose external tools are missing, before any work is fetched."""
+    problems = config.find_tool_problems()
+
+    for problem in problems:
+        logger.error("Configuration error: {}", problem)
+
+    if problems:
         sys.exit(1)
 
 
@@ -353,6 +385,7 @@ def main() -> None:
         sys.exit(1)
 
     validate_arguments(args, config.backend)
+    validate_tools(config)
 
     interrupts = InterruptState()
     interrupts.install()

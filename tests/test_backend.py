@@ -110,7 +110,6 @@ def config(tmp_path: Path) -> Config:
     return make_config(
         assignment_state_path=tmp_path / "assignment_state.json",
         batch_state_path=tmp_path / "batch_state.json",
-        cado_nfs_path=tmp_path / "cado-nfs.py",
         factordb_cooldown_period=0.0,
         mersenne_ca_cooldown_period=0.0,
         result_output_path=tmp_path / "results",

@@ -10,7 +10,6 @@ import sys
 from pathlib import Path
 
 from loguru import logger
-from tap import Tap
 
 from factortool.config import Config, read_config
 from factortool.constants import (
@@ -21,10 +20,10 @@ from factortool.constants import (
     NFS_YAFU_MIN_DIGITS,
 )
 from factortool.stats import FactoringStats, InvalidStatsError
-from factortool.util import setup_logger
+from factortool.util import ArgumentParser, setup_logger
 
 
-class Arguments(Tap):
+class Arguments(ArgumentParser):
     """Utility for analyzing statistics gathered by factortool."""
 
     config_path: Path = Path("config.json")  # Path to the JSON-formatted configuration file
@@ -56,6 +55,10 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
     setup_logger()
 
     args = Arguments().parse_args()
+
+    if args.digits < 1:
+        logger.error("--digits ({}) must be at least 1", args.digits)
+        sys.exit(1)
 
     try:
         config = read_config(args.config_path)

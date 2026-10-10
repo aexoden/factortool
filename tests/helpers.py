@@ -26,9 +26,7 @@ def make_config(**overrides: object) -> Config:
     Returns:
         Config: The validated configuration.
     """
-    return Config.model_validate(
-        {"backend": "factordb", "cado_nfs_path": "cado-nfs.py", "max_threads": 1, "yafu_path": "yafu", **overrides}
-    )
+    return Config.model_validate({"backend": "factordb", "max_threads": 1, "yafu_path": "yafu", **overrides})
 
 
 def make_number(n: int) -> Number:
