@@ -7,11 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- The analyzer currently stops showing ECM data as soon as it encounters a level
-  with no data. While comparatively rare, it's possible for there to be gaps as
-  numbers can start at arbitrary points if they were added as cofactors. The
-  same assumption is in `_get_average_time_internal`, so a digit count mostly
-  reached via cofactors never leaves the initial fallback cutoff.
 - Submissions are retried forever and can't be interrupted, so a service outage
   hangs the shutdown. A 429 without a `Retry-After` header waits an hour, and a
   supplied value isn't clamped. Give up after a bounded time, write the unsent
@@ -57,6 +52,12 @@ later ones.
 
 - Move all state files into a directory with standardized names, changing the
   configuration to instead specify the directory.
+- Track ECM progress for each composite factor rather than for the number as a
+  whole. ECM currently runs on every remaining composite at a level chosen by
+  the largest one, so a small composite is carried through levels it would
+  never choose for itself, and the statistics for its digit count gain runs at
+  those levels. This may go along with revisiting how factors are stored and
+  with accounting for all factors in the time estimates.
 - Determine how multithreaded YAFU's implementation of SIQS is (may vary by
   digit count), and consider threading it ourselves like with rho and P-1.
 - Why is `max_siqs_digits` even an option? Is there a historical reason for it?
