@@ -75,11 +75,11 @@ def test_format_factorization_includes_trailing_composites() -> None:
 
 
 @pytest.mark.parametrize(
-    ("json_result", "json_error", "expected_count"),
+    ("json_result", "json_error", "accepted"),
     [
-        ({"status": "accepted"}, None, 1),
-        ({"error": "submission rejected"}, None, 0),
-        (None, ValueError("invalid JSON"), 0),
+        ({"status": "accepted"}, None, True),
+        ({"error": "submission rejected"}, None, False),
+        (None, ValueError("invalid JSON"), False),
     ],
     ids=["accepted", "rejected", "malformed"],
 )
@@ -88,7 +88,8 @@ def test_submit_counts_only_accepted_responses(
     monkeypatch: pytest.MonkeyPatch,
     json_result: dict[str, str] | None,
     json_error: ValueError | None,
-    expected_count: int,
+    *,
+    accepted: bool,
 ) -> None:
     """Only valid, accepted service responses count as successful submissions."""
     number = make_number(100)
@@ -101,7 +102,7 @@ def test_submit_counts_only_accepted_responses(
         response.json.return_value = json_result
     monkeypatch.setattr(HttpClient, "request", Mock(return_value=response))
 
-    assert mersenne_ca._submit_number(number) == expected_count
+    assert mersenne_ca._submit_number(number) is accepted
 
 
 def test_fetch_requires_max_digits(mersenne_ca: MersenneCA) -> None:

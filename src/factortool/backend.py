@@ -97,7 +97,7 @@ class Backend(Protocol):
         ...
 
     def get_successful_submission_count(self) -> int:
-        """Get the number of successful submissions."""
+        """Get the number of accepted factorizations."""
         ...
 
     def close(self) -> None:
@@ -132,9 +132,6 @@ class BaseBackend(ABC):
 
     # How long, in seconds, the service holds a fetched composite for this client. Only meaningful if assigns_work.
     assignment_lifetime: float
-
-    # A descriptive name for a single submission unit, used for logging.
-    submission_unit: ClassVar[str]
 
     # The largest number of composites to submit in a single batch.
     submit_batch_size: ClassVar[int] = 1
@@ -243,10 +240,10 @@ class BaseBackend(ABC):
                 self._submit_queue.put_nowait(number)
 
     def get_successful_submission_count(self) -> int:
-        """Get the number of successful submissions.
+        """Get the number of accepted factorizations.
 
         Returns:
-            int: The number of successful submissions, counted in units of submission_unit.
+            int: The number of accepted factorizations.
         """
         with self._submission_lock:
             return self._successful_submissions
@@ -257,9 +254,7 @@ class BaseBackend(ABC):
         self._submit_thread.join()
 
         if self._successful_submissions > 0:
-            logger.info(
-                "Successfully submitted {} {} to {}", self._successful_submissions, self.submission_unit, self.name
-            )
+            logger.info("Successfully submitted {} factorizations to {}", self._successful_submissions, self.name)
 
     def _validate_criteria(self, criteria: FetchCriteria) -> None:  # ruff: ignore[empty-method-without-abstract-decorator] (Optional hook)
         """Reject criteria the service cannot honor by raising a ValueError. By default, all criteria are supported."""
@@ -276,18 +271,18 @@ class BaseBackend(ABC):
         """
 
     @abstractmethod
-    def _submit_number(self, number: Number) -> int:
+    def _submit_number(self, number: Number) -> bool:
         """Submit a single factored number to the service.
 
         Returns:
-            int: The number of successful submissions, counted in units of submission_unit.
+            bool: True if the submission was accepted, otherwise False.
         """
 
     def _submit_numbers(self, numbers: Sequence[Number]) -> int:
         """Submit a batch of factored numbers to the service. By default, each number is submitted individually.
 
         Returns:
-            int: The number of successful submissions, counted in units of submission_unit.
+            int: The number of accepted factorizations.
         """
         return sum(self._submit_number(number) for number in numbers)
 

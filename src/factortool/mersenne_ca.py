@@ -48,8 +48,6 @@ class MersenneCA(BaseBackend):
     assigns_work = True
     assignment_lifetime = 3600.0
 
-    submission_unit = "factorizations"
-
     def __init__(self, config: Config, stats: FactoringStats, interrupts: InterruptState | None = None) -> None:
         """Initialize the mersenne.ca interface.
 
@@ -100,17 +98,17 @@ class MersenneCA(BaseBackend):
             self._service_request("GET", API_URL, params=params, timeout=30.0, interruptible=True).text
         )
 
-    def _submit_number(self, number: Number) -> int:
+    def _submit_number(self, number: Number) -> bool:
         """Report a single composite's factorization, complete or partial.
 
         Returns:
-            int: 1 if the service accepted the factorization, otherwise 0.
+            bool: True if the service accepted the factorization, otherwise False.
         """
         factors = number.prime_factors + number.composite_factors
 
         if not check_factorization(number.n, factors):
             logger.error("Refusing to report an inconsistent factorization for {}", number.n)
-            return 0
+            return False
 
         # The service expects a multipart POST, matching the documented "curl -F" invocation.
         payload: dict[str, tuple[None, str]] = {
@@ -122,9 +120,9 @@ class MersenneCA(BaseBackend):
             response = self._service_request("POST", API_URL, files=payload, timeout=30.0)
         except requests.RequestException as e:
             logger.error("Error reporting factorization for {}: {}", number.n, e)
-            return 0
+            return False
 
-        return int(self._log_response(number, response))
+        return self._log_response(number, response)
 
     @staticmethod
     def _log_response(number: Number, response: requests.Response) -> bool:

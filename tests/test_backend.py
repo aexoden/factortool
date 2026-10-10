@@ -41,14 +41,10 @@ class FakeBackend(BaseBackend):
 
     name = "Fake"
     assigns_work = False
-    submission_unit = "items"
 
-    def __init__(
-        self, config: Config, stats: FactoringStats, responses: Iterable[str | Exception], successes_per_number: int = 1
-    ) -> None:
+    def __init__(self, config: Config, stats: FactoringStats, responses: Iterable[str | Exception]) -> None:
         """Initialize the fake backend with the fetch responses to return in order."""
         self.responses = iter(responses)
-        self.successes_per_number = successes_per_number
         self.submitted: list[int] = []
         super().__init__(config, stats, 1.0, "")
 
@@ -62,9 +58,9 @@ class FakeBackend(BaseBackend):
         return parse_composites(response)
 
     @override
-    def _submit_number(self, number: Number) -> int:
+    def _submit_number(self, number: Number) -> bool:
         self.submitted.append(number.n)
-        return self.successes_per_number
+        return True
 
 
 @pytest.fixture
@@ -91,15 +87,13 @@ def wait(monkeypatch: pytest.MonkeyPatch) -> Mock:
     return wait
 
 
-def make_fake_backend(
-    config: Config, responses: Iterable[str | Exception] = (), successes_per_number: int = 1
-) -> FakeBackend:
+def make_fake_backend(config: Config, responses: Iterable[str | Exception] = ()) -> FakeBackend:
     """Create a fake backend. Callers are responsible for closing it.
 
     Returns:
         FakeBackend: The fake backend.
     """
-    return FakeBackend(config, FactoringStats(config.stats_path, read_only=True), responses, successes_per_number)
+    return FakeBackend(config, FactoringStats(config.stats_path, read_only=True), responses)
 
 
 @pytest.fixture
@@ -285,9 +279,8 @@ def test_base_fetch_abandons_the_wait_on_an_interrupt(config: Config, wait: Mock
 
 
 def test_base_close_flushes_submissions(config: Config, sleep: Mock) -> None:
-    """Test that closing submits every queued number with factors and totals the reported successes."""
-    successes_per_number = 2
-    backend = make_fake_backend(config, successes_per_number=successes_per_number)
+    """Test that closing submits every queued number with factors and counts the accepted factorizations."""
+    backend = make_fake_backend(config)
     stats = FactoringStats(config.stats_path, read_only=True)
     factored = [Number(n, config, stats, backend) for n in (15, 21)]
     unfactored = Number(35, config, stats, backend)
@@ -299,54 +292,55 @@ def test_base_close_flushes_submissions(config: Config, sleep: Mock) -> None:
     backend.close()
 
     assert backend.submitted == [15, 21]
-    assert backend.get_successful_submission_count() == successes_per_number * len(factored)
+    assert backend.get_successful_submission_count() == len(factored)
     assert sleep.call_args_list == [call(SUBMIT_SPACING)] * len(factored)
 
 
 @pytest.mark.parametrize(
-    ("prime_factors", "composite_factors", "expected"),
+    ("n", "prime_factors", "composite_factors", "expected"),
     [
-        ([3, 3, 5, 7], [], [3, 5]),
-        ([3, 5], [1001], [3, 5]),
+        (315, [3, 3, 5, 7], [], [3, 5]),
+        (15015, [3, 5], [1001], [3, 5]),
+        (9, [3, 3], [], [3]),
+        (75, [3, 5, 5], [], [3, 5]),
     ],
-    ids=["complete", "partial"],
+    ids=["complete", "partial", "prime-power", "repeated-largest"],
 )
 def test_factordb_submits_distinct_factors_in_one_call(  # ruff: ignore[too-many-arguments, too-many-positional-arguments] (Fixtures and parameters)
     factordb: FactorDB,
     config: Config,
     http_request: Mock,
     sleep: Mock,
+    n: int,
     prime_factors: list[int],
     composite_factors: list[int],
     expected: list[int],
 ) -> None:
     """Test that FactorDB receives each distinct prime factor, skipping the largest of a complete factorization."""
-    http_request.return_value = rpc_response({"id": {"fid": 315, "kind": "stored"}, "status": "CF"})
-    number = Number(315, config, FactoringStats(config.stats_path, read_only=True), factordb)
+    http_request.return_value = rpc_response({"id": {"fid": 1, "kind": "stored"}, "status": "CF"})
+    number = Number(n, config, FactoringStats(config.stats_path, read_only=True), factordb)
     number.prime_factors = prime_factors
     number.composite_factors = composite_factors
 
     factordb.submit([number])
     factordb.close()
 
-    assert factordb.get_successful_submission_count() == len(expected)
+    assert factordb.get_successful_submission_count() == 1
     http_request.assert_called_once()
     assert rpc_calls(http_request) == [
         (
             "report_factors",
-            {"target": {"expr": "315"}, "factors": [str(f) for f in expected], "credit": False},
+            {"target": {"expr": str(n)}, "factors": [str(f) for f in expected], "credit": False},
         )
     ]
     assert sleep.call_args_list == [call(SUBMIT_SPACING)]
 
 
-def test_factordb_skips_submission_without_nontrivial_factors(
+def test_factordb_skips_submission_of_a_prime(
     factordb: FactorDB, config: Config, http_request: Mock, sleep: Mock
 ) -> None:
-    """Test that a prime power, whose only factor is the trivial largest one, is not submitted."""
-    number = Number(9, config, FactoringStats(config.stats_path, read_only=True), factordb)
-    number.prime_factors = [3, 3]
-    number.composite_factors = []
+    """Test that a number that turned out to be prime is not submitted."""
+    number = Number(7, config, FactoringStats(config.stats_path, read_only=True), factordb)
 
     factordb.submit([number])
     factordb.close()
