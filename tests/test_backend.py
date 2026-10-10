@@ -10,13 +10,16 @@ import threading
 from typing import TYPE_CHECKING, Any, override
 from unittest.mock import Mock, call
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+    from pathlib import Path
+
 import pytest
 import requests
 
 from loguru import logger
 
 from factortool.backend import NO_WORK_DELAY, SUBMIT_SPACING, Backend, BaseBackend, FetchCriteria, parse_composites
-from factortool.config import Config
 from factortool.factordb import (
     API_URL,
     MAX_FETCH_COUNT,
@@ -32,8 +35,9 @@ from factortool.number import Number
 from factortool.stats import FactoringStats
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
-    from pathlib import Path
+    from factortool.config import Config
+
+from .helpers import make_config
 
 
 class FakeBackend(BaseBackend):
@@ -103,13 +107,11 @@ def config(tmp_path: Path) -> Config:
     Returns:
         Config: The test configuration.
     """
-    return Config.model_construct(
+    return make_config(
         assignment_state_path=tmp_path / "assignment_state.json",
-        backend="factordb",
         batch_state_path=tmp_path / "batch_state.json",
         cado_nfs_path=tmp_path / "cado-nfs.py",
         factordb_cooldown_period=0.0,
-        max_threads=1,
         mersenne_ca_cooldown_period=0.0,
         result_output_path=tmp_path / "results",
         stats_path=tmp_path / "stats.json",

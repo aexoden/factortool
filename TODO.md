@@ -7,9 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- `Config` carries a stray `@dataclass` decorator, which replaces pydantic's
-  `__init__`. Constructing a `Config` directly raises a `TypeError`. Only
-  `model_validate` works.
 - Only SIGINT is handled. SIGTERM and SIGHUP end the program without any
   cleanup: statistics and assignments aren't saved, queued submissions are lost,
   and the external tools keep running as they're in their own process groups.

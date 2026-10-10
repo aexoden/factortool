@@ -72,6 +72,27 @@ def read_invalid_config(path: Path) -> list[str]:
     return messages
 
 
+def test_config_can_be_constructed_directly() -> None:
+    """Test that constructing a configuration directly validates and applies defaults like reading a file does."""
+    config = Config(backend="factordb", cado_nfs_path=Path("cado-nfs.py"), max_threads=1, yafu_path=Path("yafu"))
+
+    assert config == make_config()
+
+    with pytest.raises(ValidationError, match="gimps_login"):
+        Config(backend="mersenne_ca", cado_nfs_path=Path("cado-nfs.py"), max_threads=1, yafu_path=Path("yafu"))
+
+
+def test_config_is_immutable() -> None:
+    """Test that a configuration cannot be changed once built, as it is shared across threads."""
+    config = make_config()
+
+    with pytest.raises(ValidationError, match="frozen"):
+        config.max_threads = 2
+
+    assert config.model_copy(update={"max_threads": 2}) == make_config(max_threads=2)
+    assert config == make_config()
+
+
 def test_mersenne_ca_requires_gimps_login() -> None:
     """Test that selecting the mersenne.ca backend without a GIMPS login is rejected."""
     with pytest.raises(ValidationError, match="gimps_login"):
