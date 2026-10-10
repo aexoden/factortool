@@ -7,8 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- FactorDB submissions drop the largest distinct prime as trivial, so a prime
-  power (such as p²) submits nothing at all.
 - `Config` carries a stray `@dataclass` decorator, which replaces pydantic's
   `__init__`. Constructing a `Config` directly raises a `TypeError`. Only
   `model_validate` works.
@@ -95,8 +93,7 @@ later ones.
   hard kill leaves them behind.
 - Write the assignment state when work is assigned rather than only at exit, so
   a hard kill doesn't forget reserved work.
-- Log when a FactorDB fetch is capped at 1000 numbers, and count the factors
-  FactorDB accepted rather than the ones sent.
+- Log when a FactorDB fetch is capped at 1000 numbers.
 
 ## Code/Architectural Improvements
 

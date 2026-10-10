@@ -219,7 +219,6 @@ class FactorDB(BaseBackend):
     assigns_work = False
     assignment_lifetime = 0.0
 
-    submission_unit = "factors"
     submit_batch_size = SUBMIT_BATCH_SIZE
 
     def __init__(self, config: Config, stats: FactoringStats, interrupts: InterruptState | None = None) -> None:
@@ -366,29 +365,40 @@ class FactorDB(BaseBackend):
 
         return composites
 
-    def _submit_number(self, number: Number) -> int:
+    def _submit_number(self, number: Number) -> bool:
         """Submit the distinct prime factors of a number to FactorDB.
 
         Returns:
-            int: The number of factors successfully submitted.
+            bool: Whether FactorDB accepted the factors.
         """
-        return self._submit_numbers([number])
+        return self._submit_numbers([number]) > 0
 
     @override
     def _submit_numbers(self, numbers: Sequence[Number]) -> int:
         """Submit the distinct prime factors of each number to FactorDB in a single batch.
 
+        Each number is submitted with its distinct prime factors, excluding the trivial largest factor if there are no
+        composite factors. The removal of the trivial largest factor occurs before duplicate factors are removed,
+        ensuring that if the largest factor is duplicated, it is nonetheless submitted.
+
         Returns:
-            int: The number of factors successfully submitted.
+            int: The count of numbers whose factors were accepted by FactorDB.
         """
         submissions: list[tuple[Number, list[int]]] = []
 
         for number in numbers:
-            factors = sorted(set(number.prime_factors))
+            factors = sorted(number.prime_factors)
 
             # If there are no composite factors, avoid sending the trivial largest factor.
             if len(number.composite_factors) == 0:
                 factors.pop()
+
+            # Remove duplicate factors to avoid redundant submissions.
+            factors = sorted(set(factors))
+
+            # It shouldn't really happen, but if the only prime factor is the number itself, skip it.
+            if len(factors) == 1 and factors[0] == number.n:
+                continue
 
             if factors:
                 submissions.append((number, factors))
@@ -427,7 +437,7 @@ class FactorDB(BaseBackend):
             logger.debug("Submitted factors {} for n={}: {}", factors, number.n, result)
 
             self._credited_count += report.credited
-            successes += len(factors)
+            successes += 1
 
         return successes
 
