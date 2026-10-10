@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, NoReturn
 if TYPE_CHECKING:
     from pathlib import Path
 
+from loguru import logger
+
 from factortool.constants import MAX_CONSECUTIVE_TOOL_FAILURES
 from factortool.interrupt import Interrupted
 from factortool.util import get_work_dir
@@ -126,23 +128,110 @@ def _describe_tool_failure(error: OSError | subprocess.CalledProcessError) -> st
     return str(error)
 
 
-# External tools currently running in any thread.
-_running_tools: set[subprocess.Popen[str]] = set()
+# External tools currently running in any thread, each with the handle of the Windows job it was placed in, if any.
+_running_tools: dict[subprocess.Popen[str], int | None] = {}
 
 # External tools that abandon_tools has killed.
 _abandoned_tools: set[subprocess.Popen[str]] = set()
 
 _tools_lock = threading.Lock()
 
+if sys.platform == "win32":
+    import ctypes
 
-def _kill_tool(process: subprocess.Popen[str]) -> None:
+    from ctypes import wintypes
+
+    # Starts a process without letting it run.
+    CREATE_SUSPENDED = 0x00000004
+
+    # The access needed to place a process in a job and then resume it.
+    PROCESS_TERMINATE = 0x0001
+    PROCESS_SET_QUOTA = 0x0100
+    PROCESS_SUSPEND_RESUME = 0x0800
+
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _ntdll = ctypes.WinDLL("ntdll")
+
+    _kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    _kernel32.OpenProcess.restype = wintypes.HANDLE
+    _kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+    _kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    _kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    _kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    _kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    _kernel32.TerminateJobObject.restype = wintypes.BOOL
+    _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _kernel32.CloseHandle.restype = wintypes.BOOL
+    _ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
+    _ntdll.NtResumeProcess.restype = wintypes.LONG
+
+    def _create_job(process_handle: int) -> int | None:
+        """Place a process in a new job, which every process it spawns will also be part of.
+
+        Returns:
+            int | None: A handle to the job, or None if the process could not be placed in one.
+        """
+        job: int | None = _kernel32.CreateJobObjectW(None, None)
+
+        if job is not None and _kernel32.AssignProcessToJobObject(job, process_handle):
+            return job
+
+        error = ctypes.WinError(ctypes.get_last_error())
+
+        if job is not None:
+            _kernel32.CloseHandle(job)
+
+        logger.warning("Failed to place a tool in a job, so its helper processes may outlive it: {}", error)
+
+        return None
+
+    def _start_in_job(process: subprocess.Popen[str]) -> int | None:
+        """Let a tool that was started suspended run, having first placed it in a job.
+
+        Killing a process tree by walking it can miss a helper that is started while the walk is underway.
+
+        Returns:
+            int | None: A handle to the job, or None if the tool is running outside of one.
+
+        Raises:
+            OSError: If the tool could not be resumed.
+        """
+        access = PROCESS_TERMINATE | PROCESS_SET_QUOTA | PROCESS_SUSPEND_RESUME
+        process_handle: int | None = _kernel32.OpenProcess(access, False, process.pid)  # ruff: ignore[boolean-positional-value-in-call]
+
+        if process_handle is None:
+            error = ctypes.WinError(ctypes.get_last_error())
+            raise error
+
+        try:
+            job = _create_job(process_handle)
+
+            # The subprocess module keeps no handle to the suspended thread, leaving this as the way to resume it.
+            status: int = _ntdll.NtResumeProcess(process_handle)
+
+            if status < 0:
+                if job is not None:
+                    _kernel32.CloseHandle(job)
+
+                msg = f"Failed to resume {process.args!r}: NTSTATUS {status & 0xFFFFFFFF:#010x}"
+                raise OSError(msg)
+        finally:
+            _kernel32.CloseHandle(process_handle)
+
+        return job
+
+
+def _kill_tool(process: subprocess.Popen[str], job: int | None) -> None:
     """Kill a tool along with every helper process it may have started."""
     if sys.platform == "win32":
-        subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
-            ["taskkill", "/F", "/T", "/PID", str(process.pid)],  # ruff: ignore[start-process-with-partial-path]
-            capture_output=True,
-            check=False,
-        )
+        if job is not None:
+            _kernel32.TerminateJobObject(job, 1)
+        else:
+            subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],  # ruff: ignore[start-process-with-partial-path]
+                capture_output=True,
+                check=False,
+            )
     else:
         with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
@@ -151,15 +240,16 @@ def _kill_tool(process: subprocess.Popen[str]) -> None:
 def abandon_tools() -> None:
     """Kill every running external tool."""
     with _tools_lock:
-        for process in _running_tools:
+        for process, job in _running_tools.items():
             _abandoned_tools.add(process)
-            _kill_tool(process)
+            _kill_tool(process, job)
 
 
 def run_tool(cmd: list[str], cwd: Path, threads: int, *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     """Run an external tool in its own process group, capturing its output.
 
     The separate process group ensures that the process isn't immediately killed in the event of a terminal interrupt.
+    On Windows, the tool is also placed in a job, so that it can be killed along with its helper processes.
 
     The tool inherits the environment, apart from OMP_NUM_THREADS, which is set to the number of threads the tool is
     allowed, as anything built with OpenMP otherwise uses every available core.
@@ -173,7 +263,7 @@ def run_tool(cmd: list[str], cwd: Path, threads: int, *, stdin: str | None = Non
         Interrupted: If abandon_tools killed the tool while it was running.
     """
     if sys.platform == "win32":
-        creationflags, process_group = subprocess.CREATE_NEW_PROCESS_GROUP, None
+        creationflags, process_group = subprocess.CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED, None
     else:
         creationflags, process_group = 0, 0
 
@@ -196,20 +286,28 @@ def run_tool(cmd: list[str], cwd: Path, threads: int, *, stdin: str | None = Non
 
         raise
 
-    with process:
-        with _tools_lock:
-            _running_tools.add(process)
+    job: int | None = None
 
+    with process:
         try:
+            if sys.platform == "win32":
+                job = _start_in_job(process)
+
+            with _tools_lock:
+                _running_tools[process] = job
+
             stdout, stderr = process.communicate(stdin)
         except BaseException:
-            _kill_tool(process)
+            _kill_tool(process, job)
             raise
         finally:
             with _tools_lock:
-                _running_tools.discard(process)
+                _running_tools.pop(process, None)
                 abandoned = process in _abandoned_tools
                 _abandoned_tools.discard(process)
+
+            if sys.platform == "win32" and job is not None:
+                _kernel32.CloseHandle(job)
 
     if abandoned:
         raise Interrupted
