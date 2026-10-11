@@ -9,15 +9,14 @@ import signal
 import sys
 import time
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
 if TYPE_CHECKING:
     from collections.abc import Collection
+    from pathlib import Path
 
 import pytest
-import requests
 
 from factortool.assignments import AssignmentStore
 from factortool.backend import FetchCriteria
@@ -43,7 +42,7 @@ from factortool.number import Number
 from factortool.stats import FactoringStats
 from factortool.tools import CadoNfsError, ToolError, YafuError
 
-from .helpers import make_config
+from .helpers import NO_STATS_PATH, make_config
 
 # The exit status of a run ended by a permanent HTTP error in the backend.
 PERMANENT_HTTP_ERROR_EXIT_STATUS = 6
@@ -80,7 +79,7 @@ class FakeBackend:
         """
         self.requested.append(criteria.count)
         config = make_config()
-        stats = FactoringStats(Path("stats.json"), read_only=True)
+        stats = FactoringStats(NO_STATS_PATH, read_only=True)
 
         return {Number(n, config, stats, None) for n in FETCHED[: criteria.count]}
 
@@ -556,8 +555,8 @@ def test_an_interrupt_while_closing_the_backend_is_reported_by_the_exit_status(
 
 @pytest.mark.parametrize(
     ("error", "exit_status"),
-    [(Interrupted("interrupted"), EXIT_STATUS), (requests.RequestException("unreachable"), 6)],
-    ids=["interrupted", "request-error"],
+    [(Interrupted("interrupted"), EXIT_STATUS), (PermanentHttpError("forbidden"), PERMANENT_HTTP_ERROR_EXIT_STATUS)],
+    ids=["interrupted", "permanent-error"],
 )
 def test_a_backend_that_cannot_start_ends_the_run(
     monkeypatch: pytest.MonkeyPatch, error: Exception, exit_status: int

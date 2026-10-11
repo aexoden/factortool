@@ -29,7 +29,7 @@ from factortool.number import (
 from factortool.stats import ECMCutoffs, FactoringStats
 from factortool.tools import CadoNfsError, ToolError, ToolFailure, YafuError, run_tool
 
-from .helpers import make_config, make_number
+from .helpers import NO_STATS_PATH, make_config, make_number
 
 # Composites on either side of the YAFU NFS minimum, each with a small factor.
 C84 = 10**83 + 1
@@ -50,7 +50,7 @@ def yafu_output(factors: list[int]) -> str:
 def test_tf() -> None:
     """Test trial factoring."""
     n = 15825810
-    stats = FactoringStats(Path("stats.json"), read_only=True)
+    stats = FactoringStats(NO_STATS_PATH, read_only=True)
     assert factor_tf(n, stats) == [2, 3, 5, 7, 11, 13, 17, 31]
 
 
@@ -115,14 +115,22 @@ def test_yafu_nfs_forces_nfs_and_records_its_own_statistics(monkeypatch: pytest.
     assert stats.get_final_stats("nfs_cado", 90, 4)[0] == 0
 
 
-def test_yafu_nfs_is_not_run_below_its_minimum(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Test that YAFU NFS is never started on a composite small enough to stall its polynomial selection."""
+@pytest.mark.parametrize("tool", ["nfs_yafu", "nfs_cado"])
+def test_nfs_is_not_run_below_its_minimum(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tool: str) -> None:
+    """Test that asking for NFS on a composite too small for it is a bug, rather than a run that found nothing."""
     run_tool = Mock()
     monkeypatch.setattr("factortool.tools.run_tool", run_tool, raising=True)
 
     stats = FactoringStats(tmp_path / "stats.json", read_only=True)
 
-    assert factor_yafu(C84, "nfs", 4, make_config().yafu_paths, stats) == [C84]
+    calls: dict[str, Callable[[], object]] = {
+        "nfs_yafu": lambda: factor_yafu(C84, "nfs", 4, make_config().yafu_paths, stats),
+        "nfs_cado": lambda: factor_nfs_cado(10**55 + 1, 4, Path("cado-nfs.py"), tmp_path, stats),
+    }
+
+    with pytest.raises(ValueError, match="needs at least"):
+        calls[tool]()
+
     run_tool.assert_not_called()
 
 
@@ -167,12 +175,14 @@ def test_ecm_runs_yafu_nfs_immediately_without_statistics(monkeypatch: pytest.Mo
     stats = FactoringStats(tmp_path / "stats.json", read_only=True)
     stats.update_final("nfs_cado", 90, 1, 80.0)
     number = Number(C90, make_config(use_nfs_yafu=True, max_siqs_digits=80), stats, None)
-    factor_yafu = Mock(return_value=[C90])
+    factor_yafu = Mock(return_value=C90_SPLIT)
     monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
+    monkeypatch.setattr("factortool.number.is_prime", lambda n: n != C90, raising=True)
 
     number.factor_ecm(2)
 
     factor_yafu.assert_called_once_with(C90, "nfs", *number._yafu_args)
+    assert number.factored
 
 
 def test_tools_inherit_the_environment_with_their_thread_budget(
@@ -424,6 +434,18 @@ def test_a_number_is_set_aside_once_every_final_method_has_failed(
     assert attempted == ["siqs", "nfs_yafu", "nfs_cado"]
     assert number.tool_failed
     assert number.composite_factors == [C90]
+
+
+def test_a_number_is_set_aside_when_no_final_method_splits_it(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that a composite every final method hands back whole is set aside, rather than silently left as it was."""
+    number = final_number(monkeypatch, tmp_path, {x: [C90] for x in ("siqs", "nfs_yafu", "nfs_cado")})
+
+    number.factor_final()
+
+    assert number.tool_failed
+    assert not number.factored
+    assert number.composite_factors == [C90]
+    assert not number.attempted
 
 
 def test_composite_cofactors_left_by_a_final_method_are_finished(monkeypatch: pytest.MonkeyPatch) -> None:

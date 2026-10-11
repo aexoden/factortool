@@ -74,7 +74,7 @@ def _is_executable_file(path: Path) -> bool:
 class Config(BaseModel):
     """Configuration for factorization tool."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Required settings
     backend: Literal["factordb", "mersenne_ca"]
@@ -99,8 +99,8 @@ class Config(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def warn_unknown_settings(cls, data: object) -> object:
-        """Warn about unrecognized settings, and reject no longer supported state file settings.
+    def reject_removed_settings(cls, data: object) -> object:
+        """Reject no longer supported state file settings, explaining how to migrate them.
 
         Returns:
             object: The unmodified input data.
@@ -118,9 +118,6 @@ class Config(BaseModel):
                     "files there and remove the old settings."
                 )
                 raise ValueError(msg)
-
-            for key in sorted(data.keys() - cls.model_fields.keys()):
-                logger.warning(f"Ignoring unrecognized configuration setting: {key}")
 
         return data
 
@@ -238,12 +235,21 @@ def read_config(path: Path) -> Config:
         with path.open("r", encoding="utf-8") as f:
             config = Config.model_validate_json(f.read())
     except ValidationError as e:
-        missing = [str(error["loc"][0]) for error in e.errors() if error["type"] == "missing" and error["loc"]]
+        settings: dict[str, list[str]] = {"missing": [], "extra_forbidden": []}
+
+        for error in e.errors():
+            if error["type"] in settings and error["loc"]:
+                settings[error["type"]].append(str(error["loc"][0]))
+
+        missing, unrecognized = settings["missing"], sorted(settings["extra_forbidden"])
 
         if missing:
             logger.error(f"Configuration file {path} is missing required setting(s): {', '.join(missing)}")
 
-        if len(missing) < e.error_count():
+        if unrecognized:
+            logger.error(f"Configuration file {path} has unrecognized setting(s): {', '.join(unrecognized)}")
+
+        if len(missing) + len(unrecognized) < e.error_count():
             logger.error(f"Error while processing configuration file: {e}")
 
         sys.exit(1)

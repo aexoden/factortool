@@ -21,12 +21,13 @@ from loguru import logger
 from factortool.__about__ import PROJECT_URL, __version__
 from factortool.interrupt import Interrupted
 
+# The longest backoff between attempts for failures with no specific Retry-After header.
 MAX_DELAY = 3600.0
 
 # How long to wait after a 429 that does not say when to retry.
 DEFAULT_RATE_LIMIT_DELAY = 1800.0
 
-# The shortest wait accepted from a Retry-After header.
+# The shortest wait accepted from a Retry-After header. There is no maximum, as the service's request is honored.
 MIN_RATE_LIMIT_DELAY = 1.0
 
 TRANSIENT_STATUS_CODES = frozenset({502, 503, 504})

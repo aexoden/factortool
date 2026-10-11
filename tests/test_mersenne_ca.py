@@ -120,12 +120,14 @@ def test_submit_leaves_a_request_error_for_another_attempt(
     assert mersenne_ca._submit_number(submission) is SubmitOutcome.FAILED
 
 
-def test_submit_does_not_keep_a_permanent_error(mersenne_ca: MersenneCA, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that a submission the service will never accept is not left for another attempt."""
+def test_submit_keeps_a_refused_request_for_the_next_run(
+    mersenne_ca: MersenneCA, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that a request the service refuses outright is not taken as a verdict on the factorization in it."""
     submission = Submission(n=100, prime_factors=(2, 2, 5, 5), composite_factors=(), expires_at=0.0)
-    monkeypatch.setattr(HttpClient, "request", Mock(side_effect=PermanentHttpError("HTTP 400")))
+    monkeypatch.setattr(HttpClient, "request", Mock(side_effect=PermanentHttpError("HTTP 403")))
 
-    assert mersenne_ca._submit_number(submission) is SubmitOutcome.REJECTED
+    assert mersenne_ca._submit_number(submission) is SubmitOutcome.DEFERRED
 
 
 def test_submit_refuses_an_inconsistent_factorization(mersenne_ca: MersenneCA, monkeypatch: pytest.MonkeyPatch) -> None:

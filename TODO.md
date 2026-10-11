@@ -7,9 +7,16 @@ later ones.
 
 ## Bug Fixes
 
-- Look for any instances of existing tests codifying "odd" behavior. (In other
-  words, the test was written to accept whatever the current behavior was rather
-  than a more objectively correct behavior and implementing the necessary fixes).
+- The summary counts every unfactored number as having "failed to factor",
+  including those that were never started because of an interrupt, the time
+  limit or an expired assignment.
+- The results file lists numbers that were never touched as `n=n`.
+- A single isolated tool failure ends the run as a broken installation ("failed
+  every time it was run (1 time)") if that tool was only run once in the batch,
+  even when a fallback method went on to factor the number. Consider requiring
+  more than one failure, or not counting a failure that a fallback recovered.
+- `Number` treats 1 as a composite, and trial factoring then leaves it
+  "factored" with no factors at all.
 
 ## Minor Features
 
@@ -25,8 +32,14 @@ later ones.
   let the current run finish. But in standard mode, if you abort early, you've
   probably just wasted a bunch of ECM work, and if you have a small pool of
   composites, you may repeat the same useless ECM over and over on each run,
-  never actually getting to the final factoring.
-- Display digit counts even for smaller numbers.
+  never actually getting to the final factoring. The time limit's original
+  purpose was to avoid a FactorDB run from going too long and risking someone
+  else grabbing the same composites. However, for mersenne.ca, we're guaranteed
+  the assignment. So at least for the mersenne.ca backend, the time limit is
+  much less necessary. If there at all, it should probably be set to the
+  expected expiry time (maybe with some grace) for the newest assignment.
+- Display digit counts even for smaller numbers. During the early data gathering
+  phase, numbers can run way longer too as they do excessive ECM (standard mode).
 - For backends that batch submissions, consider a more intelligent submission
   strategy: Submit if X seconds have passed, the current batch is full or if
   everything's done.
@@ -45,6 +58,12 @@ later ones.
 - Write the assignment state when work is assigned rather than only at exit, so
   a hard kill doesn't forget reserved work.
 - Log when a FactorDB fetch is capped at 1000 numbers.
+- When a backend refuses a submission request outright (a permanent HTTP error),
+  the results in it are kept for the next run, but each later batch still sends
+  one more request. Consider not submitting anything further for the rest of the
+  run, as the cause is most likely a ban or a bad token.
+- The submission worker waits out the spacing between submissions even after a
+  batch in which nothing was sent (e.g. a number that turned out to be prime).
 
 ## Code/Architectural Improvements
 
@@ -60,6 +79,9 @@ later ones.
   digit count), and consider threading it ourselves like with rho and P-1.
 - Why is `max_siqs_digits` even an option? Is there a historical reason for it?
   At the same time, investigate if there are any other superfluous options.
+  Unrecognized settings are now an error, so any setting that is removed should
+  be rejected with a message explaining what to do instead, as the removed state
+  file settings are.
 - Consider whether the mersenne.ca one-hour assignment window should influence
   batch sizing. As long as the target duration is well below the window (e.g.
   the default of ten minutes), it's fine, but perhaps a warning if the user tries
@@ -70,7 +92,8 @@ later ones.
   Tap, at least standardize on using hyphens rather than underscores in option
   names. At the same time, consider looking at the current exit status codes,
   and see if there are changes that can be made to improve the codes or to
-  better follow any standards.
+  better follow any standards. The analyzer exits with status 2 when it has no
+  data for a digit count, which is the status that means interrupted elsewhere.
 - Investigate switching from the FactorDB list_by_type endpoint to the download
   endpoint. The offset option would no longer be supported, but that was largely
   intended to minimize the risk of overlapping work, and the `random` option
@@ -142,6 +165,11 @@ later ones.
   hybrid CADO/msieve mode (`cadoMsieve`) hasn't been tested at all, and may have
   a different floor (or different failure modes). Consider making the floor
   configurable if it turns out to vary.
+- Consider setting the default factoring mode to yafu. In most cases, it makes
+  more sense. Should do some performance comparisons between standard and yafu
+  (and maybe a depth-first standard--though that has multithreading issues to
+  work out) and see if there are regimes where one is clearly better than the
+  other. I expect yafu to be better optimized in any case.
 - Increased test coverage in any remaining gaps.
 
 ## Major Features (or deferred minor features)
@@ -155,6 +183,8 @@ later ones.
   and starting the next run is going to make contacting the service more
   successful. In continuous mode, we'd just want contact attempts to continue
   anyway. The standard backoff capped at an hour is probably sufficient.
+  Submissions deferred after a backend refused the request are currently left
+  for "the next run", which will need a retry-later policy of its own.
 - Add an alternate buffer dashboard for more convenient viewing of the work. This
   makes the most sense with a continuous mode.
 - As an alternative to the existing breadth-first standard mode, allow for a

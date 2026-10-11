@@ -19,6 +19,9 @@ from factortool.interrupt import InterruptState
 from factortool.number import Number
 from factortool.stats import FactoringStats
 
+# Never exists, so that statistics a test doesn't supply are empty.
+NO_STATS_PATH = Path("nonexistent") / "stats.json"
+
 
 def make_config(**overrides: object) -> Config:
     """Build a configuration the way the application does, via pydantic, so validation and defaults match.
@@ -35,7 +38,7 @@ def make_number(n: int) -> Number:
     Returns:
         Number: The constructed Number instance.
     """
-    return Number(n, make_config(), FactoringStats(Path("stats.json"), read_only=True), None)
+    return Number(n, make_config(), FactoringStats(NO_STATS_PATH, read_only=True), None)
 
 
 @contextlib.contextmanager

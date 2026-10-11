@@ -90,6 +90,9 @@ class SubmitOutcome(enum.Enum):
     # The service temporarily rejected the submission.
     FAILED = enum.auto()
 
+    # The service refused the request as a whole, not just this submission in particular.
+    DEFERRED = enum.auto()
+
 
 @dataclass
 class QueuedSubmission:
@@ -167,8 +170,8 @@ class BaseBackend(ABC):
     submit_batch_size: ClassVar[int] = 1
 
     # How long, in seconds, a submission that keeps failing stays available for sending, unless its assignment expires
-    # sooner.
-    submission_lifetime: ClassVar[float] = 86400.0
+    # sooner. A factorization never goes stale by itself, so this only bounds the attempts.
+    submission_lifetime: ClassVar[float] = 30 * 86400.0
 
     def __init__(
         self,
@@ -204,13 +207,11 @@ class BaseBackend(ABC):
                 "Resubmitting {} result{} from a previous run", len(carried_over), "" if len(carried_over) == 1 else "s"
             )
 
-        rate_limited_until = min(self._journal.rate_limited_until, time.time() + MAX_DELAY)
-
         self._http_client = HttpClient(
             self.name,
             cooldown_period,
             build_user_agent(identity, config.user_agent),
-            rate_limited_until,
+            self._journal.rate_limited_until,
             self._journal.note_rate_limit,
         )
 
@@ -499,13 +500,19 @@ class BaseBackend(ABC):
                 break
 
             if (queued.carried_over or queued.attempts > 0) and queued.submission.expires_at <= now:
-                logger.warning("Discarding the result for {}, as it was not submitted in time", queued.submission.n)
-                self._journal.resolve([queued.submission])
+                self._discard_expired([queued.submission])
                 continue
 
             batch.append(queued)
 
         return batch
+
+    def _discard_expired(self, submissions: Sequence[Submission]) -> None:
+        """Handle submissions that have expired without being submitted."""
+        for submission in submissions:
+            logger.warning("Discarding the result for {}, as it was not submitted in time", submission.n)
+
+        self._journal.resolve(submissions)
 
     def _submit_batch(self, batch: Sequence[QueuedSubmission]) -> bool:
         """Make an attempt at a batch of submissions.
@@ -514,17 +521,24 @@ class BaseBackend(ABC):
             bool: True if any submission was queued for another attempt.
         """
         outcomes = self._submit_numbers([queued.submission for queued in batch])
+        now = time.time()
         resolved: list[Submission] = []
+        expired: list[Submission] = []
         retrying = False
 
         for queued, outcome in zip(batch, outcomes, strict=True):
+            if outcome == SubmitOutcome.DEFERRED:
+                continue
+
             if outcome != SubmitOutcome.FAILED:
                 resolved.append(queued.submission)
                 continue
 
             queued.attempts += 1
 
-            if queued.attempts < SUBMIT_ATTEMPTS:
+            if queued.submission.expires_at <= now:
+                expired.append(queued.submission)
+            elif queued.attempts < SUBMIT_ATTEMPTS:
                 self._submit_queue.put_nowait(queued)
                 retrying = True
             else:
@@ -535,6 +549,7 @@ class BaseBackend(ABC):
                 )
 
         self._journal.resolve(resolved)
+        self._discard_expired(expired)
 
         if resolved:
             self._last_progress = time.monotonic()

@@ -189,11 +189,12 @@ def test_rate_limit_does_not_advance_backoff(monkeypatch: pytest.MonkeyPatch) ->
         ("0", MIN_RATE_LIMIT_DELAY),
         ("-5", MIN_RATE_LIMIT_DELAY),
         ("Thu, 01 Jan 1970 00:00:00 GMT", MIN_RATE_LIMIT_DELAY),
+        ("864000", 864000.0),
     ],
-    ids=["missing", "empty", "unparseable", "seconds", "zero", "negative", "past-date"],
+    ids=["missing", "empty", "unparseable", "seconds", "zero", "negative", "past-date", "ten-days"],
 )
-def test_rate_limit_delay_is_bounded(retry_after: str | None, delay: float) -> None:
-    """Tests that a missing Retry-After waits out the default."""
+def test_rate_limit_delay_follows_retry_after(retry_after: str | None, delay: float) -> None:
+    """Tests that the wait is whatever Retry-After asks for, however long, with a minimum and a default without one."""
     response = make_response(429, {} if retry_after is None else {"Retry-After": retry_after})
 
     assert get_too_many_requests_delay(response) == delay

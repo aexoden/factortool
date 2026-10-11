@@ -15,7 +15,7 @@ from loguru import logger
 from pydantic import BaseModel, TypeAdapter
 
 from factortool.backend import BaseBackend, SubmitOutcome
-from factortool.http import PermanentHttpError
+from factortool.http import MAX_DELAY, PermanentHttpError
 from factortool.interrupt import Interrupted
 
 if TYPE_CHECKING:
@@ -222,8 +222,7 @@ class FactorDB(BaseBackend):
 
         Raises:
             Interrupted: If an interrupt arrived while waiting to verify the configured API token.
-            PermanentHttpError: If FactorDB does not recognize the configured API token.
-            requests.RequestException: If the configured API token could not be verified.
+            PermanentHttpError: If FactorDB does not recognize the configured API token, or refuses to verify it.
         """
         super().__init__(config, stats, config.factordb_cooldown_period, "", interrupts)
 
@@ -238,56 +237,63 @@ class FactorDB(BaseBackend):
         self._http_client.session.headers["X-Fdb-User-Token"] = config.factordb_api_token
 
         try:
-            (result,) = self._rpc(
-                [("whoami", {"session": config.factordb_api_token})],
-                timeout=5.0,
-                wait=self._interrupts.wait,
-                max_attempts=5,
-            )
-            identity = Identity.model_validate(result)
+            identity = self._verify_token(config.factordb_api_token)
         except Interrupted, PermanentHttpError:
             self.close()
             raise
-        except (requests.RequestException, ValueError) as e:
-            self.close()
-            msg = f"Unable to verify the FactorDB API token: {e}"
-            raise requests.RequestException(msg) from e
-
-        if not identity.found:
-            self.close()
-            msg = "FactorDB does not recognize the configured API token"
-            raise PermanentHttpError(msg)
 
         logger.info("Signed in to FactorDB as {}", identity.login)
         self._signed_in = True
         self._start_submitting()
 
+    def _verify_token(self, token: str) -> Identity:
+        """Ask FactorDB which user is associated with the given API token.
+
+        Returns:
+            Identity: The identity associated with the given API token.
+
+        Raises:
+            Interrupted: If an interrupt arrived while waiting for another attempt.
+            PermanentHttpError: If FactorDB does not recognize the API token, or refuses to verify it.
+        """
+        delay = max(0.1, self._cooldown_period)
+
+        while True:
+            try:
+                (result,) = self._rpc([("whoami", {"session": token})], timeout=5.0, wait=self._interrupts.wait)
+                identity = Identity.model_validate(result)
+            except PermanentHttpError:
+                raise
+            except (requests.RequestException, ValueError) as e:
+                logger.error("Unable to verify the FactorDB API token: {}. Retrying in {} seconds...", e, delay)
+            else:
+                if not identity.found:
+                    msg = "FactorDB does not recognize the configured API token"
+                    raise PermanentHttpError(msg)
+
+                return identity
+
+            if self._interrupts.wait(delay):
+                msg = "Interrupted while waiting to verify the FactorDB API token"
+                raise Interrupted(msg)
+
+            delay = min(MAX_DELAY, delay * 2)
+
     def _rpc(
-        self,
-        calls: Sequence[tuple[str, Mapping[str, object]]],
-        *,
-        timeout: float,
-        wait: Callable[[float], bool],
-        max_attempts: int | None = None,
+        self, calls: Sequence[tuple[str, Mapping[str, object]]], *, timeout: float, wait: Callable[[float], bool]
     ) -> list[Any]:
         """Make a batch of JSON-RPC calls.
 
-        HTTP failures are retried until the wait function says to abandon the request unless max_attempts is given.
-        Errors reported by FactorDB for individual calls are not retried.
+        HTTP failures are retried until the wait function says to abandon the request. Errors reported by FactorDB for
+        individual calls are not retried.
 
         Returns:
             list[Any]: The result of each call, in the order the calls were made.
         """
-        responses = self._rpc_batch(calls, timeout=timeout, wait=wait, max_attempts=max_attempts)
-        return [rpc_result(response) for response in responses]
+        return [rpc_result(response) for response in self._rpc_batch(calls, timeout=timeout, wait=wait)]
 
     def _rpc_batch(
-        self,
-        calls: Sequence[tuple[str, Mapping[str, object]]],
-        *,
-        timeout: float,
-        wait: Callable[[float], bool],
-        max_attempts: int | None = None,
+        self, calls: Sequence[tuple[str, Mapping[str, object]]], *, timeout: float, wait: Callable[[float], bool]
     ) -> list[RpcResponse]:
         """Make a batch of JSON-RPC calls, leaving any errors reported for individual calls in their responses.
 
@@ -298,12 +304,7 @@ class FactorDB(BaseBackend):
             {"jsonrpc": "2.0", "id": i, "method": method, "params": params} for i, (method, params) in enumerate(calls)
         ]
 
-        if max_attempts is None:
-            response = self._service_request("POST", API_URL, json=payload, timeout=timeout, wait=wait)
-        else:
-            response = self._http_client.request(
-                "POST", API_URL, json=payload, timeout=timeout, max_attempts=max_attempts, wait=wait
-            )
+        response = self._service_request("POST", API_URL, json=payload, timeout=timeout, wait=wait)
 
         return parse_rpc_batch(response.json(), len(calls))
 
@@ -404,7 +405,9 @@ class FactorDB(BaseBackend):
         """Make a single attempt to submit the distinct prime factors of each number to FactorDB in a single batch.
 
         HTTP failures are retried by the underlying client until the submission is abandoned. Errors and malformed
-        responses are left for another attempt, unless they are permanent or a rejection of every factor.
+        responses are left for another attempt, unless they are permanent or a rejection of every factor. A permanent
+        error for the batch as a whole doesn't give any information about the validity of the individual submissions,
+        so they are left for the next run.
 
         Returns:
             list[SubmitOutcome]: The outcomes of the submission attempts for each number.
@@ -431,7 +434,11 @@ class FactorDB(BaseBackend):
         try:
             responses = self._rpc_batch(calls, timeout=timeout, wait=self._submission_wait)
         except PermanentHttpError as e:
-            logger.error("Discarding the factors for {} numbers that FactorDB will not accept: {}", len(calls), e)
+            logger.error("Leaving the factors for {} numbers for the next run: {}", len(calls), e)
+
+            for i, _ in reports:
+                outcomes[i] = SubmitOutcome.DEFERRED
+
             return outcomes
         except (requests.RequestException, ValueError) as e:
             logger.warning("Error submitting factors for {} numbers to FactorDB: {}", len(calls), e)

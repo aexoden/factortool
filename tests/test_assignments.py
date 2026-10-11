@@ -109,7 +109,7 @@ def test_carrying_an_assignment_over_does_not_renew_it(tmp_path: Path) -> None:
 
 
 def test_a_composite_never_seen_assigned_is_not_retained(tmp_path: Path) -> None:
-    """Test that a composite never seen assigned is treated as freshly assigned."""
+    """Test that a composite with no known expiry is dropped, as nothing says how long its assignment lasts."""
     state_path = tmp_path / "assignments.json"
     store = AssignmentStore(state_path, "mersenne_ca", LIFETIME)
     store.note_assigned([101])

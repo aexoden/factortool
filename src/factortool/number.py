@@ -87,12 +87,16 @@ def factor_yafu(n: int, method: str, max_threads: int, yafu: YafuPaths, stats: F
 
     Returns:
         list[int]: List of factors found.
+
+    Raises:
+        ValueError: If the number is too small for YAFU NFS.
     """
     digits = len(str(n))
 
-    # Abort if the number of digits is too small for YAFU NFS.
+    # YAFU NFS can stall indefinitely on a number this small.
     if method == "nfs" and digits < NFS_YAFU_MIN_DIGITS:
-        return [n]
+        msg = f"YAFU NFS needs at least {NFS_YAFU_MIN_DIGITS} digits, but {n} has {digits}"
+        raise ValueError(msg)
 
     options = ["-inmem", "200"]
     threads = 1
@@ -147,12 +151,15 @@ def factor_nfs_cado(n: int, max_threads: int, cado_nfs_path: Path, work_path: Pa
 
     Returns:
         list[int]: List of factors found.
+
+    Raises:
+        ValueError: If the number is too small for CADO-NFS.
     """
-    # Abort if the number of digits is too small for CADO-NFS.
     digits = len(str(n))
 
     if digits < NFS_CADO_MIN_DIGITS:
-        return [n]
+        msg = f"CADO-NFS needs at least {NFS_CADO_MIN_DIGITS} digits, but {n} has {digits}"
+        raise ValueError(msg)
 
     factors, execution_time = run_cado_nfs(FINAL_METHOD_NAMES["nfs_cado"], n, max_threads, cado_nfs_path, work_path)
 
@@ -420,19 +427,21 @@ class Number:
             try:
                 factors = self._run_final(n, method)
             except ToolFailure as e:
-                if not methods:
-                    self._set_aside(e)
+                failure = e
+            else:
+                if len(factors) > 1:
+                    for composite in self._replace_composite(n, FINAL_METHOD_NAMES[method], factors):
+                        self._factor_final(composite)
+
                     return
 
-                logger.warning("{}. Trying another method", e)
-                factors = [n]
+                failure = ToolFailure(f"{FINAL_METHOD_NAMES[method]} did not find a factor of {format_number(n)}")
 
-            if len(factors) > 1:
-                for composite in self._replace_composite(n, FINAL_METHOD_NAMES[method], factors):
-                    self._factor_final(composite)
-
+            if not methods:
+                self._set_aside(failure)
                 return
 
+            logger.warning("{}. Trying another method", failure)
             method = None
 
     def _factor_generic(

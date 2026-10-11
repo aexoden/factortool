@@ -407,7 +407,7 @@ def test_base_resubmits_what_a_previous_run_left_unsent(config: Config, sleep: M
 
 
 def test_base_attempts_a_new_result_once_even_if_it_has_expired(config: Config, retry_wait: Mock) -> None:
-    """Test that a result from this run is sent once after its assignment expires, but not retried."""
+    """Test that a result from this run is sent once after its assignment expires, and discarded if that fails."""
     backend = make_fake_backend(config)
     backend.outcomes[15] = [SubmitOutcome.FAILED] * 2
     (number,) = make_factored(config, backend, [3, 5])
@@ -417,13 +417,28 @@ def test_base_attempts_a_new_result_once_even_if_it_has_expired(config: Config, 
     backend.close()
 
     assert backend.submitted == [15]
-    assert retry_wait.call_count == 1
+    retry_wait.assert_not_called()
     assert not config.pending_submissions_path.exists()
 
 
+def test_base_leaves_a_deferred_submission_for_the_next_run(config: Config, sleep: Mock, retry_wait: Mock) -> None:
+    """Test that a deferred result is neither retried during the run nor removed from the journal."""
+    backend = make_fake_backend(config)
+    backend.outcomes[15] = [SubmitOutcome.DEFERRED]
+
+    backend.submit(make_factored(config, backend, [3, 5], [3, 7]))
+    backend.close()
+
+    assert backend.submitted == [15, 21]
+    assert backend.get_successful_submission_count() == 1
+    retry_wait.assert_not_called()
+    assert journaled(config) == [15]
+    assert sleep.called
+
+
 def test_base_honors_a_rate_limit_from_a_previous_run(config: Config) -> None:
-    """Test that a rate limit recorded by a previous run holds back the next run's requests."""
-    rate_limited_until = time.time() + 600.0
+    """Test that a rate limit recorded by a previous run holds back the next run's requests, however long it is."""
+    rate_limited_until = time.time() + 6 * 3600.0
     SubmissionJournal(config.pending_submissions_path, config.backend).note_rate_limit(rate_limited_until)
 
     backend = make_fake_backend(config)
@@ -835,16 +850,21 @@ def test_factordb_reports_the_outcome_of_each_call_in_a_batch(factordb: FactorDB
     [PermanentHttpError("HTTP 400"), rpc_error(-32600, "invalid request").json()[0] | {"id": None}],
     ids=["http", "rpc"],
 )
-def test_factordb_does_not_keep_a_batch_that_fails_permanently(
+def test_factordb_keeps_a_batch_that_is_refused_for_the_next_run(
     factordb: FactorDB, http_request: Mock, error: object
 ) -> None:
-    """Test that a batch FactorDB will never accept is not left for another attempt."""
+    """Test that a batch refused as a whole is not taken as a verdict on its factors, and is not sent again this run."""
     http_request.side_effect = [
         error if isinstance(error, Exception) else Mock(spec=requests.Response, json=Mock(return_value=error))
     ]
-    submissions = [make_submission(3, 5), make_submission(3, 7)]
+    submissions = [make_submission(3, 5), make_submission(7), make_submission(3, 7)]
 
-    assert factordb._submit_numbers(submissions) == [SubmitOutcome.REJECTED] * len(submissions)
+    # The prime has nothing to report, so it was never part of the request.
+    assert factordb._submit_numbers(submissions) == [
+        SubmitOutcome.DEFERRED,
+        SubmitOutcome.REJECTED,
+        SubmitOutcome.DEFERRED,
+    ]
 
 
 def test_base_keeps_a_newer_result_when_an_older_one_is_resolved(config: Config, sleep: Mock) -> None:
@@ -1116,15 +1136,37 @@ def test_factordb_rejects_unrecognized_api_token(config: Config, http_request: M
 
 @pytest.mark.parametrize(
     "response",
-    [requests.RequestException("unreachable"), rpc_response({"login": "FactorFinder"})],
-    ids=["request-error", "malformed"],
+    [
+        requests.RequestException("unreachable"),
+        rpc_response({"login": "FactorFinder"}),
+        rpc_error(-32000, "database busy"),
+    ],
+    ids=["request-error", "malformed", "rpc-error"],
 )
-def test_factordb_stops_if_token_cannot_be_verified(config: Config, http_request: Mock, response: object) -> None:
-    """Test that a token that cannot be verified stops startup rather than claiming credit it may not get."""
-    http_request.side_effect = [response]
+def test_factordb_retries_until_the_token_is_verified(
+    config: Config, http_request: Mock, wait: Mock, response: object
+) -> None:
+    """Test that a token FactorDB can't verify for now is tried again with backoff, as a fetch would be."""
+    http_request.side_effect = [response, response, rpc_response({"found": True, "login": "FactorFinder"})]
+    backend = FactorDB(config.model_copy(update={"factordb_api_token": "secret"}), FactoringStats(config.stats_path))
 
-    with pytest.raises(requests.RequestException, match="Unable to verify"):
+    try:
+        assert backend._signed_in
+    finally:
+        backend.close()
+
+    assert wait.call_args_list == [call(0.1), call(0.2)]
+
+
+def test_factordb_stops_verifying_the_token_on_an_interrupt(config: Config, http_request: Mock, wait: Mock) -> None:
+    """Test that an interrupt while waiting to verify the token ends startup, rather than submitting without credit."""
+    wait.return_value = True
+    http_request.side_effect = [requests.RequestException("unreachable")]
+
+    with pytest.raises(Interrupted):
         FactorDB(config.model_copy(update={"factordb_api_token": "secret"}), FactoringStats(config.stats_path))
+
+    http_request.assert_called_once()
 
 
 def test_factordb_without_token_is_anonymous(factordb: FactorDB, http_request: Mock) -> None:

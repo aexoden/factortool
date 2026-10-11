@@ -124,8 +124,8 @@ class MersenneCA(BaseBackend):
         try:
             response = self._service_request("POST", API_URL, files=payload, timeout=30.0, wait=self._submission_wait)
         except PermanentHttpError as e:
-            logger.error("Discarding the factorization for {} that mersenne.ca will not accept: {}", submission.n, e)
-            return SubmitOutcome.REJECTED
+            logger.error("Leaving the factorization for {} for the next run: {}", submission.n, e)
+            return SubmitOutcome.DEFERRED
         except requests.RequestException as e:
             logger.warning("Error reporting factorization for {}: {}", submission.n, e)
             return SubmitOutcome.FAILED

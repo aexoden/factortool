@@ -30,7 +30,8 @@ Copy the `config.dist.json` to `config.json` and edit it as appropriate. Only
 `backend`, `max_threads` and `yafu_path` are required. If you are using the
 `mersenne_ca` backend, you also need to set `gimps_login`, and if you enable
 `use_nfs_cado`, you also need to set `cado_nfs_path`. Anything unspecified
-defaults to the values in `config.dist.json`.
+defaults to the values in `config.dist.json`. An unrecognized setting is an
+error.
 
 The configuration and the options below are checked before any work is fetched.
 `max_threads` must be at least 1, `yafu_path` must be an executable file, as
@@ -154,8 +155,11 @@ submit, and removed once the backend has accepted or rejected it. Whatever is
 left when `factortool` exits is submitted at the start of the next run with the
 same backend. Unsent results do not change the exit status.
 
-A result that still has not been submitted is eventually discarded: after 24
-hours for `factordb`, or when its assignment expires for `mersenne_ca`. A result
+If the backend refuses a submission request outright (for example, with HTTP 403),
+the results in it are kept for the next run rather than treated as rejected.
+
+A result that still has not been submitted is eventually discarded: after 30
+days for `factordb`, or when its assignment expires for `mersenne_ca`. A result
 found during the current run is always attempted at least once. Rate limits are
 respected across runs.
 

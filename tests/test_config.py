@@ -235,17 +235,19 @@ def test_read_config_reports_missing_and_invalid_settings(tmp_path: Path) -> Non
     assert "max_threads" in invalid
 
 
-def test_read_config_warns_about_unrecognized_settings(tmp_path: Path) -> None:
-    """Test that reading a configuration file with unrecognized settings logs warnings but does not reject the file."""
+def test_read_config_rejects_unrecognized_settings(tmp_path: Path) -> None:
+    """Test that a setting that isn't recognized, such as a misspelled one, is an error rather than a silent default."""
     path = write_config(tmp_path, {**REQUIRED_SETTINGS, "use_nfs": True, "max_siqs_digit": 90})
 
-    config, messages = read_config_logging(path)
-
-    assert config == Config.model_validate(REQUIRED_SETTINGS)
-    assert messages == [
-        "Ignoring unrecognized configuration setting: max_siqs_digit\n",
-        "Ignoring unrecognized configuration setting: use_nfs\n",
+    assert read_invalid_config(path) == [
+        f"Configuration file {path} has unrecognized setting(s): max_siqs_digit, use_nfs\n"
     ]
+
+
+def test_config_rejects_unrecognized_settings() -> None:
+    """Test that a configuration built directly rejects an unrecognized setting as well."""
+    with pytest.raises(ValidationError, match="max_siqs_digit"):
+        make_config(max_siqs_digit=90)
 
 
 def test_state_files_live_in_the_state_directory() -> None:

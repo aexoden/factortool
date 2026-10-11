@@ -18,8 +18,6 @@ if TYPE_CHECKING:
 
     from collections.abc import Callable, Collection
 
-import requests
-
 from loguru import logger
 
 from factortool.__about__ import __version__
@@ -265,9 +263,9 @@ def start_backend(config: Config, stats: FactoringStats, interrupts: InterruptSt
     except Interrupted:
         logger.warning("Interrupted while starting the {} backend", config.backend)
         sys.exit(INTERRUPTED_EXIT_STATUS)
-    except requests.RequestException as e:
+    except PermanentHttpError as e:
         logger.error("Unable to start the {} backend: {}", config.backend, e)
-        sys.exit(6)
+        sys.exit(PERMANENT_HTTP_ERROR_EXIT_STATUS)
 
 
 def lock_instance(config: Config) -> contextlib.ExitStack:
