@@ -7,9 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- Two instances sharing a configuration overwrite each other's statistics,
-  batch state and assignment state. Take a lock file at startup and refuse to
-  run if another instance holds it.
 - Look for any instances of existing tests codifying "odd" behavior. (In other
   words, the test was written to accept whatever the current behavior was rather
   than a more objectively correct behavior and implementing the necessary fixes).
@@ -23,7 +20,12 @@ later ones.
   the only realiable defense against a tool that hangs, which is otherwise never
   detected. It might be worth checking if YAFU and CADO-NFS regularly generate
   log output for monitoring. Could also consider looking at their CPU usage, but
-  that wouldn't help with a spinlock.
+  that wouldn't help with a spinlock. As one more consideration, the time limit
+  is somewhat incompatible with standard mode. In YAFU mode, you generally just
+  let the current run finish. But in standard mode, if you abort early, you've
+  probably just wasted a bunch of ECM work, and if you have a small pool of
+  composites, you may repeat the same useless ECM over and over on each run,
+  never actually getting to the final factoring.
 - Display digit counts even for smaller numbers.
 - For backends that batch submissions, consider a more intelligent submission
   strategy: Submit if X seconds have passed, the current batch is full or if
@@ -33,21 +35,21 @@ later ones.
   backend, it's probably the option people are most likely to want to change
   between runs.
 - Change the README's shell loop to stop on any exit status other than 0 and 3.
-  It currently only stops on 2 and 6, so a configuration error, invalid
+  It currently only stops on 2, 6 and 8, so a configuration error, invalid
   argument, tool failure or cleanup failure (7) retries every second.
 - Verify whether `cado-nfs.py` uses its own directory under `/tmp` unless given
   `--workdir`. If so, pass the managed working directory so an aborted run
   doesn't leave it behind. The `stdin` passed to it also looks unnecessary.
-- Remove stale `yafu-*` and `nfs-cado-*` working directories at startup, as a
-  hard kill leaves them behind.
+- Remove stale `yafu-*` and `cado-nfs-*` working directories at startup, as a
+  hard kill leaves them behind. The lock on `work_path` makes this safe.
 - Write the assignment state when work is assigned rather than only at exit, so
   a hard kill doesn't forget reserved work.
 - Log when a FactorDB fetch is capped at 1000 numbers.
 
 ## Code/Architectural Improvements
 
-- Move all state files into a directory with standardized names, changing the
-  configuration to instead specify the directory.
+- Thoroughly check for any opportunities to replace hand-rolled code with a
+  third-party library. Avoid libraries that are not currently maintained.
 - Track ECM progress for each composite factor rather than for the number as a
   whole. ECM currently runs on every remaining composite at a level chosen by
   the largest one, so a small composite is carried through levels it would
@@ -148,7 +150,11 @@ later ones.
   in continuous mode. Whether this is implemented as a simple outer loop or via
   a different mechanism that refills its queue when low remains an open question.
   The current one-shot mode should remain an option in any case. The choice here
-  may go along with the dashboard item.
+  may go along with the dashboard item. Revisit the submission policy at this
+  point. There's no real need to cap submission attempts. It's not like quitting
+  and starting the next run is going to make contacting the service more
+  successful. In continuous mode, we'd just want contact attempts to continue
+  anyway. The standard backoff capped at an hour is probably sufficient.
 - Add an alternate buffer dashboard for more convenient viewing of the work. This
   makes the most sense with a continuous mode.
 - As an alternative to the existing breadth-first standard mode, allow for a

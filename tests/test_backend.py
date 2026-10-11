@@ -147,13 +147,10 @@ def config(tmp_path: Path) -> Config:
         Config: The test configuration.
     """
     return make_config(
-        assignment_state_path=tmp_path / "assignment_state.json",
-        batch_state_path=tmp_path / "batch_state.json",
         factordb_cooldown_period=0.0,
         mersenne_ca_cooldown_period=0.0,
-        pending_submissions_path=tmp_path / "pending_submissions.jsonl",
         result_output_path=tmp_path / "results",
-        stats_path=tmp_path / "stats.json",
+        state_path=tmp_path,
         work_path=tmp_path / "work",
         yafu_path=tmp_path / "yafu",
     )

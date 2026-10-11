@@ -22,6 +22,7 @@ import requests
 from factortool.assignments import AssignmentStore
 from factortool.backend import FetchCriteria
 from factortool.cli.main import (
+    ALREADY_RUNNING_EXIT_STATUS,
     CLEANUP_FAILED_EXIT_STATUS,
     Arguments,
     Cleanup,
@@ -32,10 +33,12 @@ from factortool.cli.main import (
     start_backend,
     validate_arguments,
     warn_if_assignments_may_expire,
+    write_results,
 )
 from factortool.engine import ExitStatus, FactorEngine
 from factortool.http import PermanentHttpError
 from factortool.interrupt import EXIT_STATUS, Interrupted, InterruptState
+from factortool.lock import lock_directories
 from factortool.number import Number
 from factortool.stats import FactoringStats
 from factortool.tools import CadoNfsError, ToolError, YafuError
@@ -266,7 +269,7 @@ def test_a_tool_failure_exits_with_the_tool_status_after_cleaning_up(
         main()
 
     assert raised.value.code == exit_status
-    assert (tmp_path / "stats.json").exists()
+    assert (tmp_path / "state" / "stats.json").exists()
     assert len(list((tmp_path / "results").iterdir())) == 1
 
 
@@ -299,7 +302,7 @@ def test_a_termination_signal_still_saves_state_before_exiting_as_interrupted(
         interrupts.uninstall()
 
     assert raised.value.code == EXIT_STATUS
-    assert (tmp_path / "stats.json").exists()
+    assert (tmp_path / "state" / "stats.json").exists()
     assert len(list((tmp_path / "results").iterdir())) == 1
     backend.close.assert_called_once()
 
@@ -415,7 +418,7 @@ def test_a_failed_cleanup_step_still_saves_the_rest_and_closes_the_backend(
     status, close = run_main(monkeypatch, tmp_path, Mock(return_value=ExitStatus.SUCCESS))
 
     assert status == CLEANUP_FAILED_EXIT_STATUS
-    assert (tmp_path / "stats.json").exists()
+    assert (tmp_path / "state" / "stats.json").exists()
     close.assert_called_once_with()
 
 
@@ -461,8 +464,44 @@ def test_a_failure_to_close_the_backend_is_reported_by_the_exit_status(
     status, _ = run_main(monkeypatch, tmp_path, Mock(return_value=ExitStatus.SUCCESS), close=close)
 
     assert status == CLEANUP_FAILED_EXIT_STATUS
-    assert (tmp_path / "stats.json").exists()
+    assert (tmp_path / "state" / "stats.json").exists()
     assert len(list((tmp_path / "results").iterdir())) == 1
+
+
+@pytest.mark.parametrize("directory", ["state", "work"])
+def test_a_directory_in_use_by_another_instance_ends_the_run_before_any_state_is_touched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, directory: str
+) -> None:
+    """Test that a second instance sharing the state or working directory refuses to run."""
+    run = Mock(return_value=ExitStatus.SUCCESS)
+
+    with lock_directories([tmp_path / directory]):
+        status, close = run_main(monkeypatch, tmp_path, run)
+
+    assert status == ALREADY_RUNNING_EXIT_STATUS
+    assert not (tmp_path / "state" / "stats.json").exists()
+    run.assert_not_called()
+    close.assert_not_called()
+
+
+def test_the_directories_are_released_once_the_run_ends(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that a finished run does not keep the next one out."""
+    for _ in range(2):
+        status, _ = run_main(monkeypatch, tmp_path, Mock(return_value=ExitStatus.SUCCESS))
+
+        assert status == 0
+
+
+def test_results_written_in_the_same_second_do_not_overwrite_each_other(tmp_path: Path) -> None:
+    """Test that a result file whose name is already taken is left alone."""
+    numbers = [Number(n, make_config(), FactoringStats(tmp_path / "stats.json", read_only=True), None) for n in (4, 6)]
+
+    for number in numbers:
+        write_results([number], tmp_path)
+
+    contents = {path.read_text(encoding="utf-8") for path in tmp_path.iterdir()}
+
+    assert len(contents) == len(numbers)
 
 
 def test_an_unexpected_engine_failure_still_cleans_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -472,7 +511,7 @@ def test_an_unexpected_engine_failure_still_cleans_up(monkeypatch: pytest.Monkey
     with pytest.raises(RuntimeError, match="bug"):
         run_main(monkeypatch, tmp_path, Mock(side_effect=RuntimeError("bug")), close=close)
 
-    assert (tmp_path / "stats.json").exists()
+    assert (tmp_path / "state" / "stats.json").exists()
     assert len(list((tmp_path / "results").iterdir())) == 1
     close.assert_called_once_with()
 

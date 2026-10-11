@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import contextlib
+
     from collections.abc import Callable, Collection
 
 import requests
@@ -29,6 +31,7 @@ from factortool.engine import ExitStatus, FactorEngine
 from factortool.http import PermanentHttpError
 from factortool.interrupt import EXIT_STATUS as INTERRUPTED_EXIT_STATUS
 from factortool.interrupt import Interrupted, InterruptState
+from factortool.lock import DirectoryInUseError, lock_directories
 from factortool.number import Number, format_results
 from factortool.stats import FactoringStats, InvalidStatsError
 from factortool.tools import ToolError
@@ -48,6 +51,9 @@ PERMANENT_HTTP_ERROR_EXIT_STATUS = 6
 
 # The exit status of a run that could not save its state or results or shut down its backend.
 CLEANUP_FAILED_EXIT_STATUS = 7
+
+# The exit status of a run that found another instance using its state or working directory.
+ALREADY_RUNNING_EXIT_STATUS = 8
 
 # Exit statuses that do not report an error, and so give way to a cleanup failure.
 NON_ERROR_EXIT_STATUSES = frozenset({0, INTERRUPTED_EXIT_STATUS, TIME_LIMIT_EXIT_STATUS})
@@ -191,10 +197,21 @@ def write_results(numbers: Collection[Number], output_path: Path) -> None:
     if not output_path.exists():
         output_path.mkdir(parents=True)
 
-    output_filename = f"{datetime.datetime.now(tz=datetime.UTC).strftime('%Y%m%d-%H%M%S')}.txt"
+    timestamp = datetime.datetime.now(tz=datetime.UTC).strftime("%Y%m%d-%H%M%S")
+    results = format_results(numbers) + "\n"
+    attempt = 0
 
-    with output_path.joinpath(output_filename).open("w", encoding="utf-8") as f:
-        f.write(format_results(numbers) + "\n")
+    # Instances with separate state can share an output directory.
+    while True:
+        output_filename = f"{timestamp}-{attempt}.txt" if attempt > 0 else f"{timestamp}.txt"
+
+        try:
+            with output_path.joinpath(output_filename).open("x", encoding="utf-8") as f:
+                f.write(results)
+        except FileExistsError:
+            attempt += 1
+        else:
+            return
 
 
 def acquire_numbers(  # ruff: ignore[too-many-arguments]
@@ -251,6 +268,22 @@ def start_backend(config: Config, stats: FactoringStats, interrupts: InterruptSt
     except requests.RequestException as e:
         logger.error("Unable to start the {} backend: {}", config.backend, e)
         sys.exit(6)
+
+
+def lock_instance(config: Config) -> contextlib.ExitStack:
+    """Claim the state and working directories, exiting if another instance is using either.
+
+    Returns:
+        contextlib.ExitStack: Releases the directories when closed.
+    """
+    try:
+        return lock_directories([config.state_path, config.work_path])
+    except DirectoryInUseError as e:
+        logger.error("{}", e)
+        sys.exit(ALREADY_RUNNING_EXIT_STATUS)
+    except OSError as e:
+        logger.error("Unable to lock the state and working directories: {}", e)
+        sys.exit(1)
 
 
 def get_time_limit(args: Arguments) -> float | None:
@@ -371,25 +404,12 @@ def run_batch(args: Arguments, session: Session) -> int:
     return 0
 
 
-def main() -> None:
-    """Factor numbers using various methods."""
-    setup_logger()
+def run_session(args: Arguments, config: Config) -> int:
+    """Run a factoring session against state that no other instance is using.
 
-    args = Arguments().parse_args()
-
-    if args.version:
-        print(f"Factortool version: {__version__}")  # ruff: ignore[print]
-        sys.exit(0)
-
-    try:
-        config = read_config(args.config_path)
-    except FileNotFoundError:
-        logger.error("Configuration file not found")
-        sys.exit(1)
-
-    validate_arguments(args, config.backend)
-    validate_tools(config)
-
+    Returns:
+        int: The exit status for the session.
+    """
     interrupts = InterruptState()
     interrupts.install()
 
@@ -416,6 +436,31 @@ def main() -> None:
 
     if session.cleanup.failed and status in NON_ERROR_EXIT_STATUSES:
         status = CLEANUP_FAILED_EXIT_STATUS
+
+    return status
+
+
+def main() -> None:
+    """Factor numbers using various methods."""
+    setup_logger()
+
+    args = Arguments().parse_args()
+
+    if args.version:
+        print(f"Factortool version: {__version__}")  # ruff: ignore[print]
+        sys.exit(0)
+
+    try:
+        config = read_config(args.config_path)
+    except FileNotFoundError:
+        logger.error("Configuration file not found")
+        sys.exit(1)
+
+    validate_arguments(args, config.backend)
+    validate_tools(config)
+
+    with lock_instance(config):
+        status = run_session(args, config)
 
     if status != 0:
         sys.exit(status)

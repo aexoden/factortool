@@ -1,10 +1,7 @@
 __pycache__
 /.coverage
-/assignment_state.json
-/batch_state.json
 /config.json
 /dist
-/pending_submissions.jsonl
 /results/*.txt
-/stats.json
+/state
 /work

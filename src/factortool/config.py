@@ -51,6 +51,14 @@ class FinalMethods(NamedTuple):
 
 ASCII_RANGE = range(0x20, 0x7F)
 
+# Settings that each named a state file, before the introduction of a unified state directory.
+REMOVED_STATE_SETTINGS = {
+    "assignment_state_path": "assignment_state.json",
+    "batch_state_path": "batch_state.json",
+    "pending_submissions_path": "pending_submissions.jsonl",
+    "stats_path": "stats.json",
+}
+
 CooldownPeriod = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
@@ -74,8 +82,6 @@ class Config(BaseModel):
     yafu_path: Path
 
     # Optional settings with defaults
-    assignment_state_path: Path = Path("assignment_state.json")
-    batch_state_path: Path = Path("batch_state.json")
     cado_nfs_path: Path | None = None
     factordb_api_token: str = ""
     factordb_cooldown_period: CooldownPeriod = 1.0
@@ -83,9 +89,8 @@ class Config(BaseModel):
     gimps_login: str = ""
     max_siqs_digits: PositiveInt = 100
     mersenne_ca_cooldown_period: CooldownPeriod = 1.0
-    pending_submissions_path: Path = Path("pending_submissions.jsonl")
     result_output_path: Path = Path("results")
-    stats_path: Path = Path("stats.json")
+    state_path: Path = Path("state")
     use_nfs_cado: bool = False
     use_nfs_yafu: bool = False
     user_agent: str = ""
@@ -95,12 +100,25 @@ class Config(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def warn_unknown_settings(cls, data: object) -> object:
-        """Warn about unrecognized settings.
+        """Warn about unrecognized settings, and reject no longer supported state file settings.
 
         Returns:
             object: The unmodified input data.
+
+        Raises:
+            ValueError: If any removed state settings are present in the configuration.
         """
         if isinstance(data, dict):
+            removed = sorted(data.keys() & REMOVED_STATE_SETTINGS.keys())
+
+            if removed:
+                msg = (
+                    f"no longer supported: {', '.join(removed)}. State files now have fixed names in the state_path "
+                    f"directory ({', '.join(REMOVED_STATE_SETTINGS[key] for key in removed)}). Move the existing "
+                    "files there and remove the old settings."
+                )
+                raise ValueError(msg)
+
             for key in sorted(data.keys() - cls.model_fields.keys()):
                 logger.warning(f"Ignoring unrecognized configuration setting: {key}")
 
@@ -155,6 +173,26 @@ class Config(BaseModel):
             raise ValueError(msg)
 
         return value
+
+    @property
+    def assignment_state_path(self) -> Path:
+        """Path to the assignment state file within the state directory."""
+        return self.state_path / "assignment_state.json"
+
+    @property
+    def batch_state_path(self) -> Path:
+        """Path to the batch state file within the state directory."""
+        return self.state_path / "batch_state.json"
+
+    @property
+    def pending_submissions_path(self) -> Path:
+        """Path to the pending submissions file within the state directory."""
+        return self.state_path / "pending_submissions.jsonl"
+
+    @property
+    def stats_path(self) -> Path:
+        """Path to the stats file within the state directory."""
+        return self.state_path / "stats.json"
 
     @property
     def yafu_paths(self) -> YafuPaths:
