@@ -83,6 +83,7 @@ class Config(BaseModel):
     gimps_login: str = ""
     max_siqs_digits: PositiveInt = 100
     mersenne_ca_cooldown_period: CooldownPeriod = 1.0
+    pending_submissions_path: Path = Path("pending_submissions.jsonl")
     result_output_path: Path = Path("results")
     stats_path: Path = Path("stats.json")
     use_nfs_cado: bool = False

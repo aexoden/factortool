@@ -28,7 +28,7 @@ from factortool.config import read_config
 from factortool.engine import ExitStatus, FactorEngine
 from factortool.http import PermanentHttpError
 from factortool.interrupt import EXIT_STATUS as INTERRUPTED_EXIT_STATUS
-from factortool.interrupt import InterruptState
+from factortool.interrupt import Interrupted, InterruptState
 from factortool.number import Number, format_results
 from factortool.stats import FactoringStats, InvalidStatsError
 from factortool.tools import ToolError
@@ -245,6 +245,9 @@ def start_backend(config: Config, stats: FactoringStats, interrupts: InterruptSt
     """
     try:
         return create_backend(config, stats, interrupts)
+    except Interrupted:
+        logger.warning("Interrupted while starting the {} backend", config.backend)
+        sys.exit(INTERRUPTED_EXIT_STATUS)
     except requests.RequestException as e:
         logger.error("Unable to start the {} backend: {}", config.backend, e)
         sys.exit(6)

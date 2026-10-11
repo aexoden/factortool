@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import Collection
 
 import pytest
+import requests
 
 from factortool.assignments import AssignmentStore
 from factortool.backend import FetchCriteria
@@ -28,12 +29,13 @@ from factortool.cli.main import (
     get_time_limit,
     main,
     preserve_unfinished,
+    start_backend,
     validate_arguments,
     warn_if_assignments_may_expire,
 )
 from factortool.engine import ExitStatus, FactorEngine
 from factortool.http import PermanentHttpError
-from factortool.interrupt import EXIT_STATUS, InterruptState
+from factortool.interrupt import EXIT_STATUS, Interrupted, InterruptState
 from factortool.number import Number
 from factortool.stats import FactoringStats
 from factortool.tools import CadoNfsError, ToolError, YafuError
@@ -511,3 +513,21 @@ def test_an_interrupt_while_closing_the_backend_is_reported_by_the_exit_status(
     status, _ = run_main(monkeypatch, tmp_path, run, close=Mock(side_effect=interrupt_during_close))
 
     assert status == exit_status
+
+
+@pytest.mark.parametrize(
+    ("error", "exit_status"),
+    [(Interrupted("interrupted"), EXIT_STATUS), (requests.RequestException("unreachable"), 6)],
+    ids=["interrupted", "request-error"],
+)
+def test_a_backend_that_cannot_start_ends_the_run(
+    monkeypatch: pytest.MonkeyPatch, error: Exception, exit_status: int
+) -> None:
+    """Test that an interrupt while a backend waits to start is reported as one, rather than as a failure."""
+    config = make_config()
+    monkeypatch.setattr("factortool.cli.main.create_backend", Mock(side_effect=error))
+
+    with pytest.raises(SystemExit) as raised:
+        start_backend(config, FactoringStats(config.stats_path, read_only=True), InterruptState())
+
+    assert raised.value.code == exit_status

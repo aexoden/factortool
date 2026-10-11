@@ -14,11 +14,12 @@ if TYPE_CHECKING:
 import pytest
 import requests
 
-from factortool.backend import FetchCriteria
-from factortool.http import HttpClient
+from factortool.backend import FetchCriteria, SubmitOutcome
+from factortool.http import HttpClient, PermanentHttpError
 from factortool.mersenne_ca import MersenneCA, check_factorization
 from factortool.number import format_factorization
 from factortool.stats import FactoringStats
+from factortool.submissions import Submission
 
 from .helpers import make_config, make_number
 
@@ -30,7 +31,11 @@ def mersenne_ca(tmp_path: Path) -> Iterator[MersenneCA]:
     Yields:
         MersenneCA: The test backend.
     """
-    config = make_config(gimps_login="tester", mersenne_ca_cooldown_period=0.0)
+    config = make_config(
+        gimps_login="tester",
+        mersenne_ca_cooldown_period=0.0,
+        pending_submissions_path=tmp_path / "pending_submissions.jsonl",
+    )
     backend = MersenneCA(config, FactoringStats(tmp_path / "stats.json", read_only=True))
 
     try:
@@ -75,34 +80,62 @@ def test_format_factorization_includes_trailing_composites() -> None:
 
 
 @pytest.mark.parametrize(
-    ("json_result", "json_error", "accepted"),
+    ("json_result", "json_error", "outcome"),
     [
-        ({"status": "accepted"}, None, True),
-        ({"error": "submission rejected"}, None, False),
-        (None, ValueError("invalid JSON"), False),
+        ({"status": "accepted"}, None, SubmitOutcome.ACCEPTED),
+        ({"error": "submission rejected"}, None, SubmitOutcome.REJECTED),
+        (["unexpected"], None, SubmitOutcome.FAILED),
+        (None, ValueError("invalid JSON"), SubmitOutcome.FAILED),
     ],
-    ids=["accepted", "rejected", "malformed"],
+    ids=["accepted", "rejected", "not-an-object", "malformed"],
 )
-def test_submit_counts_only_accepted_responses(
+def test_submit_reports_the_outcome_of_a_response(
     mersenne_ca: MersenneCA,
     monkeypatch: pytest.MonkeyPatch,
-    json_result: dict[str, str] | None,
+    json_result: object,
     json_error: ValueError | None,
-    *,
-    accepted: bool,
+    outcome: SubmitOutcome,
 ) -> None:
-    """Only valid, accepted service responses count as successful submissions."""
-    number = make_number(100)
-    number.prime_factors = [2, 2, 5, 5]
-    number.composite_factors = []
+    """Test that only an error reported by the service is final, and a malformed response is worth another attempt."""
+    submission = Submission(n=100, prime_factors=(2, 2, 5, 5), composite_factors=(), expires_at=0.0)
     response = Mock(spec=requests.Response)
     if json_error:
         response.json.side_effect = json_error
     else:
         response.json.return_value = json_result
-    monkeypatch.setattr(HttpClient, "request", Mock(return_value=response))
+    request = Mock(return_value=response)
+    monkeypatch.setattr(HttpClient, "request", request)
 
-    assert mersenne_ca._submit_number(number) is accepted
+    assert mersenne_ca._submit_number(submission) is outcome
+    assert request.call_args.kwargs["files"]["compositefactorization"] == (None, "100=2*2*5*5")
+
+
+def test_submit_leaves_a_request_error_for_another_attempt(
+    mersenne_ca: MersenneCA, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that a submission the service could not be asked about is worth another attempt."""
+    submission = Submission(n=100, prime_factors=(2, 2, 5, 5), composite_factors=(), expires_at=0.0)
+    monkeypatch.setattr(HttpClient, "request", Mock(side_effect=requests.RequestException("unreachable")))
+
+    assert mersenne_ca._submit_number(submission) is SubmitOutcome.FAILED
+
+
+def test_submit_does_not_keep_a_permanent_error(mersenne_ca: MersenneCA, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a submission the service will never accept is not left for another attempt."""
+    submission = Submission(n=100, prime_factors=(2, 2, 5, 5), composite_factors=(), expires_at=0.0)
+    monkeypatch.setattr(HttpClient, "request", Mock(side_effect=PermanentHttpError("HTTP 400")))
+
+    assert mersenne_ca._submit_number(submission) is SubmitOutcome.REJECTED
+
+
+def test_submit_refuses_an_inconsistent_factorization(mersenne_ca: MersenneCA, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a factorization that does not multiply back to its number is never sent."""
+    submission = Submission(n=100, prime_factors=(2, 2, 5), composite_factors=(), expires_at=0.0)
+    request = Mock()
+    monkeypatch.setattr(HttpClient, "request", request)
+
+    assert mersenne_ca._submit_number(submission) is SubmitOutcome.REJECTED
+    request.assert_not_called()
 
 
 def test_fetch_requires_max_digits(mersenne_ca: MersenneCA) -> None:
@@ -134,5 +167,5 @@ def test_fetch_maps_criteria(mersenne_ca: MersenneCA, monkeypatch: pytest.Monkey
         json=None,
         timeout=30.0,
         max_attempts=None,
-        interruptible=True,
+        wait=mersenne_ca._interrupts.wait,
     )

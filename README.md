@@ -72,15 +72,15 @@ bash -c '
 ```
 
 I typically run this as a one-liner. It's been split into multiple lines here to
-keep the line length down. The loop runs under `bash -c` so that `exit` only ends
-the loop, rather than the entire shell it was typed into. This also makes it easy
-to prefix the whole loop with another command, such as `taskset -c 12-15` to pin
-`factortool` (and the processes it spawns) to specific CPU cores.
+keep the line length down. The loop runs under `bash -c` so that `exit` only
+ends the loop, rather than the entire shell it was typed into. This also makes
+it easy to prefix the whole loop with another command, such as `taskset -c
+12-15` to pin `factortool` (and the processes it spawns) to specific CPU cores.
 
 To stop the script, simply press Ctrl-C. `factortool` will finish the current
-factorization it is working on, submit any finished results, and then exit. The
-shell  script is designed to stop if `factortool` exits due to an interrupt such
-as Ctrl-C (exit status 2) or for a permanent HTTP error (exit status 6).
+batch it is working on, submit any finished results, and then exit. The shell
+script is designed to stop if `factortool` exits due to an interrupt such as
+Ctrl-C (exit status 2) or for a permanent HTTP error (exit status 6).
 
 Repeated interrupts escalate:
 
@@ -91,7 +91,9 @@ Repeated interrupts escalate:
   work (on the mersenne.ca backend) is retained for the next run.
 * The third abandons the current factorization.
 
-All three submit whatever results are in hand before exiting.
+All three submit whatever results are in hand before exiting. An interrupt that
+arrives while those results are being submitted stops the submission, and leaves
+the rest for the next run.
 
 SIGTERM, SIGHUP and, on Windows, Ctrl-Break have the same effect as the third
 interrupt. Once the current factorization has been abandoned, one more signal
@@ -141,6 +143,18 @@ Partial factorizations are submitted if a run ends after finding one or more
 factors. For `mersenne_ca`, unfinished assignments are saved in `assignment_state_path`
 and resumed on the next run. Assignments will be dropped if they come within ten
 minutes of expiration without being started.
+
+## Unsent Results
+
+Every result is recorded in `pending_submissions_path` as soon as it is ready to
+submit, and removed once the backend has accepted or rejected it. Whatever is
+left when `factortool` exits is submitted at the start of the next run with the
+same backend. Unsent results do not change the exit status.
+
+A result that still has not been submitted is eventually discarded: after 24
+hours for `factordb`, or when its assignment expires for `mersenne_ca`. A result
+found during the current run is always attempted at least once. Rate limits are
+respected across runs.
 
 ## User Agent
 

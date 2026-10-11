@@ -7,10 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- Submissions are retried forever and can't be interrupted, so a service outage
-  hangs the shutdown. A 429 without a `Retry-After` header waits an hour, and a
-  supplied value isn't clamped. Give up after a bounded time, write the unsent
-  results to a pending file and resubmit them at the start of the next run.
 - Two instances sharing a configuration overwrite each other's statistics,
   batch state and assignment state. Take a lock file at startup and refuse to
   run if another instance holds it.

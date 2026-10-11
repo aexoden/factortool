@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from factortool.backend import Backend
     from factortool.config import Config, FinalMethods, YafuPaths
     from factortool.stats import ECMCutoffs, FactoringStats
+    from factortool.submissions import Submission
 
 YAFU_METHOD_NAMES: dict[str, str] = {
     "rho": "Rho",
@@ -483,7 +484,7 @@ class Number:
         self._finish()
 
 
-def format_factorization(number: Number, separator: str) -> str:
+def format_factorization(number: Number | Submission, separator: str) -> str:
     """Format a number's known factorization as "n=<factors>".
 
     Every factor is listed individually, including repeats and any remaining composite factors, so the product of the
@@ -492,7 +493,7 @@ def format_factorization(number: Number, separator: str) -> str:
     Returns:
         str: Formatted factorization of the number.
     """
-    return f"{number.n}={separator.join(map(str, number.prime_factors + number.composite_factors))}"
+    return f"{number.n}={separator.join(map(str, (*number.prime_factors, *number.composite_factors)))}"
 
 
 def format_results(numbers: Iterable[Number]) -> str:
