@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 
 import pytest
 
+from loguru import logger
+
 from factortool.assignments import Assignment, AssignmentStore
 from factortool.backend import FetchCriteria
 from factortool.cli.main import (
@@ -29,6 +31,7 @@ from factortool.cli.main import (
     get_time_limit,
     main,
     preserve_unfinished,
+    report_summary,
     start_backend,
     validate_arguments,
     warn_if_assignments_may_expire,
@@ -42,7 +45,7 @@ from factortool.number import Number
 from factortool.stats import FactoringStats
 from factortool.tools import CadoNfsError, ToolError, YafuError
 
-from .helpers import NO_STATS_PATH, make_config
+from .helpers import NO_STATS_PATH, make_config, make_number
 
 # The exit status of a run ended by a permanent HTTP error in the backend.
 PERMANENT_HTTP_ERROR_EXIT_STATUS = 6
@@ -528,6 +531,51 @@ def test_the_directories_are_released_once_the_run_ends(monkeypatch: pytest.Monk
         status, _ = run_main(monkeypatch, tmp_path, Mock(return_value=ExitStatus.SUCCESS))
 
         assert status == 0
+
+
+def summarize(numbers: list[Number]) -> list[str]:
+    """Report the summary of a run, capturing the log messages.
+
+    Returns:
+        list[str]: The log messages, without their trailing newlines.
+    """
+    messages: list[str] = []
+    sink = logger.add(messages.append, format="{message}")
+
+    try:
+        report_summary(numbers)
+    finally:
+        logger.remove(sink)
+
+    return [message.rstrip("\n") for message in messages]
+
+
+def test_the_summary_only_counts_tool_failures_as_failures() -> None:
+    """Test that numbers the run never finished are reported as such, rather than as having failed to factor."""
+    factored, failed, expired, unfinished, *_ = numbers = [make_number(n) for n in (100, 102, 104, 106, 108, 110)]
+    factored.prime_factors, factored.composite_factors, factored.methods = [2, 2, 5, 5], [], ["TF", "TF"]
+    failed.tool_failed = True
+    expired.expires_at = 0.0
+    unfinished.started = True
+
+    assert summarize(numbers) == [
+        "1 number failed to factor: 102",
+        "Factored 1 of 6 numbers (1 failed, 1 expired, 1 unfinished, 2 not started)",
+        "The following methods were used: TF (1)",
+    ]
+
+
+def test_the_summary_of_a_complete_run_has_nothing_else_to_report() -> None:
+    """Test that a run that factored everything reports no other outcomes."""
+    number = make_number(100)
+    number.prime_factors, number.composite_factors, number.methods = [2, 2, 5, 5], [], ["TF"]
+
+    assert summarize([number]) == ["Factored 1 of 1 number", "The following methods were used: TF (1)"]
+
+
+def test_the_summary_of_a_run_that_started_nothing_lists_no_methods() -> None:
+    """Test that a run stopped before any method found a factor does not report an empty list of methods."""
+    assert summarize([make_number(100), make_number(102)]) == ["Factored 0 of 2 numbers (2 not started)"]
 
 
 def test_results_written_in_the_same_second_do_not_overwrite_each_other(tmp_path: Path) -> None:

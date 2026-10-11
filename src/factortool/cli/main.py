@@ -9,6 +9,7 @@ import math
 import sys
 import time
 
+from collections import Counter
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -30,7 +31,7 @@ from factortool.http import PermanentHttpError
 from factortool.interrupt import EXIT_STATUS as INTERRUPTED_EXIT_STATUS
 from factortool.interrupt import Interrupted, InterruptState
 from factortool.lock import DirectoryInUseError, lock_directories
-from factortool.number import Number, format_results
+from factortool.number import Number, Outcome, format_results
 from factortool.stats import FactoringStats, InvalidStatsError
 from factortool.tools import ToolError
 from factortool.util import ArgumentParser, setup_logger
@@ -157,9 +158,8 @@ def validate_tools(config: Config) -> None:
 
 
 def report_summary(numbers: Collection[Number]) -> None:
-    """Log which methods were used and which numbers were left unfactored."""
+    """Log a summary of the factoring results, including method usage and failures."""
     method_counts: dict[str, int] = {}
-    failed_numbers: set[Number] = set()
 
     for number in numbers:
         for method in set(number.methods):
@@ -168,26 +168,36 @@ def report_summary(numbers: Collection[Number]) -> None:
 
             method_counts[method] += 1
 
-        if not number.factored:
-            failed_numbers.add(number)
+    outcomes = Counter(number.outcome for number in numbers)
+    failed_numbers = sorted(number for number in numbers if number.outcome is Outcome.FAILED)
 
     if len(failed_numbers) > 0:
         logger.warning(
-            "{} numbers failed to factor: {}",
+            "{} number{} failed to factor: {}",
             len(failed_numbers),
-            ", ".join(str(x.n) for x in sorted(failed_numbers)),
+            "s" if len(failed_numbers) != 1 else "",
+            ", ".join(str(x.n) for x in failed_numbers),
         )
 
-    logger.info(
-        "Factored {} numbers and there were {} failures",
-        len(numbers) - len(failed_numbers),
-        len(failed_numbers),
-    )
+    unfactored = [
+        f"{outcomes[outcome]} {outcome.value}"
+        for outcome in Outcome
+        if outcome is not Outcome.FACTORED and outcomes[outcome]
+    ]
 
     logger.info(
-        "The following methods were used: {}",
-        ", ".join(f"{method} ({count})" for method, count in method_counts.items()),
+        "Factored {} of {} number{}{}",
+        outcomes[Outcome.FACTORED],
+        len(numbers),
+        "s" if len(numbers) != 1 else "",
+        f" ({', '.join(unfactored)})" if unfactored else "",
     )
+
+    if method_counts:
+        logger.info(
+            "The following methods were used: {}",
+            ", ".join(f"{method} ({count})" for method, count in method_counts.items()),
+        )
 
 
 def write_results(numbers: Collection[Number], output_path: Path) -> None:

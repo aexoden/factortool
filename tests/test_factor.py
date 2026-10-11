@@ -20,6 +20,7 @@ from factortool.constants import MAX_CONSECUTIVE_TOOL_FAILURES
 from factortool.number import (
     FinalMethodNeeded,
     Number,
+    Outcome,
     factor_ecm,
     factor_nfs_cado,
     factor_tf,
@@ -398,7 +399,58 @@ def test_a_tool_failure_sets_the_number_aside(monkeypatch: pytest.MonkeyPatch) -
     assert not number.active
     assert not number.ecm_needed
     assert number.composite_factors == [C90]
-    assert not number.attempted
+    assert number.started
+    assert number.outcome is Outcome.FAILED
+
+
+def test_a_number_no_method_was_run_on_is_not_started() -> None:
+    """Test that a number is not counted as worked on merely for resuming with factors from a previous run."""
+    number = resumed_number(15015, [1001, 3, 5])
+
+    assert not number.started
+    assert number.outcome is Outcome.NOT_STARTED
+
+
+def test_a_method_that_finds_nothing_still_starts_the_number(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a number is unfinished, rather than not started, once a method has run on it without success."""
+    number = make_number(C90)
+    monkeypatch.setattr("factortool.number.factor_yafu", Mock(return_value=[C90]), raising=True)
+
+    number.factor_rho()
+
+    assert number.methods == []
+    assert number.outcome is Outcome.UNFINISHED
+
+
+def test_a_factored_number_is_factored_whatever_else_happened(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a number factored just before its assignment ran out is not reported as expired."""
+    number = make_number(C90)
+    monkeypatch.setattr("factortool.number.factor_yafu", Mock(return_value=C90_SPLIT), raising=True)
+    monkeypatch.setattr("factortool.number.is_prime", lambda n: n != C90, raising=True)
+
+    number.factor_rho()
+    number.expires_at = 0.0
+
+    assert number.outcome is Outcome.FACTORED
+
+
+@pytest.mark.parametrize(
+    ("started", "tool_failed", "outcome"),
+    [(False, False, Outcome.EXPIRED), (True, False, Outcome.EXPIRED), (True, True, Outcome.FAILED)],
+    ids=["skipped", "cut short", "failed"],
+)
+def test_an_expired_assignment_outranks_everything_but_a_tool_failure(
+    started: bool,  # ruff: ignore[boolean-type-hint-positional-argument]
+    tool_failed: bool,  # ruff: ignore[boolean-type-hint-positional-argument]
+    outcome: Outcome,
+) -> None:
+    """Test that an unfactored number whose assignment ran out is expired unless a tool failed on it."""
+    number = make_number(C90)
+    number.expires_at = 0.0
+    number.started = started
+    number.tool_failed = tool_failed
+
+    assert number.outcome is outcome
 
 
 def final_number(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, results: dict[str, list[int] | Exception]) -> Number:
@@ -477,7 +529,8 @@ def test_a_number_is_set_aside_when_no_final_method_splits_it(monkeypatch: pytes
     assert number.tool_failed
     assert not number.factored
     assert number.composite_factors == [C90]
-    assert not number.attempted
+    assert number.started
+    assert number.outcome is Outcome.FAILED
 
 
 def test_composite_cofactors_left_by_a_final_method_are_finished(monkeypatch: pytest.MonkeyPatch) -> None:

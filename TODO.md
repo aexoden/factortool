@@ -7,9 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- The summary counts every unfactored number as having "failed to factor",
-  including those that were never started because of an interrupt, the time
-  limit or an expired assignment.
 - The results file lists numbers that were never touched as `n=n`.
 - A single isolated tool failure ends the run as a broken installation ("failed
   every time it was run (1 time)") if that tool was only run once in the batch,

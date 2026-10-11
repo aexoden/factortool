@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 import time
 
+from enum import Enum
 from functools import cache
 from typing import TYPE_CHECKING, cast
 
@@ -33,6 +34,25 @@ YAFU_METHOD_NAMES: dict[str, str] = {
     "siqs": FINAL_METHOD_NAMES["siqs"],
     "nfs": FINAL_METHOD_NAMES["nfs_yafu"],
 }
+
+
+class Outcome(Enum):
+    """How a number stands at the end of a factoring run."""
+
+    # Every factor found is prime.
+    FACTORED = "factored"
+
+    # A tool failed on the number, so it was set aside.
+    FAILED = "failed"
+
+    # The number's assignment ran out before it was factored.
+    EXPIRED = "expired"
+
+    # At least one method was run on the number, but the run ended before it was factored.
+    UNFINISHED = "unfinished"
+
+    # The run ended before any method was run on the number.
+    NOT_STARTED = "not started"
 
 
 class FinalMethodNeeded(Exception):  # ruff: ignore[error-suffix-on-exception-name]
@@ -219,6 +239,7 @@ class Number:
     methods: list[str]
 
     expires_at: float | None
+    started: bool
     tool_failed: bool
 
     _ecm_level: int
@@ -237,6 +258,7 @@ class Number:
         self._backend = backend
         self._submitted = False
         self.expires_at = None
+        self.started = False
         self.tool_failed = False
 
         self._ecm_level = 0
@@ -290,9 +312,18 @@ class Number:
         return not self.factored and not self.tool_failed
 
     @property
-    def attempted(self) -> bool:
-        """Whether any factoring method has been run against this number."""
-        return len(self.methods) > 0
+    def outcome(self) -> Outcome:
+        """The outcome of this number's factoring process."""
+        if self.factored:
+            return Outcome.FACTORED
+
+        if self.tool_failed:
+            return Outcome.FAILED
+
+        if self.assignment_expired:
+            return Outcome.EXPIRED
+
+        return Outcome.UNFINISHED if self.started else Outcome.NOT_STARTED
 
     @property
     def known_factors(self) -> list[int]:
@@ -463,6 +494,8 @@ class Number:
         factor_func: Callable[..., list[int]],
         *args: int | str | Path | YafuPaths | FinalMethods | FactoringStats,
     ) -> None:
+        self.started = True
+
         for n in list(self.composite_factors):
             try:
                 self._replace_composite(n, method, factor_func(n, *args))
@@ -500,6 +533,8 @@ class Number:
 
     def factor_final(self) -> None:
         """Factor each remaining composite using its own fastest final method, falling back to the others."""
+        self.started = True
+
         for n in self.composite_factors.copy():
             self._factor_final(n)
 
