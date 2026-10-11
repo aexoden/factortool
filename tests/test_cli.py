@@ -41,7 +41,7 @@ from factortool.engine import ExitStatus, FactorEngine
 from factortool.http import PermanentHttpError
 from factortool.interrupt import EXIT_STATUS, Interrupted, InterruptState
 from factortool.lock import lock_directories
-from factortool.number import Number
+from factortool.number import Number, Outcome
 from factortool.stats import FactoringStats
 from factortool.tools import CadoNfsError, ToolError, YafuError
 
@@ -114,6 +114,25 @@ class FakeBackend:
 
     def close(self) -> None:
         """Close the fake backend, doing nothing."""
+
+
+def factoring(outcome: ExitStatus | Exception = ExitStatus.SUCCESS) -> Mock:
+    """Stand in for an engine run that trial factors every number before ending with the given outcome.
+
+    Returns:
+        Mock: A replacement for FactorEngine.run.
+    """
+
+    def run(numbers: Collection[Number], _time_limit: float | None) -> ExitStatus:
+        for number in numbers:
+            number.factor_tf()
+
+        if isinstance(outcome, Exception):
+            raise outcome
+
+        return outcome
+
+    return Mock(side_effect=run)
 
 
 def test_a_normal_run_tops_the_batch_back_up(tmp_path: Path) -> None:
@@ -304,7 +323,7 @@ def test_a_tool_failure_exits_with_the_tool_status_after_cleaning_up(
     monkeypatch.setattr("factortool.cli.main.setup_logger", Mock(), raising=True)
     monkeypatch.setattr("factortool.cli.main.InterruptState.install", Mock(), raising=True)
     monkeypatch.setattr("factortool.cli.main.create_backend", Mock(return_value=FakeBackend(assigns_work=False)))
-    monkeypatch.setattr("factortool.cli.main.FactorEngine.run", Mock(side_effect=error), raising=True)
+    monkeypatch.setattr("factortool.cli.main.FactorEngine.run", factoring(error), raising=True)
 
     with pytest.raises(SystemExit) as raised:
         main()
@@ -323,7 +342,10 @@ def test_a_termination_signal_still_saves_state_before_exiting_as_interrupted(
     backend.close = Mock()  # type: ignore[method-assign]
     interrupts = InterruptState()
 
-    def run(_self: FactorEngine, _numbers: Collection[Number], _time_limit: float | None) -> ExitStatus:
+    def run(_self: FactorEngine, numbers: Collection[Number], _time_limit: float | None) -> ExitStatus:
+        for number in numbers:
+            number.factor_tf()
+
         signal.raise_signal(signal.SIGTERM)
         time.sleep(0.5)
 
@@ -469,7 +491,7 @@ def test_a_failure_to_save_assignments_is_reported_by_the_exit_status(
     """Test that losing track of unfinished assignments counts as a cleanup failure, without skipping later steps."""
     monkeypatch.setattr("factortool.cli.main.AssignmentStore.save", Mock(side_effect=OSError("disk full")))
 
-    status, close = run_main(monkeypatch, tmp_path, Mock(return_value=ExitStatus.SUCCESS), backend=FakeBackend())
+    status, close = run_main(monkeypatch, tmp_path, factoring(), backend=FakeBackend())
 
     assert status == CLEANUP_FAILED_EXIT_STATUS
     assert len(list((tmp_path / "results").iterdir())) == 1
@@ -502,7 +524,7 @@ def test_a_failure_to_close_the_backend_is_reported_by_the_exit_status(
     """Test that a backend that cannot shut down cleanly is reported once everything else has been saved."""
     close = Mock(side_effect=RuntimeError("bug"))
 
-    status, _ = run_main(monkeypatch, tmp_path, Mock(return_value=ExitStatus.SUCCESS), close=close)
+    status, _ = run_main(monkeypatch, tmp_path, factoring(), close=close)
 
     assert status == CLEANUP_FAILED_EXIT_STATUS
     assert (tmp_path / "state" / "stats.json").exists()
@@ -578,16 +600,62 @@ def test_the_summary_of_a_run_that_started_nothing_lists_no_methods() -> None:
     assert summarize([make_number(100), make_number(102)]) == ["Factored 0 of 2 numbers (2 not started)"]
 
 
+# A product of two primes too large for trial factoring to find.
+HARD_COMPOSITE = 1000003 * 1000033
+
+
+def read_results(output_path: Path) -> list[str]:
+    """Read the contents of every results file in a directory.
+
+    Returns:
+        list[str]: The contents of each file, in order of file name.
+    """
+    return [path.read_text(encoding="utf-8") for path in sorted(output_path.iterdir())]
+
+
 def test_results_written_in_the_same_second_do_not_overwrite_each_other(tmp_path: Path) -> None:
     """Test that a result file whose name is already taken is left alone."""
-    numbers = [Number(n, make_config(), FactoringStats(tmp_path / "stats.json", read_only=True), None) for n in (4, 6)]
+    numbers = [make_number(n) for n in (4, 6)]
 
     for number in numbers:
+        number.factor_tf()
         write_results([number], tmp_path)
 
-    contents = {path.read_text(encoding="utf-8") for path in tmp_path.iterdir()}
+    assert sorted(read_results(tmp_path)) == ["4=2 2\n", "6=2 3\n"]
 
-    assert len(contents) == len(numbers)
+
+def test_results_only_list_numbers_the_run_found_a_factor_of(tmp_path: Path) -> None:
+    """Test that numbers the run learned nothing about are left out, whatever state they ended in."""
+    not_started, failed, expired, no_factor, partial, factored = numbers = [
+        make_number(n) for n in (100, 102, 104, HARD_COMPOSITE, 2 * HARD_COMPOSITE, 106)
+    ]
+    failed.tool_failed = True
+    expired.expires_at = 0.0
+
+    for number in (no_factor, partial, factored):
+        number.factor_tf()
+
+    assert not_started.outcome is Outcome.NOT_STARTED
+    assert no_factor.outcome is Outcome.UNFINISHED
+
+    write_results(set(numbers), tmp_path)
+
+    assert read_results(tmp_path) == [f"106=2 53\n{2 * HARD_COMPOSITE}=2 {HARD_COMPOSITE}\n"]
+
+
+def test_results_leave_out_a_resumed_number_until_it_gains_a_factor(tmp_path: Path) -> None:
+    """Test that factors carried over from an earlier run are not recorded again until the number gets further."""
+    config, stats = make_config(), FactoringStats(NO_STATS_PATH, read_only=True)
+    number = Number(4 * HARD_COMPOSITE, config, stats, None, [4, HARD_COMPOSITE])
+
+    write_results([number], tmp_path / "results")
+
+    assert not (tmp_path / "results").exists()
+
+    number.factor_tf()
+    write_results([number], tmp_path / "results")
+
+    assert read_results(tmp_path / "results") == [f"{4 * HARD_COMPOSITE}=2 2 {HARD_COMPOSITE}\n"]
 
 
 def test_an_unexpected_engine_failure_still_cleans_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -595,7 +663,7 @@ def test_an_unexpected_engine_failure_still_cleans_up(monkeypatch: pytest.Monkey
     close = Mock()
 
     with pytest.raises(RuntimeError, match="bug"):
-        run_main(monkeypatch, tmp_path, Mock(side_effect=RuntimeError("bug")), close=close)
+        run_main(monkeypatch, tmp_path, factoring(RuntimeError("bug")), close=close)
 
     assert (tmp_path / "state" / "stats.json").exists()
     assert len(list((tmp_path / "results").iterdir())) == 1

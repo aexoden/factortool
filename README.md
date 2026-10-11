@@ -152,6 +152,14 @@ found, and resumed on the next run. Work continues on an assignment until it
 expires, an hour after it was fetched. Once it has expired, it is dropped, and
 any factors found for it are recorded only in the results file.
 
+## Results Files
+
+Each run writes the factorizations it made progress on to a timestamped file in
+`result_output_path`, one per line as `n=f1 f2 ...`. A number is listed only if
+the run found at least one new factor of it. A partial factorization lists its
+remaining composite factors alongside the primes, so the product of the listed
+factors is always the number itself.
+
 ## Unsent Results
 
 Every result is recorded in the state directory as soon as it is ready to

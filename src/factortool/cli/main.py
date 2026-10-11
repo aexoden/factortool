@@ -201,12 +201,15 @@ def report_summary(numbers: Collection[Number]) -> None:
 
 
 def write_results(numbers: Collection[Number], output_path: Path) -> None:
-    """Write the run's factorizations to a timestamped file."""
-    if not output_path.exists():
-        output_path.mkdir(parents=True)
+    """Write the factorizations the run made progress on to a timestamped file."""
+    results = format_results(number for number in numbers if number.methods)
+
+    if not results:
+        return
+
+    output_path.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.datetime.now(tz=datetime.UTC).strftime("%Y%m%d-%H%M%S")
-    results = format_results(numbers) + "\n"
     attempt = 0
 
     # Instances with separate state can share an output directory.

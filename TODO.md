@@ -7,7 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- The results file lists numbers that were never touched as `n=n`.
 - A single isolated tool failure ends the run as a broken installation ("failed
   every time it was run (1 time)") if that tool was only run once in the batch,
   even when a fallback method went on to factor the number. Consider requiring

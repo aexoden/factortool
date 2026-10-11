@@ -554,9 +554,9 @@ def format_factorization(number: Number | Submission, separator: str) -> str:
 
 
 def format_results(numbers: Iterable[Number]) -> str:
-    """Format the factoring results for output.
+    """Format the factoring results for output, one number per line in ascending order.
 
     Returns:
         str: Formatted factoring results.
     """
-    return "\n".join(format_factorization(x, " ") for x in numbers)
+    return "".join(f"{format_factorization(x, ' ')}\n" for x in sorted(numbers))
