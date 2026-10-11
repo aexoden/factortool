@@ -15,13 +15,27 @@ if TYPE_CHECKING:
 
 import pytest
 
-from factortool.assignments import ASSIGNMENT_EXPIRY_FUDGE_FACTOR, AssignmentState, AssignmentStore, select_unfinished
+from factortool.assignments import Assignment, AssignmentState, AssignmentStore
 from factortool.cli.main import preserve_unfinished
+
+if TYPE_CHECKING:
+    from factortool.number import Number
 
 from .helpers import make_number
 
 # How long mersenne.ca reserves an assignment.
 LIFETIME = 3600.0
+
+
+def assigned(*composites: int, lifetime: float = LIFETIME) -> list[Assignment]:
+    """Build assignments for the given composites that expire after the given lifetime.
+
+    Returns:
+        list[Assignment]: The assignments, with no factors found.
+    """
+    expires_at = time.time() + lifetime
+
+    return [Assignment(n=n, expires_at=expires_at) for n in composites]
 
 
 def write_state(state_path: Path, fields: dict[str, object], last_update: float | None = None) -> None:
@@ -30,39 +44,45 @@ def write_state(state_path: Path, fields: dict[str, object], last_update: float 
     state_path.write_text(json.dumps(state), encoding="utf-8")
 
 
-def read_expiry(state_path: Path, n: int) -> float:
-    """Read back the stored expiry for one assignment.
-
-    Returns:
-        float: When the claim on the assignment expires.
-    """
-    state = AssignmentState.model_validate_json(state_path.read_text(encoding="utf-8"))
-
-    return next(x.expires_at for x in state.assignments if x.n == n)
-
-
 def test_load_returns_nothing_without_a_state_file(tmp_path: Path) -> None:
     """Test that loading from a non-existent state file returns an empty list."""
-    assert AssignmentStore(tmp_path / "assignments.json", "mersenne_ca", LIFETIME).load() == []
+    assert AssignmentStore(tmp_path / "assignments.json", "mersenne_ca").load() == []
 
 
 def test_save_and_load_round_trip(tmp_path: Path) -> None:
-    """Test that saving and then loading returns the same list of composites."""
-    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca", LIFETIME)
-    store.note_assigned([101, 103])
-    store.save([103, 101])
+    """Test that saving and then loading returns the same assignments, smallest composite first."""
+    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca")
+    first, second = assigned(101, 103)
+    store.save([second, first])
 
-    assert store.load() == [101, 103]
+    assert store.load() == [first, second]
+
+
+def test_factors_found_so_far_round_trip(tmp_path: Path) -> None:
+    """Test that the factors found for an unfinished composite are carried over with its assignment."""
+    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca")
+    assignment = Assignment(n=15015, expires_at=time.time() + LIFETIME, factors=[3, 5, 1001])
+    store.save([assignment])
+
+    assert store.load() == [assignment]
+
+
+def test_load_accepts_an_assignment_saved_without_factors(tmp_path: Path) -> None:
+    """Test that an assignment saved before factors were retained is still resumed."""
+    state_path = tmp_path / "assignments.json"
+    write_state(state_path, {"assignments": [{"n": 101, "expires_at": time.time() + LIFETIME}]})
+
+    (assignment,) = AssignmentStore(state_path, "mersenne_ca").load()
+
+    assert (assignment.n, assignment.factors) == (101, [])
 
 
 def test_load_ignores_state_from_a_different_backend(tmp_path: Path) -> None:
     """Test that loading ignores state from a different backend."""
     state_path = tmp_path / "assignments.json"
-    store = AssignmentStore(state_path, "mersenne_ca", LIFETIME)
-    store.note_assigned([101, 103])
-    store.save([101, 103])
+    AssignmentStore(state_path, "mersenne_ca").save(assigned(101, 103))
 
-    assert AssignmentStore(state_path, "factordb", LIFETIME).load() == []
+    assert AssignmentStore(state_path, "factordb").load() == []
 
 
 def test_load_ignores_a_corrupt_state_file(tmp_path: Path) -> None:
@@ -70,77 +90,29 @@ def test_load_ignores_a_corrupt_state_file(tmp_path: Path) -> None:
     state_path = tmp_path / "assignments.json"
     state_path.write_text("{not json", encoding="utf-8")
 
-    assert AssignmentStore(state_path, "mersenne_ca", LIFETIME).load() == []
+    assert AssignmentStore(state_path, "mersenne_ca").load() == []
 
 
 def test_clear_discards_pending_work(tmp_path: Path) -> None:
     """Test that clearing the store discards any pending work."""
-    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca", LIFETIME)
-    store.note_assigned([101])
-    store.save([101])
+    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca")
+    store.save(assigned(101))
     store.clear()
 
     assert store.load() == []
 
 
-def test_load_discards_a_lapsed_assignment(tmp_path: Path) -> None:
-    """Test that loading discards an assignment whose claim has lapsed."""
+# Remaining lifetimes either side of the expiry. Nothing is held back for being merely close to it.
+AROUND_EXPIRY = [(-1.0, False), (60.0, True)]
+
+
+@pytest.mark.parametrize(("remaining", "kept"), AROUND_EXPIRY)
+def test_load_discards_only_an_expired_assignment(tmp_path: Path, remaining: float, *, kept: bool) -> None:
+    """Test that loading discards an assignment once it has expired, and not merely for being close to it."""
     state_path = tmp_path / "assignments.json"
-    store = AssignmentStore(state_path, "mersenne_ca", -LIFETIME)
-    store.note_assigned([101])
-    store.save([101])
+    AssignmentStore(state_path, "mersenne_ca").save(assigned(101, lifetime=remaining))
 
-    assert AssignmentStore(state_path, "mersenne_ca", LIFETIME).load() == []
-
-
-def test_carrying_an_assignment_over_does_not_renew_it(tmp_path: Path) -> None:
-    """Test that carrying an assignment over to another run does not renew its expiry."""
-    state_path = tmp_path / "assignments.json"
-    first = AssignmentStore(state_path, "mersenne_ca", LIFETIME)
-    first.note_assigned([101])
-    first.save([101])
-    original = read_expiry(state_path, 101)
-
-    second = AssignmentStore(state_path, "mersenne_ca", LIFETIME)
-    second.load()
-    second.save([101])
-
-    assert read_expiry(state_path, 101) == original
-
-
-def test_a_composite_never_seen_assigned_is_not_retained(tmp_path: Path) -> None:
-    """Test that a composite with no known expiry is dropped, as nothing says how long its assignment lasts."""
-    state_path = tmp_path / "assignments.json"
-    store = AssignmentStore(state_path, "mersenne_ca", LIFETIME)
-    store.note_assigned([101])
-    store.save([101, 103])
-
-    assert AssignmentStore(state_path, "mersenne_ca", LIFETIME).load() == [101]
-
-
-# Remaining lifetimes either side of the fudge factor.
-CLOSE_TO_EXPIRY = [(ASSIGNMENT_EXPIRY_FUDGE_FACTOR / 2, False), (ASSIGNMENT_EXPIRY_FUDGE_FACTOR * 2, True)]
-
-
-@pytest.mark.parametrize(("remaining", "kept"), CLOSE_TO_EXPIRY)
-def test_load_discards_an_assignment_close_to_expiry(tmp_path: Path, remaining: float, *, kept: bool) -> None:
-    """Test that loading discards an assignment expiring within the fudge factor, even though it has not expired."""
-    state_path = tmp_path / "assignments.json"
-    write_state(state_path, {"assignments": [{"n": 101, "expires_at": time.time() + remaining}]})
-
-    assert AssignmentStore(state_path, "mersenne_ca", LIFETIME).load() == ([101] if kept else [])
-
-
-@pytest.mark.parametrize(("remaining", "kept"), CLOSE_TO_EXPIRY)
-def test_save_omits_an_assignment_close_to_expiry(tmp_path: Path, remaining: float, *, kept: bool) -> None:
-    """Test that saving omits an assignment expiring within the fudge factor."""
-    state_path = tmp_path / "assignments.json"
-    store = AssignmentStore(state_path, "mersenne_ca", remaining)
-    store.note_assigned([101])
-    store.save([101])
-
-    state = AssignmentState.model_validate_json(state_path.read_text(encoding="utf-8"))
-    assert [x.n for x in state.assignments] == ([101] if kept else [])
+    assert [x.n for x in AssignmentStore(state_path, "mersenne_ca").load()] == ([101] if kept else [])
 
 
 def test_load_removes_expired_assignments_from_the_state(tmp_path: Path) -> None:
@@ -152,37 +124,18 @@ def test_load_removes_expired_assignments_from_the_state(tmp_path: Path) -> None
         {"assignments": [{"n": 101, "expires_at": now - LIFETIME}, {"n": 103, "expires_at": now + LIFETIME}]},
     )
 
-    AssignmentStore(state_path, "mersenne_ca", LIFETIME).load()
+    AssignmentStore(state_path, "mersenne_ca").load()
 
     state = AssignmentState.model_validate_json(state_path.read_text(encoding="utf-8"))
     assert [x.n for x in state.assignments] == [103]
 
 
-def test_select_unfinished_splits_partial_progress_from_untouched() -> None:
-    """Test that select_unfinished correctly separates partially factored numbers from untouched ones."""
-    done = make_number(100)
-    done.prime_factors = [2, 2, 5, 5]
-    done.composite_factors = []
+def make_unfinished(expires_at: float | None) -> tuple[list[Number], Number]:
+    """Build a finished, a partially factored and an untouched number sharing an assignment expiry.
 
-    partially_factored = make_number(200)
-    partially_factored.prime_factors = [2, 2]
-    partially_factored.composite_factors = [50]
-
-    untouched = make_number(300)
-
-    partial, pending = select_unfinished([done, partially_factored, untouched])
-
-    assert [x.n for x in partial] == [200]
-    assert [x.n for x in pending] == [300]
-
-
-def test_preserve_unfinished_keeps_work_left_by_a_completed_run(tmp_path: Path) -> None:
-    """Test that a number a method could not finish is reported or retained, not dropped with the finished ones."""
-    backend = Mock(assigns_work=True)
-    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca", LIFETIME)
-    store.note_assigned([100, 200, 300])
-    store.save([100, 200, 300])
-
+    Returns:
+        tuple[list[Number], Number]: All three numbers, and the partially factored one by itself.
+    """
     done = make_number(100)
     done.prime_factors = [2, 2, 5, 5]
     done.composite_factors = []
@@ -193,21 +146,68 @@ def test_preserve_unfinished_keeps_work_left_by_a_completed_run(tmp_path: Path) 
     partially_factored.composite_factors = [100]
     partially_factored.report_partial = Mock()  # type: ignore[method-assign]
 
-    untouched = make_number(300)
+    numbers = [done, partially_factored, make_number(300)]
 
-    preserve_unfinished(backend, store, [done, partially_factored, untouched])
+    for number in numbers:
+        number.expires_at = expires_at
 
-    partially_factored.report_partial.assert_called_once_with()
-    assert store.load() == [300]
+    return numbers, partially_factored
+
+
+@pytest.mark.parametrize("accepts_partial_results", [True, False])
+def test_preserve_unfinished_retains_work_whose_assignment_is_held(
+    tmp_path: Path, *, accepts_partial_results: bool
+) -> None:
+    """Test that unfinished numbers are retained with their factors, not reported, while their assignment is held."""
+    backend = Mock(assigns_work=True, accepts_partial_results=accepts_partial_results)
+    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca")
+    expires_at = time.time() + LIFETIME
+    numbers, partially_factored = make_unfinished(expires_at)
+
+    preserve_unfinished(backend, store, numbers)
+
+    partially_factored.report_partial.assert_not_called()  # type: ignore[attr-defined]
+    assert store.load() == [
+        Assignment(n=200, expires_at=expires_at, factors=[2, 100]),
+        Assignment(n=300, expires_at=expires_at, factors=[300]),
+    ]
+
+
+def test_preserve_unfinished_discards_a_partial_result_the_backend_does_not_want(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that a partial factorization is neither reported nor retained once its assignment has expired."""
+    warning = Mock()
+    monkeypatch.setattr("factortool.cli.main.logger.warning", warning, raising=True)
+    backend = Mock(assigns_work=True, accepts_partial_results=False)
+    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca")
+    numbers, partially_factored = make_unfinished(time.time() - 1.0)
+
+    preserve_unfinished(backend, store, numbers)
+
+    partially_factored.report_partial.assert_not_called()  # type: ignore[attr-defined]
+    assert store.load() == []
+    assert [call.args[1] for call in warning.call_args_list] == [200]
+
+
+def test_preserve_unfinished_reports_a_partial_result_whose_assignment_expired(tmp_path: Path) -> None:
+    """Test that a backend accepting partial factorizations is sent one that can no longer be completed."""
+    backend = Mock(assigns_work=True, accepts_partial_results=True)
+    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca")
+    numbers, partially_factored = make_unfinished(time.time() - 1.0)
+
+    preserve_unfinished(backend, store, numbers)
+
+    partially_factored.report_partial.assert_called_once_with()  # type: ignore[attr-defined]
+    assert store.load() == []
 
 
 def test_save_raises_when_the_state_cannot_be_written(tmp_path: Path) -> None:
     """Test that a failure to retain assignments reaches the caller instead of being swallowed."""
-    store = AssignmentStore(tmp_path / "missing" / "assignments.json", "mersenne_ca", LIFETIME)
-    store.note_assigned([100])
+    store = AssignmentStore(tmp_path / "missing" / "assignments.json", "mersenne_ca")
 
     with pytest.raises(OSError, match="missing"):
-        store.save([100])
+        store.save(assigned(100))
 
 
 def test_load_survives_being_unable_to_remove_expired_assignments(
@@ -220,4 +220,4 @@ def test_load_survives_being_unable_to_remove_expired_assignments(
 
     monkeypatch.setattr("factortool.assignments.safe_write", Mock(side_effect=OSError("disk full")), raising=True)
 
-    assert AssignmentStore(state_path, "mersenne_ca", LIFETIME).load() == [100]
+    assert [x.n for x in AssignmentStore(state_path, "mersenne_ca").load()] == [100]

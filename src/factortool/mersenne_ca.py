@@ -50,8 +50,13 @@ class MersenneCA(BaseBackend):
 
     # Fetched composites are reserved for this client for an hour.
     assigns_work = True
-    assignment_lifetime = 3600.0
+
+    # The nominal assignment lifetime is one hour. We shorten is slightly to account for delays during the fetch.
+    assignment_lifetime = 3600.0 - 10.0
     submission_lifetime = assignment_lifetime
+
+    # The service can technically accept partial results, but it is not preferred.
+    accepts_partial_results = False
 
     def __init__(self, config: Config, stats: FactoringStats, interrupts: InterruptState | None = None) -> None:
         """Initialize the mersenne.ca interface.
@@ -106,11 +111,19 @@ class MersenneCA(BaseBackend):
         )
 
     def _submit_number(self, submission: Submission) -> SubmitOutcome:
-        """Make a single attempt to report a composite's factorization, complete or partial.
+        """Make a single attempt to report a composite's complete factorization.
 
         Returns:
             SubmitOutcome: The outcome of the submission.
         """
+        # Nothing queues an incomplete factorization anymore, but an earlier version may have left some behind.
+        if submission.composite_factors:
+            logger.warning(
+                "Discarding the partial factorization of {}, as mersenne.ca only accepts complete factorizations",
+                submission.n,
+            )
+            return SubmitOutcome.REJECTED
+
         if not check_factorization(submission.n, submission.prime_factors + submission.composite_factors):
             logger.error("Refusing to report an inconsistent factorization for {}", submission.n)
             return SubmitOutcome.REJECTED

@@ -71,10 +71,14 @@ later ones.
   third-party library. Avoid libraries that are not currently maintained.
 - Track ECM progress for each composite factor rather than for the number as a
   whole. ECM currently runs on every remaining composite at a level chosen by
-  the largest one, so a small composite is carried through levels it would
-  never choose for itself, and the statistics for its digit count gain runs at
-  those levels. This may go along with revisiting how factors are stored and
-  with accounting for all factors in the time estimates.
+  the largest one, so a small composite is carried through levels it would never
+  choose for itself, and the statistics for its digit count gain runs at those
+  levels. This may go along with revisiting how factors are stored and with
+  accounting for all factors in the time estimates. At the same time, save the
+  progress with each retained mersenne.ca assignment. Only the factors found are
+  saved at present, so a resumed number repeats rho, P-1 and every ECM level on
+  its remaining composites. Figure out how to handle a switch between standard
+  and yafu modes with a still pending number.
 - Determine how multithreaded YAFU's implementation of SIQS is (may vary by
   digit count), and consider threading it ourselves like with rho and P-1.
 - Why is `max_siqs_digits` even an option? Is there a historical reason for it?
@@ -84,8 +88,11 @@ later ones.
   file settings are.
 - Consider whether the mersenne.ca one-hour assignment window should influence
   batch sizing. As long as the target duration is well below the window (e.g.
-  the default of ten minutes), it's fine, but perhaps a warning if the user tries
-  to use too large a duration such that their assignments risk expiring.
+  the default of ten minutes), it's fine, but perhaps a warning if the user
+  tries to use too large a duration such that their assignments risk expiring.
+  The goal is to never take more work than can be finished within the window, as
+  nothing else stops an assignment from being started too late to complete. Any
+  result for an expired assignment, partial or complete, is discarded.
 - Investigate moving away from Tap (Typed Argument Parser) for argument parsing.
   The obvious alternatives are click and typer, both of which are far more
   active projects than Tap, but this list isn't exhaustive. If opting to keep

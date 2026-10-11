@@ -99,7 +99,6 @@ class QueuedSubmission:
     """A submission waiting for the submission worker."""
 
     submission: Submission
-    carried_over: bool = False
     attempts: int = 0
 
 
@@ -114,6 +113,11 @@ class Backend(Protocol):
     @property
     def assignment_lifetime(self) -> float:
         """The lifetime of the assignment in seconds."""
+        ...
+
+    @property
+    def accepts_partial_results(self) -> bool:
+        """Whether the service accepts factorizations that include composite factors."""
         ...
 
     def fetch(self, criteria: FetchCriteria) -> set[Number]:
@@ -166,6 +170,9 @@ class BaseBackend(ABC):
     # How long, in seconds, the service holds a fetched composite for this client. Only meaningful if assigns_work.
     assignment_lifetime: float
 
+    # Whether the service accepts factorizations that include composite factors.
+    accepts_partial_results: bool
+
     # The largest number of composites to submit in a single batch.
     submit_batch_size: ClassVar[int] = 1
 
@@ -200,7 +207,7 @@ class BaseBackend(ABC):
         carried_over = self._journal.load()
 
         for submission in carried_over:
-            self._submit_queue.put_nowait(QueuedSubmission(submission, carried_over=True))
+            self._submit_queue.put_nowait(QueuedSubmission(submission))
 
         if carried_over:
             logger.info(
@@ -499,7 +506,8 @@ class BaseBackend(ABC):
             except queue.Empty:
                 break
 
-            if (queued.carried_over or queued.attempts > 0) and queued.submission.expires_at <= now:
+            # The composite behind an expired assignment may have already been reassigned.
+            if queued.submission.expires_at <= now:
                 self._discard_expired([queued.submission])
                 continue
 

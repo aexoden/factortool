@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from factortool.__about__ import __version__
-from factortool.assignments import ASSIGNMENT_EXPIRY_FUDGE_FACTOR, AssignmentStore, select_unfinished
+from factortool.assignments import Assignment, AssignmentStore, assignment_expired
 from factortool.backend import Backend, FetchCriteria, create_backend
 from factortool.batch import BatchController, BatchKey
 from factortool.config import read_config
@@ -232,7 +232,10 @@ def acquire_numbers(  # ruff: ignore[too-many-arguments]
     numbers: set[Number] = set()
 
     if backend.assigns_work:
-        numbers = {Number(n, config, stats, backend) for n in assignments.load()}
+        for assignment in assignments.load():
+            number = Number(assignment.n, config, stats, backend, assignment.factors)
+            number.expires_at = assignment.expires_at
+            numbers.add(number)
 
     remaining = criteria.count - len(numbers)
 
@@ -240,14 +243,15 @@ def acquire_numbers(  # ruff: ignore[too-many-arguments]
         logger.info("Fetching {} composite numbers from {}", remaining, config.backend)
         fetched = backend.fetch(replace(criteria, count=remaining))
 
-        if backend.assigns_work:
-            assignments.note_assigned(x.n for x in fetched)
-
+        assigned = {x.n for x in fetched}
         numbers |= fetched
 
-    if backend.assigns_work:
-        for number in numbers:
-            number.expires_at = assignments.expires_at(number.n)
+        if backend.assigns_work:
+            expires_at = time.time() + backend.assignment_lifetime
+
+            for number in numbers:
+                if number.n in assigned:
+                    number.expires_at = expires_at
 
     return numbers
 
@@ -301,22 +305,36 @@ def warn_if_assignments_may_expire(backend: Backend, time_limit: float | None) -
     if time_limit is None or not backend.assigns_work:
         return
 
-    if time_limit + ASSIGNMENT_EXPIRY_FUDGE_FACTOR > backend.assignment_lifetime:
+    if time_limit > backend.assignment_lifetime:
         logger.warning("With a time limit of {:.0f}s, assignments may expire before completion", time_limit)
 
 
 def preserve_unfinished(backend: Backend, assignments: AssignmentStore, numbers: Collection[Number]) -> None:
-    """Submit or preserve unfinished assignments.
+    """Retain or report unfinished numbers.
 
-    Partial work is submitted, and untouched assignments are preserved for the next run if the backend assigns work.
+    A number whose assignment is still held is retained for the next run, along with the factors found so far. Any
+    other partial factorization is reported if the backend accepts them, and discarded otherwise.
     """
-    partial, untouched = select_unfinished(numbers)
+    retained: list[Assignment] = []
 
-    for number in partial:
-        number.report_partial()
+    for number in numbers:
+        if number.factored:
+            continue
+
+        if number.expires_at is not None and not assignment_expired(number.expires_at):
+            retained.append(Assignment(n=number.n, expires_at=number.expires_at, factors=number.known_factors))
+        elif not number.partially_factored:
+            continue
+        elif backend.accepts_partial_results:
+            number.report_partial()
+        else:
+            logger.warning(
+                "Discarding the partial factorization of {}, as it was not completed before its assignment expired",
+                number.n,
+            )
 
     if backend.assigns_work:
-        assignments.save(x.n for x in untouched)
+        assignments.save(retained)
 
 
 def run_batch(args: Arguments, session: Session) -> int:
@@ -341,7 +359,7 @@ def run_batch(args: Arguments, session: Session) -> int:
 
     warn_if_assignments_may_expire(backend, time_limit)
 
-    assignments = AssignmentStore(config.assignment_state_path, config.backend, backend.assignment_lifetime)
+    assignments = AssignmentStore(config.assignment_state_path, config.backend)
 
     try:
         numbers = acquire_numbers(

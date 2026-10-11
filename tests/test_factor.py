@@ -54,6 +54,38 @@ def test_tf() -> None:
     assert factor_tf(n, stats) == [2, 3, 5, 7, 11, 13, 17, 31]
 
 
+def resumed_number(n: int, factors: list[int]) -> Number:
+    """Build a Number resuming from factors found by a previous run.
+
+    Returns:
+        Number: The resumed number.
+    """
+    return Number(n, make_config(), FactoringStats(NO_STATS_PATH, read_only=True), None, factors)
+
+
+def test_a_number_resumes_from_saved_factors() -> None:
+    """Test that saved factors are split into primes and the composites still to be factored."""
+    number = resumed_number(15015, [1001, 3, 5])
+
+    assert (number.prime_factors, number.composite_factors) == ([3, 5], [1001])
+    assert number.partially_factored
+    assert number.known_factors == [3, 5, 1001]
+
+
+@pytest.mark.parametrize("factors", [[3, 5], [1, 15015], [-3, -5005], []], ids=["product", "one", "negative", "none"])
+def test_a_number_ignores_saved_factors_that_are_not_a_factorization(factors: list[int]) -> None:
+    """Test that a number starts from scratch if its saved factors are missing or unusable."""
+    number = resumed_number(15015, factors)
+
+    assert (number.prime_factors, number.composite_factors) == ([], [15015])
+    assert not number.partially_factored
+
+
+def test_a_number_split_into_composites_is_partially_factored() -> None:
+    """Test that progress is recognized even when no prime factor has been found yet."""
+    assert resumed_number(1001 * 1003, [1001, 1003]).partially_factored
+
+
 def test_small_cofactors_use_statistical_ecm_cutoffs() -> None:
     """Test that a composite too small for CADO-NFS stops ECM at the learned cutoff rather than the maximum level."""
     number = make_number(15 * 10**50 + 7)

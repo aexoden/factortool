@@ -11,7 +11,7 @@ from functools import cache
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Iterable, Sequence
     from pathlib import Path
 
 from loguru import logger
@@ -227,8 +227,10 @@ class Number:
     _config: Config
     _backend: Backend | None
 
-    def __init__(self, n: int, config: Config, stats: FactoringStats, backend: Backend | None) -> None:
-        """Initialize the number object."""
+    def __init__(
+        self, n: int, config: Config, stats: FactoringStats, backend: Backend | None, factors: Sequence[int] = ()
+    ) -> None:
+        """Initialize the number object, optionally resuming from factors found by a previous run."""
         self.n = n
         self._stats = stats
         self._config = config
@@ -240,12 +242,13 @@ class Number:
         self._ecm_level = 0
         self._ecm_finished = False
 
-        if is_prime(n):
-            self.composite_factors = []
-            self.prime_factors = [n]
-        else:
-            self.composite_factors = [n]
-            self.prime_factors = []
+        if factors and (math.prod(factors) != n or min(factors) <= 1):
+            logger.warning("Ignoring the factors saved for {}, as they are not a factorization of it", n)
+            factors = ()
+
+        known_factors = factors or (n,)
+        self.prime_factors = [x for x in known_factors if is_prime(x)]
+        self.composite_factors = [x for x in known_factors if not is_prime(x)]
 
         self.methods = []
 
@@ -290,6 +293,16 @@ class Number:
     def attempted(self) -> bool:
         """Whether any factoring method has been run against this number."""
         return len(self.methods) > 0
+
+    @property
+    def known_factors(self) -> list[int]:
+        """Every factor found so far, prime or composite, whose product is the number itself."""
+        return [*self.prime_factors, *self.composite_factors]
+
+    @property
+    def partially_factored(self) -> bool:
+        """Whether at least one factor has been found without the number being fully factored."""
+        return not self.factored and len(self.known_factors) > 1
 
     def report_partial(self) -> None:
         """Report the factorization found so far, even if incomplete."""

@@ -65,7 +65,7 @@ class FactorEngine:
         with self._expired_lock:
             if number not in self._expired:
                 self._expired.add(number)
-                logger.warning("Skipping {} as its assignment is about to expire", number.n)
+                logger.warning("Skipping {} as its assignment has expired", number.n)
 
         return True
 

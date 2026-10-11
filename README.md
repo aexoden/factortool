@@ -91,8 +91,8 @@ Repeated interrupts escalate:
 * The first stops `factortool` from fetching any more work, but lets the already
   fetched batch run to completion as normal (subject to the time limit, if any).
 * The second gives up on the rest of the batch, but completes the current
-  factorization. Any partial factorizations are reported and untouched assigned
-  work (on the mersenne.ca backend) is retained for the next run.
+  factorization. Unfinished work is handled as described under
+  [Backends](#backends).
 * The third abandons the current factorization.
 
 All three submit whatever results are in hand before exiting. An interrupt that
@@ -143,10 +143,14 @@ where factors are submitted.
   through that service. Set `gimps_login` to your GIMPS username. `--max_digits`
   is required, and `--skip_count` is not supported (or needed to avoid conflict).
 
-Partial factorizations are submitted if a run ends after finding one or more
-factors. For `mersenne_ca`, unfinished assignments are saved in the state
-directory and resumed on the next run. Assignments will be dropped if they come
-within ten minutes of expiration without being started.
+For `factordb`, partial factorizations are submitted if a run ends after finding
+one or more factors.
+
+For `mersenne_ca`, only complete factorizations are submitted. Unfinished
+assignments are saved in the state directory, along with any factors already
+found, and resumed on the next run. Work continues on an assignment until it
+expires, an hour after it was fetched. Once it has expired, it is dropped, and
+any factors found for it are recorded only in the results file.
 
 ## Unsent Results
 
@@ -159,9 +163,8 @@ If the backend refuses a submission request outright (for example, with HTTP 403
 the results in it are kept for the next run rather than treated as rejected.
 
 A result that still has not been submitted is eventually discarded: after 30
-days for `factordb`, or when its assignment expires for `mersenne_ca`. A result
-found during the current run is always attempted at least once. Rate limits are
-respected across runs.
+days for `factordb`, or when its assignment expires for `mersenne_ca`. Rate
+limits are respected across runs.
 
 ## User Agent
 

@@ -348,12 +348,13 @@ def test_base_submit_records_the_factorization_as_it_stood(config: Config) -> No
     number = Number(15015, config, FactoringStats(config.stats_path, read_only=True), backend)
     number.prime_factors = [3, 5]
     number.composite_factors = [1001]
-    number.expires_at = 12345.0
+    expires_at = time.time() + 600.0
+    number.expires_at = expires_at
 
     backend.submit([number])
     backend.close()
 
-    assert recorded == [[Submission(n=15015, prime_factors=(3, 5), composite_factors=(1001,), expires_at=12345.0)]]
+    assert recorded == [[Submission(n=15015, prime_factors=(3, 5), composite_factors=(1001,), expires_at=expires_at)]]
     assert not config.pending_submissions_path.exists()
 
 
@@ -406,17 +407,17 @@ def test_base_resubmits_what_a_previous_run_left_unsent(config: Config, sleep: M
     assert sleep.called
 
 
-def test_base_attempts_a_new_result_once_even_if_it_has_expired(config: Config, retry_wait: Mock) -> None:
-    """Test that a result from this run is sent once after its assignment expires, and discarded if that fails."""
+def test_base_discards_a_new_result_whose_assignment_has_expired(config: Config, retry_wait: Mock) -> None:
+    """Test that a result from this run is never sent once its assignment has expired."""
     backend = make_fake_backend(config)
-    backend.outcomes[15] = [SubmitOutcome.FAILED] * 2
     (number,) = make_factored(config, backend, [3, 5])
     number.expires_at = time.time() - 1.0
 
     backend.submit([number])
     backend.close()
 
-    assert backend.submitted == [15]
+    assert backend.submitted == []
+    assert backend.get_successful_submission_count() == 0
     retry_wait.assert_not_called()
     assert not config.pending_submissions_path.exists()
 

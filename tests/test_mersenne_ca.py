@@ -130,6 +130,16 @@ def test_submit_keeps_a_refused_request_for_the_next_run(
     assert mersenne_ca._submit_number(submission) is SubmitOutcome.DEFERRED
 
 
+def test_submit_refuses_a_partial_factorization(mersenne_ca: MersenneCA, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a partial factorization, such as one left queued by an earlier version, is never sent."""
+    submission = Submission(n=15015, prime_factors=(3, 5), composite_factors=(1001,), expires_at=0.0)
+    request = Mock()
+    monkeypatch.setattr(HttpClient, "request", request)
+
+    assert mersenne_ca._submit_number(submission) is SubmitOutcome.REJECTED
+    request.assert_not_called()
+
+
 def test_submit_refuses_an_inconsistent_factorization(mersenne_ca: MersenneCA, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that a factorization that does not multiply back to its number is never sent."""
     submission = Submission(n=100, prime_factors=(2, 2, 5), composite_factors=(), expires_at=0.0)

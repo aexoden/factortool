@@ -215,6 +215,8 @@ class FactorDB(BaseBackend):
     assigns_work = False
     assignment_lifetime = 0.0
 
+    accepts_partial_results = True
+
     submit_batch_size = SUBMIT_BATCH_SIZE
 
     def __init__(self, config: Config, stats: FactoringStats, interrupts: InterruptState | None = None) -> None:
