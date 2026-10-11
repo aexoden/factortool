@@ -9,12 +9,21 @@ import sys
 import time
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 import requests
 
 from factortool.__about__ import PROJECT_URL, __version__
-from factortool.http import HttpClient, PermanentHttpError, build_user_agent, get_too_many_requests_delay
+from factortool.http import (
+    DEFAULT_RATE_LIMIT_DELAY,
+    MIN_RATE_LIMIT_DELAY,
+    HttpClient,
+    PermanentHttpError,
+    build_user_agent,
+    get_too_many_requests_delay,
+)
+from factortool.interrupt import Interrupted
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -74,15 +83,23 @@ def make_response(status_code: int, headers: dict[str, str] | None = None) -> re
     return response
 
 
+# The time at which the clock used by make_client starts.
+START_TIME = 1_000_000.0
+
+
 def make_client(
-    monkeypatch: pytest.MonkeyPatch, outcomes: Sequence[requests.Response | requests.RequestException]
+    monkeypatch: pytest.MonkeyPatch,
+    outcomes: Sequence[requests.Response | requests.RequestException],
+    **options: float | Callable[[float], None],
 ) -> tuple[HttpClient, list[float]]:
     """Build a client whose requests yield the given outcomes in order, recording sleeps instead of sleeping.
+
+    The clock starts at START_TIME and only advances by the recorded sleeps.
 
     Returns:
         tuple[HttpClient, list[float]]: The constructed HTTP client and the recorded sleep durations.
     """
-    client = HttpClient("Test", 1.0)
+    client = HttpClient("Test", 1.0, **options)  # type: ignore[arg-type]
     remaining = iter(outcomes)
     sleeps: list[float] = []
 
@@ -96,6 +113,7 @@ def make_client(
 
     monkeypatch.setattr(client.session, "request", fake_request)
     monkeypatch.setattr(time, "sleep", sleeps.append)
+    monkeypatch.setattr(time, "time", lambda: START_TIME + sum(sleeps))
 
     return client, sleeps
 
@@ -158,7 +176,93 @@ def test_rate_limit_does_not_advance_backoff(monkeypatch: pytest.MonkeyPatch) ->
 
     client.request("GET", "https://example.com/")
 
-    assert sleeps == [1.0, 7, 2.0]
+    assert sleeps == [1.0, 7.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    ("retry_after", "delay"),
+    [
+        (None, DEFAULT_RATE_LIMIT_DELAY),
+        ("", DEFAULT_RATE_LIMIT_DELAY),
+        ("soon", DEFAULT_RATE_LIMIT_DELAY),
+        ("90", 90.0),
+        ("0", MIN_RATE_LIMIT_DELAY),
+        ("-5", MIN_RATE_LIMIT_DELAY),
+        ("Thu, 01 Jan 1970 00:00:00 GMT", MIN_RATE_LIMIT_DELAY),
+    ],
+    ids=["missing", "empty", "unparseable", "seconds", "zero", "negative", "past-date"],
+)
+def test_rate_limit_delay_is_bounded(retry_after: str | None, delay: float) -> None:
+    """Tests that a missing Retry-After waits out the default."""
+    response = make_response(429, {} if retry_after is None else {"Retry-After": retry_after})
+
+    assert get_too_many_requests_delay(response) == delay
+
+
+def test_rate_limit_is_reported_and_holds_back_later_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests that a rate limit is reported with the time it ends, and that a later request waits for it too."""
+    on_rate_limit = Mock()
+    client, sleeps = make_client(
+        monkeypatch,
+        [make_response(429, {"Retry-After": "60"}), requests.ConnectionError("refused"), make_response(200)],
+        on_rate_limit=on_rate_limit,
+    )
+
+    with pytest.raises(requests.RequestException, match="Giving up after 1 attempts"):
+        client.request("GET", "https://example.com/", max_attempts=1)
+
+    on_rate_limit.assert_called_once_with(START_TIME + 60.0)
+    assert client.rate_limited_until == pytest.approx(START_TIME + 60.0)
+    assert sleeps == []
+
+    with pytest.raises(requests.RequestException, match="Giving up after 1 attempts"):
+        client.request("GET", "https://example.com/", max_attempts=1)
+
+    assert sleeps == [60.0]
+
+
+def test_a_shorter_rate_limit_does_not_replace_a_longer_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests that a limit reported to one request is not shortened by a briefer one reported to another."""
+    on_rate_limit = Mock()
+    client, sleeps = make_client(
+        monkeypatch, [make_response(429), make_response(429, {"Retry-After": "1"})], on_rate_limit=on_rate_limit
+    )
+
+    # The second request stands in for one that was already in flight when the first was refused.
+    assert client._note_rate_limit(make_response(429)) == pytest.approx(DEFAULT_RATE_LIMIT_DELAY)
+    assert client._note_rate_limit(make_response(429, {"Retry-After": "1"})) == pytest.approx(DEFAULT_RATE_LIMIT_DELAY)
+
+    assert client.rate_limited_until == pytest.approx(START_TIME + DEFAULT_RATE_LIMIT_DELAY)
+    on_rate_limit.assert_called_once_with(START_TIME + DEFAULT_RATE_LIMIT_DELAY)
+    assert sleeps == []
+
+
+def test_a_rate_limit_from_a_previous_run_holds_back_the_first_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests that a client told of a rate limit already in effect waits for it before sending anything."""
+    client, sleeps = make_client(monkeypatch, [make_response(200)], rate_limited_until=START_TIME + 45.0)
+
+    client.request("GET", "https://example.com/")
+
+    assert sleeps == [45.0]
+
+
+def test_an_abandoned_wait_abandons_the_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests that a wait reporting that it was cut short stops the request, whichever wait it was."""
+    wait = Mock(return_value=True)
+    client, sleeps = make_client(monkeypatch, [make_response(503)] * 2, rate_limited_until=START_TIME + 45.0)
+
+    with pytest.raises(Interrupted):
+        client.request("GET", "https://example.com/", max_attempts=None, wait=wait)
+
+    wait.assert_called_once_with(45.0)
+
+    client, _ = make_client(monkeypatch, [make_response(503)] * 2)
+
+    with pytest.raises(Interrupted):
+        client.request("GET", "https://example.com/", max_attempts=None, wait=wait)
+
+    wait.assert_called_with(1.0)
+    assert sleeps == []
 
 
 @pytest.mark.skipif(not hasattr(time, "tzset"), reason="Changing the local time zone requires time.tzset()")

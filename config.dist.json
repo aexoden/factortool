@@ -10,6 +10,7 @@
   "max_siqs_digits": 100,
   "max_threads": 2,
   "mersenne_ca_cooldown_period": 1.0,
+  "pending_submissions_path": "pending_submissions.jsonl",
   "result_output_path": "results",
   "stats_path": "stats.json",
   "use_nfs_cado": false,

@@ -4,6 +4,7 @@ __pycache__
 /batch_state.json
 /config.json
 /dist
+/pending_submissions.jsonl
 /results/*.txt
 /stats.json
 /work

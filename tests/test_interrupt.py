@@ -328,23 +328,21 @@ def test_an_ignored_termination_signal_stays_ignored() -> None:
 
 
 def test_interruptible_backoff_abandons_the_retry() -> None:
-    """Test that an interruptible backoff raises Interrupted instead of waiting."""
+    """Test that a backoff given an interruptible wait raises Interrupted instead of waiting."""
     interrupts = InterruptState()
     interrupts._level = 1
-    client = HttpClient("test", 1.0, "test/1", interrupts)
+    client = HttpClient("test", 1.0, "test/1")
 
     with pytest.raises(Interrupted):
-        client._backoff(LONG_WAIT, interruptible=True)
+        client._pause(LONG_WAIT, interrupts.wait)
 
 
 def test_backoff_is_not_interruptible_by_default() -> None:
     """Test that a backoff is not interruptible by default."""
-    interrupts = InterruptState()
-    interrupts._level = 1
-    client = HttpClient("test", 1.0, "test/1", interrupts)
+    client = HttpClient("test", 1.0, "test/1")
     start = time.monotonic()
 
-    client._backoff(TINY_WAIT, interruptible=False)
+    client._pause(TINY_WAIT, None)
 
     assert time.monotonic() - start >= TINY_WAIT
 
