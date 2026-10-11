@@ -7,10 +7,6 @@ later ones.
 
 ## Bug Fixes
 
-- A single isolated tool failure ends the run as a broken installation ("failed
-  every time it was run (1 time)") if that tool was only run once in the batch,
-  even when a fallback method went on to factor the number. Consider requiring
-  more than one failure, or not counting a failure that a fallback recovered.
 - `Number` treats 1 as a composite, and trial factoring then leaves it
   "factored" with no factors at all.
 

@@ -19,7 +19,7 @@ from loguru import logger
 from factortool.constants import ECM_CURVES, ECM_MAX_LEVEL, ECM_MIN_LEVEL, FINAL_METHOD_NAMES
 from factortool.interrupt import Interrupted, InterruptState
 from factortool.number import Number
-from factortool.tools import abandon_tools, tool_failures
+from factortool.tools import abandon_tools
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -151,11 +151,10 @@ class FactorEngine:
         A number that an external tool fails on is left unfactored, and the run continues with the rest.
 
         Raises:
-            ToolError: If an external tool fails several times in a row, or every time it is run.
+            ToolError: If an external tool fails several times in a row.
         """
         self._time_limit = time_limit
         self._start_time = time.monotonic()
-        tool_failures.reset()
 
         try:
             with self._interrupts.abortable(abandon_tools):
@@ -166,10 +165,6 @@ class FactorEngine:
         except Interrupted:
             logger.warning("Abandoned the factorization in progress")
             status = ExitStatus.INTERRUPTED
-
-        # An interrupted run is too incomplete to judge the tools.
-        if status != ExitStatus.INTERRUPTED:
-            tool_failures.check()
 
         return status
 

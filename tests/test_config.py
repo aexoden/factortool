@@ -258,6 +258,7 @@ def test_state_files_live_in_the_state_directory() -> None:
     assert config.batch_state_path == Path("somewhere/batch_state.json")
     assert config.pending_submissions_path == Path("somewhere/pending_submissions.jsonl")
     assert config.stats_path == Path("somewhere/stats.json")
+    assert config.tool_state_path == Path("somewhere/tool_state.json")
 
 
 def test_read_config_rejects_the_removed_state_file_settings(tmp_path: Path) -> None:

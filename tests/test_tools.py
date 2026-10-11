@@ -19,6 +19,7 @@ from factortool.tools import (
     CadoNfsError,
     ToolFailure,
     ToolFailures,
+    ToolState,
     YafuError,
     parse_yafu_factors,
     run_yafu,
@@ -72,7 +73,7 @@ def test_a_success_ends_a_run_of_failures() -> None:
     for _ in range(MAX_CONSECUTIVE_TOOL_FAILURES):
         fail(failures, "ECM")
         fail(failures, "ECM")
-        failures.succeeded(YafuError, "ECM")
+        failures.succeeded("ECM")
 
 
 def test_failures_are_counted_separately_for_each_method() -> None:
@@ -81,40 +82,91 @@ def test_failures_are_counted_separately_for_each_method() -> None:
 
     for _ in range(MAX_CONSECUTIVE_TOOL_FAILURES - 1):
         fail(failures, "YAFU NFS")
-        failures.succeeded(YafuError, "SIQS")
+        failures.succeeded("SIQS")
 
     with pytest.raises(YafuError, match=r"it broke \(YAFU NFS has failed 3 times in a row"):
         failures.failed(YafuError, "YAFU NFS", "it broke")
 
 
-def test_a_tool_that_never_succeeded_is_reported() -> None:
-    """Test that a tool failing every time it was run is an error, however few times that was."""
-    failures = ToolFailures()
-    failures.succeeded(YafuError, "ECM")
-    fail(failures, "CADO-NFS", CadoNfsError)
+def test_a_run_of_failures_continues_from_one_run_to_the_next(tmp_path: Path) -> None:
+    """Test that a tool run too rarely to fail repeatedly within a batch is still noticed across batches."""
+    state_path = tmp_path / "tool_state.json"
 
-    with pytest.raises(CadoNfsError, match=r"CADO-NFS failed every time it was run \(1 time\)") as raised:
-        failures.check()
+    for _ in range(MAX_CONSECUTIVE_TOOL_FAILURES - 1):
+        failures = ToolFailures()
+        failures.load(state_path)
+        failures.succeeded("ECM")
+        fail(failures, "CADO-NFS", CadoNfsError)
+        failures.save(state_path)
+
+    failures = ToolFailures()
+    failures.load(state_path)
+
+    with pytest.raises(CadoNfsError, match="CADO-NFS has failed 3 times in a row") as raised:
+        failures.failed(CadoNfsError, "CADO-NFS", "it broke")
 
     assert raised.value.exit_status == CadoNfsError.exit_status
 
 
-def test_a_tool_that_failed_and_succeeded_is_not_reported() -> None:
-    """Test that an isolated failure of a tool that otherwise works is not an error."""
+def test_a_broken_tool_is_reported_again_on_its_next_failure(tmp_path: Path) -> None:
+    """Test that a method reported as broken gets no fresh allowance of failures in the next run."""
+    state_path = tmp_path / "tool_state.json"
     failures = ToolFailures()
-    fail(failures, "Rho")
-    failures.succeeded(YafuError, "P-1")
 
-    failures.check()
+    for _ in range(MAX_CONSECUTIVE_TOOL_FAILURES - 1):
+        fail(failures, "ECM")
+
+    with pytest.raises(YafuError):
+        failures.failed(YafuError, "ECM", "it broke")
+
+    failures.save(state_path)
+    failures = ToolFailures()
+    failures.load(state_path)
+
+    with pytest.raises(YafuError, match="ECM has failed 4 times in a row"):
+        failures.failed(YafuError, "ECM", "it broke")
+
+
+def test_a_success_in_a_later_run_ends_a_saved_run_of_failures(tmp_path: Path) -> None:
+    """Test that a method that works again is forgiven the failures saved by earlier runs."""
+    state_path = tmp_path / "tool_state.json"
+    failures = ToolFailures()
+
+    for _ in range(MAX_CONSECUTIVE_TOOL_FAILURES - 1):
+        fail(failures, "ECM")
+
+    failures.save(state_path)
+    failures = ToolFailures()
+    failures.load(state_path)
+    failures.succeeded("ECM")
+    failures.save(state_path)
+
+    assert ToolState.model_validate_json(state_path.read_text(encoding="utf-8")).streaks == {}
+
+    failures = ToolFailures()
+    failures.load(state_path)
+    fail(failures, "ECM")
+
+
+@pytest.mark.parametrize("content", [b"not json", b'{"streaks": {"ECM": -1}}', b'{"streaks": []}', b"\xff"])
+def test_unreadable_tool_state_is_ignored(tmp_path: Path, content: bytes) -> None:
+    """Test that a damaged state file costs the saved failures rather than the run."""
+    state_path = tmp_path / "tool_state.json"
+    state_path.write_bytes(content)
+    failures = ToolFailures()
+    fail(failures, "ECM")
+    fail(failures, "ECM")
+
+    failures.load(state_path)
+
+    fail(failures, "ECM")
 
 
 def test_resetting_forgets_earlier_failures() -> None:
-    """Test that the failures of one run do not count toward the next."""
+    """Test that a reset clears every run of failures."""
     for _ in range(MAX_CONSECUTIVE_TOOL_FAILURES - 1):
         fail(tool_failures, "ECM")
 
     tool_failures.reset()
 
     fail(tool_failures, "ECM")
-    tool_failures.reset()
-    tool_failures.check()

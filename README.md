@@ -106,9 +106,10 @@ exits immediately, without saving anything further or submitting the remaining r
 If YAFU or CADO-NFS fail on a number (by exiting with an error or returning an
 incomplete factorization), the failure is logged and the batch continues. A
 final factoring method that fails is first retried with the other eligible final
-methods. If the same method fails three times in a row, or a tool fails every
-time it is run during a batch, the installation is assumed to be broken and
-`factortool` exits with status 5 (YAFU) or 4 (CADO-NFS).
+methods. If the same method fails three times in a row, the installation is
+assumed to be broken and `factortool` exits with status 5 (YAFU) or 4
+(CADO-NFS). The count carries over from one run to the next, and only resets
+once that method succeeds.
 
 If you are using direct YAFU support (by setting `factoring_mode` to `yafu` in
 config.json), I recommend ensuring YAFU's NFS functionality is correctly

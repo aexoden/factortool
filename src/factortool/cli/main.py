@@ -33,7 +33,7 @@ from factortool.interrupt import Interrupted, InterruptState
 from factortool.lock import DirectoryInUseError, lock_directories
 from factortool.number import Number, Outcome, format_results
 from factortool.stats import FactoringStats, InvalidStatsError
-from factortool.tools import ToolError
+from factortool.tools import ToolError, tool_failures
 from factortool.util import ArgumentParser, setup_logger
 
 if TYPE_CHECKING:
@@ -420,6 +420,7 @@ def run_batch(args: Arguments, session: Session) -> int:
         cleanup.run("report summary", report_summary, numbers)
         cleanup.run("write results", write_results, numbers, config.result_output_path)
         cleanup.run("save statistics", stats.save_data)
+        cleanup.run("save tool state", tool_failures.save, config.tool_state_path)
 
     if tool_error is not None:
         return tool_error.exit_status
@@ -447,6 +448,8 @@ def run_session(args: Arguments, config: Config) -> int:
     except InvalidStatsError as e:
         logger.error("{}", e)
         sys.exit(1)
+
+    tool_failures.load(config.tool_state_path)
 
     session = Session(config, stats, start_backend(config, stats, interrupts), interrupts)
 

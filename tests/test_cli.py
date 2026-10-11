@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import signal
 import sys
@@ -37,13 +38,14 @@ from factortool.cli.main import (
     warn_if_assignments_may_expire,
     write_results,
 )
+from factortool.constants import MAX_CONSECUTIVE_TOOL_FAILURES
 from factortool.engine import ExitStatus, FactorEngine
 from factortool.http import PermanentHttpError
 from factortool.interrupt import EXIT_STATUS, Interrupted, InterruptState
 from factortool.lock import lock_directories
 from factortool.number import Number, Outcome
 from factortool.stats import FactoringStats
-from factortool.tools import CadoNfsError, ToolError, YafuError
+from factortool.tools import CadoNfsError, ToolError, ToolFailure, YafuError, tool_failures
 
 from .helpers import NO_STATS_PATH, make_config, make_number
 
@@ -516,6 +518,26 @@ def test_a_cleanup_failure_only_gives_way_to_another_error(
 
     assert status == exit_status
     close.assert_called_once_with()
+
+
+def test_tool_failures_are_saved_for_the_next_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that a tool failing once in each run is reported as broken once the runs add up."""
+
+    def run(_numbers: Collection[Number], _time_limit: float | None) -> ExitStatus:
+        with contextlib.suppress(ToolFailure):
+            tool_failures.failed(YafuError, "ECM", "it broke")
+
+        return ExitStatus.SUCCESS
+
+    for _ in range(MAX_CONSECUTIVE_TOOL_FAILURES - 1):
+        status, _ = run_main(monkeypatch, tmp_path, Mock(side_effect=run))
+        tool_failures.reset()
+
+        assert status == 0
+
+    status, _ = run_main(monkeypatch, tmp_path, Mock(side_effect=run))
+
+    assert status == YafuError.exit_status
 
 
 def test_a_failure_to_close_the_backend_is_reported_by_the_exit_status(

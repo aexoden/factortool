@@ -192,6 +192,11 @@ class Config(BaseModel):
         return self.state_path / "stats.json"
 
     @property
+    def tool_state_path(self) -> Path:
+        """Path to the tool state file within the state directory."""
+        return self.state_path / "tool_state.json"
+
+    @property
     def yafu_paths(self) -> YafuPaths:
         """Paths needed for a yafu invocation, with yafu.ini defaulting to the one beside the binary."""
         binary = self.yafu_path.absolute()

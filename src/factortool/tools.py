@@ -20,10 +20,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from loguru import logger
+from pydantic import BaseModel, NonNegativeInt, ValidationError
 
 from factortool.constants import MAX_CONSECUTIVE_TOOL_FAILURES
 from factortool.interrupt import Interrupted
-from factortool.util import get_work_dir
+from factortool.util import get_work_dir, safe_write
 
 if TYPE_CHECKING:
     from factortool.config import YafuPaths
@@ -54,6 +55,12 @@ class CadoNfsError(ToolError):
     tool_name = "CADO-NFS"
 
 
+class ToolState(BaseModel):
+    """Persistent state for external tools."""
+
+    streaks: dict[str, NonNegativeInt] = {}
+
+
 class ToolFailures:
     """Record of how the external tools have fared."""
 
@@ -61,21 +68,40 @@ class ToolFailures:
         """Initialize the record."""
         self._lock = threading.Lock()
         self._streaks: dict[str, int] = {}
-        self._succeeded: set[type[ToolError]] = set()
-        self._failures: dict[type[ToolError], int] = {}
 
     def reset(self) -> None:
         """Clear all recorded tool outcomes."""
         with self._lock:
             self._streaks.clear()
-            self._succeeded.clear()
-            self._failures.clear()
 
-    def succeeded(self, tool: type[ToolError], method: str) -> None:
+    def load(self, state_path: Path) -> None:
+        """Replace the record with the one saved by a previous run, if any."""
+        streaks: dict[str, int] = {}
+
+        if state_path.exists():
+            try:
+                streaks = ToolState.model_validate_json(state_path.read_bytes()).streaks
+            except (OSError, ValidationError) as e:
+                logger.warning("Ignoring unreadable tool state at {}: {}", state_path, e)
+
+        with self._lock:
+            self._streaks = streaks
+
+    def save(self, state_path: Path) -> None:
+        """Save the record for the next run.
+
+        Raises:
+            OSError: If the state file cannot be written.
+        """
+        with self._lock:
+            state = ToolState(streaks={method: streak for method, streak in self._streaks.items() if streak > 0})
+
+        safe_write(state_path, state.model_dump_json().encode("utf-8"))
+
+    def succeeded(self, method: str) -> None:
         """Record a run of a tool that returned a usable result for the given factoring method."""
         with self._lock:
             self._streaks[method] = 0
-            self._succeeded.add(tool)
 
     def failed(self, tool: type[ToolError], method: str, message: str) -> NoReturn:
         """Record a failed run of a tool for the given factoring method, and raise the failure.
@@ -88,29 +114,12 @@ class ToolFailures:
         """
         with self._lock:
             streak = self._streaks[method] = self._streaks.get(method, 0) + 1
-            self._failures[tool] = self._failures.get(tool, 0) + 1
 
         if streak >= MAX_CONSECUTIVE_TOOL_FAILURES:
             msg = f"{message} ({method} has failed {streak} times in a row, which suggests a broken installation)"
             raise tool(msg)
 
         raise ToolFailure(message)
-
-    def check(self) -> None:
-        """Check for a tool that failed every time it was run.
-
-        Raises:
-            ToolError: If any tool has failed every time it was run.
-        """
-        with self._lock:
-            broken = [(tool, count) for tool, count in self._failures.items() if tool not in self._succeeded]
-
-        for tool, count in broken:
-            msg = (
-                f"{tool.tool_name} failed every time it was run ({count} time{'s' if count != 1 else ''}), "
-                "which suggests a broken installation"
-            )
-            raise tool(msg)
 
 
 tool_failures = ToolFailures()
@@ -372,7 +381,7 @@ def run_yafu(  # ruff: ignore[too-many-arguments]
 
     Raises:
         ToolFailure: If YAFU cannot be started, exits with an error or doesn't return a usable factorization.
-        YafuError: If the method has now failed many times in a row.
+        YafuError: If the method has now failed too many times in a row.
     """
     cmd = [str(yafu.binary), expression, *options]
     start_time = time.perf_counter_ns()
@@ -391,7 +400,7 @@ def run_yafu(  # ruff: ignore[too-many-arguments]
     if (problem := _check_factors(n, factors, must_split=must_split)) is not None:
         tool_failures.failed(YafuError, method, f"YAFU failed for {expression}: {problem}")
 
-    tool_failures.succeeded(YafuError, method)
+    tool_failures.succeeded(method)
 
     return factors, execution_time
 
@@ -427,6 +436,6 @@ def run_cado_nfs(method: str, n: int, threads: int, cado_nfs_path: Path, work_pa
     if (problem := _check_factors(n, factors, must_split=True)) is not None:
         tool_failures.failed(CadoNfsError, method, f"CADO-NFS failed for {n}: {problem}")
 
-    tool_failures.succeeded(CadoNfsError, method)
+    tool_failures.succeeded(method)
 
     return factors, execution_time

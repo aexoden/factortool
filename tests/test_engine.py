@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 import pytest
 
+from factortool.constants import MAX_CONSECUTIVE_TOOL_FAILURES
 from factortool.engine import ExitStatus, FactorEngine
 from factortool.interrupt import ABORT, FINISH_BATCH, POLL_INTERVAL, STOP_SOON, Interrupted, InterruptState
 from factortool.number import Number
@@ -308,41 +309,30 @@ def test_direct_yafu_returning_a_composite_unsplit_is_a_failure(
     run_tool = Mock(return_value=subprocess.CompletedProcess([], 0, "***factors found***\nC2 = 15\n", ""))
     monkeypatch.setattr("factortool.tools.run_tool", run_tool, raising=True)
 
-    with pytest.raises(YafuError, match="failed every time it was run"):
-        FactorEngine(config, InterruptState()).run([number])
-
+    assert FactorEngine(config, InterruptState()).run([number]) == ExitStatus.SUCCESS
     assert number.tool_failed
     assert stats.get_yafu_stats(2, 1) == (0, None)
 
 
-def test_a_tool_that_failed_every_time_ends_the_run_with_its_error(
+def test_a_single_tool_failure_does_not_end_the_run_with_an_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that a batch too small for repeated failures still reports a tool that never worked."""
-    with pytest.raises(YafuError, match="failed every time it was run") as raised:
+    """Test that a batch whose only tool run failed is not taken as evidence of a broken installation."""
+    number = make_number(15)
+
+    assert run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [number]) == ExitStatus.SUCCESS
+    assert number.tool_failed
+
+
+def test_tool_failures_carry_over_from_one_run_to_the_next(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that a tool failing in run after run is reported, even though it only fails once in each."""
+    for _ in range(MAX_CONSECUTIVE_TOOL_FAILURES - 1):
+        run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [make_number(15)])
+
+    with pytest.raises(YafuError, match="has failed 3 times in a row") as raised:
         run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [make_number(15)])
 
     assert raised.value.exit_status == YafuError.exit_status
-
-
-def test_an_interrupted_run_is_not_judged_by_its_tool_failures(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Test that a run cut short by an interrupt is reported as interrupted, even if its only tool run failed."""
-    interrupts = InterruptState()
-    interrupts._level = FINISH_BATCH
-    numbers = [make_number(15), make_number(21)]
-
-    def yafu(cmd: list[str], *_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
-        raise subprocess.CalledProcessError(1, cmd, "", "it broke")
-
-    monkeypatch.setattr("factortool.tools.run_tool", yafu, raising=True)
-    monkeypatch.setattr("factortool.engine.FactorEngine._stop_status", Mock(side_effect=[None, ExitStatus.INTERRUPTED]))
-    config = make_config(work_path=tmp_path, factoring_mode="yafu")
-
-    for number in numbers:
-        number._config = config
-
-    assert FactorEngine(config, interrupts).run(numbers) == ExitStatus.INTERRUPTED
-    assert numbers[0].tool_failed
 
 
 def test_a_number_set_aside_is_skipped_by_the_later_stages(monkeypatch: pytest.MonkeyPatch) -> None:
