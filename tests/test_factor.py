@@ -82,6 +82,13 @@ def test_a_number_ignores_saved_factors_that_are_not_a_factorization(factors: li
     assert not number.partially_factored
 
 
+@pytest.mark.parametrize("n", [1, 0, -15], ids=["one", "zero", "negative"])
+def test_a_number_below_two_is_rejected(n: int) -> None:
+    """Test that a number with no prime factorization is refused rather than treated as a composite."""
+    with pytest.raises(ValueError, match="cannot be factored"):
+        make_number(n)
+
+
 def test_a_number_split_into_composites_is_partially_factored() -> None:
     """Test that progress is recognized even when no prime factor has been found yet."""
     assert resumed_number(1001 * 1003, [1001, 1003]).partially_factored

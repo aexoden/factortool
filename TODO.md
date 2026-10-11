@@ -5,11 +5,6 @@ intended order of implementation. There is no guarantee that an item on this lis
 will ever actually be implemented. Some of the earlier ones may be obsoleted by
 later ones.
 
-## Bug Fixes
-
-- `Number` treats 1 as a composite, and trial factoring then leaves it
-  "factored" with no factors at all.
-
 ## Minor Features
 
 - Add an option to disable the time limit and adjust the time limit directly,

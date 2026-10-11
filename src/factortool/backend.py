@@ -23,10 +23,12 @@ import requests
 
 from loguru import logger
 
+from factortool.constants import MIN_FACTORABLE
 from factortool.http import MAX_DELAY, HttpClient, PermanentHttpError, build_user_agent
 from factortool.interrupt import ABORT, POLL_INTERVAL, Interrupted, InterruptState
 from factortool.number import Number
 from factortool.submissions import Submission, SubmissionJournal
+from factortool.util import is_prime
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -243,6 +245,26 @@ class BaseBackend(ABC):
         self._submitting = True
         self._submit_thread.start()
 
+    def _discard_non_composites(self, numbers: Sequence[int]) -> list[int]:
+        """Discard anything the service returned that is not a composite, as there is nothing to factor.
+
+        Returns:
+            list[int]: The numbers that are composite.
+        """
+        composites = [n for n in numbers if n >= MIN_FACTORABLE and not is_prime(n)]
+
+        if len(composites) < len(numbers):
+            discarded = len(numbers) - len(composites)
+            logger.warning(
+                "Discarding {} number{} from {} that {} not composite",
+                discarded,
+                "" if discarded == 1 else "s",
+                self.name,
+                "is" if discarded == 1 else "are",
+            )
+
+        return composites
+
     def fetch(self, criteria: FetchCriteria) -> set[Number]:  # ruff: ignore[complex-structure]
         """Fetch up to criteria.count matching composites, possibly returning an empty set.
 
@@ -277,7 +299,7 @@ class BaseBackend(ABC):
             else:
                 numbers = {
                     Number(n, self._config, self._stats, self)
-                    for n in composites
+                    for n in self._discard_non_composites(composites)
                     if criteria.max_digits is None or len(str(n)) <= criteria.max_digits
                 }
 

@@ -13,8 +13,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from loguru import logger
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
+from factortool.constants import MIN_FACTORABLE
 from factortool.util import safe_write
 
 
@@ -30,7 +31,7 @@ def assignment_expired(expires_at: float) -> bool:
 class Assignment(BaseModel):
     """An assignment of a composite number, with any factors found so far."""
 
-    n: int
+    n: int = Field(ge=MIN_FACTORABLE)
     expires_at: float
     factors: list[int] = []
 

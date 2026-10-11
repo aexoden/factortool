@@ -93,6 +93,14 @@ def test_load_ignores_a_corrupt_state_file(tmp_path: Path) -> None:
     assert AssignmentStore(state_path, "mersenne_ca").load() == []
 
 
+def test_load_ignores_a_state_file_with_a_number_that_cannot_be_factored(tmp_path: Path) -> None:
+    """Test that a state file holding a number below 2 is treated as corrupt."""
+    state_path = tmp_path / "assignments.json"
+    write_state(state_path, {"assignments": [{"n": 1, "expires_at": time.time() + LIFETIME}]})
+
+    assert AssignmentStore(state_path, "mersenne_ca").load() == []
+
+
 def test_clear_discards_pending_work(tmp_path: Path) -> None:
     """Test that clearing the store discards any pending work."""
     store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca")

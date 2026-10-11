@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+# The smallest number with a prime factorization.
+MIN_FACTORABLE = 2
+
 # Below this, CADO-NFS has gaps in its default parameter files.
 NFS_CADO_MIN_DIGITS = 57
 

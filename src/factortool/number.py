@@ -18,7 +18,13 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from factortool.assignments import assignment_expired
-from factortool.constants import ECM_CURVES, FINAL_METHOD_NAMES, NFS_CADO_MIN_DIGITS, NFS_YAFU_MIN_DIGITS
+from factortool.constants import (
+    ECM_CURVES,
+    FINAL_METHOD_NAMES,
+    MIN_FACTORABLE,
+    NFS_CADO_MIN_DIGITS,
+    NFS_YAFU_MIN_DIGITS,
+)
 from factortool.tools import ToolFailure, run_cado_nfs, run_yafu
 from factortool.util import SMALL_PRIMES, format_number, is_prime, log_factor_result
 
@@ -251,7 +257,15 @@ class Number:
     def __init__(
         self, n: int, config: Config, stats: FactoringStats, backend: Backend | None, factors: Sequence[int] = ()
     ) -> None:
-        """Initialize the number object, optionally resuming from factors found by a previous run."""
+        """Initialize the number object, optionally resuming from factors found by a previous run.
+
+        Raises:
+            ValueError: If the number is below the minimum factorable value.
+        """
+        if n < MIN_FACTORABLE:
+            msg = f"{n} cannot be factored, as it is below {MIN_FACTORABLE}"
+            raise ValueError(msg)
+
         self.n = n
         self._stats = stats
         self._config = config

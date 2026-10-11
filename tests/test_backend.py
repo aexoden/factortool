@@ -302,6 +302,19 @@ def test_base_fetch_treats_all_excluded_by_max_digits_as_no_work(config: Config,
     assert wait.call_args_list == [call(NO_WORK_DELAY)] * 5
 
 
+def test_base_fetch_discards_anything_that_is_not_composite(config: Config, wait: Mock) -> None:
+    """Test that numbers with nothing to factor are dropped, and a response of only those is retried."""
+    backend = make_fake_backend(config, ["1\n0\n-15\n7\n", "1\n15\n7\n21\n"])
+
+    try:
+        numbers = backend.fetch(FetchCriteria(count=4, min_digits=1))
+    finally:
+        backend.close()
+
+    assert {number.n for number in numbers} == {15, 21}
+    assert wait.call_args_list == [call(NO_WORK_DELAY)]
+
+
 @pytest.mark.parametrize("response", ["", requests.RequestException("rejected")], ids=["no-work", "request-error"])
 def test_base_fetch_abandons_the_wait_on_an_interrupt(config: Config, wait: Mock, response: str | Exception) -> None:
     """Test that an interrupt during a retry wait abandons the fetch instead of retrying."""
