@@ -1,8 +1,6 @@
 {
-  "assignment_state_path": "assignment_state.json",
   "backend": "factordb",
-  "batch_state_path": "batch_state.json",
-  "cado_nfs_path": "/opt/cado-nfs/cado-nfs.py",
+  "cado_nfs_path": null,
   "factordb_api_token": "",
   "factordb_cooldown_period": 1.0,
   "factoring_mode": "standard",
@@ -11,7 +9,7 @@
   "max_threads": 2,
   "mersenne_ca_cooldown_period": 1.0,
   "result_output_path": "results",
-  "stats_path": "stats.json",
+  "state_path": "state",
   "use_nfs_cado": false,
   "use_nfs_yafu": false,
   "user_agent": "",

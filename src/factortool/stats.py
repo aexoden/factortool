@@ -6,9 +6,10 @@ from __future__ import annotations
 
 import json
 import math
+import threading
 import time
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from factortool.constants import ECM_CURVES, ECM_P_FACTOR_DECAY, ECM_P_FACTOR_DEFAULT
+from factortool.constants import ECM_MIN_LEVEL, ECM_P_FACTOR_DECAY, ECM_P_FACTOR_DEFAULT
 from factortool.util import safe_write
 
 
@@ -71,6 +72,16 @@ class InvalidStatsError(Exception):
     """Exception raised for invalid or incompatible statistics data."""
 
 
+class ECMCutoffs(NamedTuple):
+    """The last ECM levels worth doing for a digit count, where zero means no ECM is worthwhile."""
+
+    # Level with the lowest estimated average time, or None if there is insufficient data.
+    optimal: int | None
+
+    # Level to actually stop at, which may be higher to collect additional data.
+    target: int
+
+
 class FactoringData(BaseModel):
     """All factoring statistics data."""
 
@@ -112,6 +123,7 @@ class FactoringStats:
     _last_write_time: int
     _data_changed: bool
     _read_only: bool
+    _lock: threading.Lock
 
     def __init__(self, path: Path, *, min_write_interval: float = 5.0, read_only: bool = False) -> None:
         """Initialize the factoring statistics manager."""
@@ -120,6 +132,7 @@ class FactoringStats:
         self._last_write_time = 0
         self._data_changed = False
         self._read_only = read_only
+        self._lock = threading.Lock()
 
         self._load_data()
 
@@ -161,70 +174,74 @@ class FactoringStats:
 
     def save_data(self) -> None:
         """Force saving the factoring statistics data."""
-        self._save_data(force=True)
+        with self._lock:
+            self._save_data(force=True)
 
     def update_probability(
         self, digits: int, method: str, threads: int, execution_time: float, *, success: bool
     ) -> None:
         """Update probabilistic factorization data."""
-        data = getattr(self._data, method)
+        with self._lock:
+            data = getattr(self._data, method)
 
-        if digits not in data:
-            data[digits] = ProbabilityDigitData()
+            if digits not in data:
+                data[digits] = ProbabilityDigitData()
 
-        if threads not in data[digits].thread_data:
-            data[digits].thread_data[threads] = ProbabilityRunData()
+            if threads not in data[digits].thread_data:
+                data[digits].thread_data[threads] = ProbabilityRunData()
 
-        run_data = data[digits].thread_data[threads]
+            run_data = data[digits].thread_data[threads]
 
-        run_data.total_time += execution_time
-        run_data.run_count += 1
+            run_data.total_time += execution_time
+            run_data.run_count += 1
 
-        if success:
-            run_data.success_count += 1
+            if success:
+                run_data.success_count += 1
 
-        self._data_changed = True
-        self._save_data()
+            self._data_changed = True
+            self._save_data()
 
     def update_final(self, method: str, digits: int, threads: int, execution_time: float) -> None:
         """Update final factorization data for the method with the given statistics key."""
-        data = getattr(self._data, method)
+        with self._lock:
+            data = getattr(self._data, method)
 
-        if digits not in data:
-            data[digits] = FinalDigitData()
+            if digits not in data:
+                data[digits] = FinalDigitData()
 
-        if threads not in data[digits].thread_data:
-            data[digits].thread_data[threads] = FinalRunData()
+            if threads not in data[digits].thread_data:
+                data[digits].thread_data[threads] = FinalRunData()
 
-        run_data = data[digits].thread_data[threads]
+            run_data = data[digits].thread_data[threads]
 
-        run_data.total_time += execution_time
-        run_data.run_count += 1
+            run_data.total_time += execution_time
+            run_data.run_count += 1
 
-        self._data_changed = True
-        self._save_data()
+            self._data_changed = True
+            self._save_data()
 
     def update_ecm(self, digits: int, ecm_level: int, threads: int, execution_time: float, *, success: bool) -> None:
         """Update ECM factorization data."""
-        if digits not in self._data.ecm:
-            self._data.ecm[digits] = ECMDigitData()
+        with self._lock:
+            if digits not in self._data.ecm:
+                self._data.ecm[digits] = ECMDigitData()
 
-        if ecm_level not in self._data.ecm[digits].level_data:
-            self._data.ecm[digits].level_data[ecm_level] = ECMLevelData()
+            if ecm_level not in self._data.ecm[digits].level_data:
+                self._data.ecm[digits].level_data[ecm_level] = ECMLevelData()
 
-        if threads not in self._data.ecm[digits].level_data[ecm_level].thread_data:
-            self._data.ecm[digits].level_data[ecm_level].thread_data[threads] = ProbabilityRunData()
+            if threads not in self._data.ecm[digits].level_data[ecm_level].thread_data:
+                self._data.ecm[digits].level_data[ecm_level].thread_data[threads] = ProbabilityRunData()
 
-        run_data = self._data.ecm[digits].level_data[ecm_level].thread_data[threads]
+            run_data = self._data.ecm[digits].level_data[ecm_level].thread_data[threads]
 
-        run_data.total_time += execution_time
-        run_data.run_count += 1
+            run_data.total_time += execution_time
+            run_data.run_count += 1
 
-        if success:
-            run_data.success_count += 1
+            if success:
+                run_data.success_count += 1
 
-        self._data_changed = True
-        self._save_data()
+            self._data_changed = True
+            self._save_data()
 
     def get_final_stats(self, method: str, digits: int, threads: int) -> tuple[int, float | None]:
         """Get final factorization statistics for the method with the given statistics key.
@@ -232,18 +249,19 @@ class FactoringStats:
         Returns:
             A tuple containing the number of runs and the average time per run, or None if no data is available.
         """
-        data = getattr(self._data, method)
+        with self._lock:
+            data = getattr(self._data, method)
 
-        if digits in data and threads in data[digits].thread_data:
-            run_data = data[digits].thread_data[threads]
+            if digits in data and threads in data[digits].thread_data:
+                run_data = data[digits].thread_data[threads]
 
-            if run_data.run_count > 0:
-                return (
-                    run_data.run_count,
-                    run_data.total_time / run_data.run_count,
-                )
+                if run_data.run_count > 0:
+                    return (
+                        run_data.run_count,
+                        run_data.total_time / run_data.run_count,
+                    )
 
-        return (0, None)
+            return (0, None)
 
     def get_final_method(self, digits: int, threads: int, methods: Sequence[str]) -> str:
         """Choose the final factoring method for a composite with the given digit count.
@@ -281,16 +299,17 @@ class FactoringStats:
         Returns:
             A tuple containing the number of YAFU runs and the average time per run, or None if no data is available.
         """
-        if digits in self._data.yafu and threads in self._data.yafu[digits].thread_data:
-            run_data = self._data.yafu[digits].thread_data[threads]
+        with self._lock:
+            if digits in self._data.yafu and threads in self._data.yafu[digits].thread_data:
+                run_data = self._data.yafu[digits].thread_data[threads]
 
-            if run_data.run_count > 0:
-                return (
-                    run_data.run_count,
-                    run_data.total_time / run_data.run_count,
-                )
+                if run_data.run_count > 0:
+                    return (
+                        run_data.run_count,
+                        run_data.total_time / run_data.run_count,
+                    )
 
-        return (0, None)
+            return (0, None)
 
     def get_probability_stats(self, digits: int, method: str, threads: int) -> tuple[int, float | None, float | None]:
         """Get probabilistic factorization statistics.
@@ -299,24 +318,25 @@ class FactoringStats:
             A tuple containing the number of runs, the average time per run, and the success probability,
             or None values if no data is available.
         """
-        data = getattr(self._data, method)
+        with self._lock:
+            data = getattr(self._data, method)
 
-        if digits not in data:
+            if digits not in data:
+                return (0, None, None)
+
+            if threads not in data[digits].thread_data:
+                return (0, None, None)
+
+            run_data = data[digits].thread_data[threads]
+
+            if run_data.run_count > 0:
+                return (
+                    run_data.run_count,
+                    run_data.total_time / run_data.run_count,
+                    run_data.success_count / run_data.run_count,
+                )
+
             return (0, None, None)
-
-        if threads not in data[digits].thread_data:
-            return (0, None, None)
-
-        run_data = data[digits].thread_data[threads]
-
-        if run_data.run_count > 0:
-            return (
-                run_data.run_count,
-                run_data.total_time / run_data.run_count,
-                run_data.success_count / run_data.run_count,
-            )
-
-        return (0, None, None)
 
     def get_ecm_stats(self, digits: int, ecm_level: int, threads: int) -> tuple[int, float | None, float | None]:
         """Get ECM factorization statistics.
@@ -325,35 +345,59 @@ class FactoringStats:
             A tuple containing the number of ECM runs, the average time per run, and the success probability,
             or None values if no data is available.
         """
-        if digits not in self._data.ecm:
+        with self._lock:
+            if digits not in self._data.ecm:
+                return (0, None, None)
+
+            if ecm_level not in self._data.ecm[digits].level_data:
+                return (0, None, None)
+
+            if threads not in self._data.ecm[digits].level_data[ecm_level].thread_data:
+                return (0, None, None)
+
+            run_data = self._data.ecm[digits].level_data[ecm_level].thread_data[threads]
+
+            if run_data.run_count > 0:
+                return (
+                    run_data.run_count,
+                    run_data.total_time / run_data.run_count,
+                    run_data.success_count / run_data.run_count,
+                )
+
             return (0, None, None)
 
-        if ecm_level not in self._data.ecm[digits].level_data:
-            return (0, None, None)
+    def get_ecm_levels(self, digits: int, threads: int) -> list[int]:
+        """Get the ECM levels with data for the given digit count, which need not be consecutive.
 
-        if threads not in self._data.ecm[digits].level_data[ecm_level].thread_data:
-            return (0, None, None)
+        A number that is a cofactor of a larger one starts ECM at whichever level found it, so there may be no data for
+        the levels before that.
 
-        run_data = self._data.ecm[digits].level_data[ecm_level].thread_data[threads]
+        Returns:
+            list[int]: The levels with at least one run, in ascending order.
+        """
+        with self._lock:
+            if digits not in self._data.ecm:
+                return []
 
-        if run_data.run_count > 0:
-            return (
-                run_data.run_count,
-                run_data.total_time / run_data.run_count,
-                run_data.success_count / run_data.run_count,
+            return sorted(
+                level
+                for level, level_data in self._data.ecm[digits].level_data.items()
+                if threads in level_data.thread_data and level_data.thread_data[threads].run_count > 0
             )
-
-        return (0, None, None)
 
     def get_average_time(
         self, digits: int, maximum_ecm_level: int, threads: int, methods: Sequence[str]
     ) -> tuple[int, float | None]:
-        """Estimate the average time to factor a number with the given digit count.
+        """Estimate the average time to factor a number with the given digit count, starting from trial factoring.
 
         Returns:
             A tuple containing the estimated number of ECM runs and the average time to factor the number,
             or None if insufficient data is available.
         """
+        # A number starting from trial factoring does every ECM level from the first, so the estimate needs them all.
+        if maximum_ecm_level >= ECM_MIN_LEVEL and self.get_ecm_levels(digits, threads)[:1] != [ECM_MIN_LEVEL]:
+            return (0, None)
+
         tf_count, tf_time, tf_p_factor = self.get_probability_stats(digits, "tf", 1)
 
         if tf_count == 0:
@@ -395,64 +439,81 @@ class FactoringStats:
     ) -> tuple[int, float | None]:
         """Estimate the average time to factor a number with the given digit count, starting from ECM.
 
+        The estimate starts from the first ECM level with data, as if the levels before it were already done.
+
         Returns:
             tuple[int, float | None]: A tuple containing the estimated number of ECM runs and the average time to factor
-                the number.
+                the number, or None if insufficient data is available.
         """
         final_time = self.get_final_time(digits, threads, methods)
 
         if final_time is None:
             return (0, None)
 
-        return self._get_average_time_internal(digits, threads, final_time, min(ECM_CURVES.keys()), maximum_ecm_level)
+        first_ecm_level = next(iter(self.get_ecm_levels(digits, threads)), ECM_MIN_LEVEL)
 
-    def get_ecm_cutoffs(self, digits: int, threads: int, methods: Sequence[str]) -> tuple[int | None, int]:
+        if maximum_ecm_level < first_ecm_level:
+            return (0, final_time)
+
+        return self._get_average_time_internal(digits, threads, final_time, first_ecm_level, maximum_ecm_level)
+
+    def get_ecm_cutoffs(self, digits: int, threads: int, methods: Sequence[str]) -> ECMCutoffs:
         """Determine the ECM levels at which to stop doing ECM factoring.
 
         Returns:
-            tuple[int | None, int]: A tuple containing the optimal ECM level (the one with the lowest estimated average
-                time, or None if insufficient data) and the actual ECM level to stop at, which may be higher in order to
-                collect more data.
+            ECMCutoffs: The optimal ECM level and the target ECM level to stop at.
         """
         # Establish a semi-arbitrary limit on our maximum ECM level. The smallest factors should never have more than
         # about half the digits of the number, so do a few levels beyond that (as ECM may miss factors).
         maximum_ecm_level = digits // 2 + 10
 
-        # Collect data on the statistics based on stopping ECM at a given level. Once we've reached the first level with
-        # no data, simply abort. Along the way, we'll note which ECM level was fastest on average.
-        ecm_counts: dict[int, int] = {}
-        best_maximum_ecm_level = None
-        best_maximum_ecm_level_time = 0.0
+        # Without enough data to estimate anything, limit the ECM work to one-third the digit count. This is just an
+        # initial target, and after the first run we can adjust based on actual data.
+        initial_cutoffs = ECMCutoffs(None, _normalize_ecm_level(digits // 3))
+        final_time = self.get_final_time(digits, threads, methods)
 
-        for ecm_level in range(min(ECM_CURVES.keys()), maximum_ecm_level + 1):
-            ecm_count, average_time = self.get_ecm_average_time(digits, ecm_level, threads, methods)
+        if final_time is None:
+            return initial_cutoffs
+
+        # Start from the first level with data. The levels before it cost the same whichever later level ECM stops at,
+        # so they don't affect which of those is fastest. Stopping at the level before it is doing no further ECM or
+        # none at all if it is the first level.
+        first_ecm_level = next(iter(self.get_ecm_levels(digits, threads)), ECM_MIN_LEVEL)
+        no_ecm_level = first_ecm_level - 1
+
+        # Collect data on the statistics based on stopping ECM at a given level, starting from no further ECM, which
+        # leaves only the final method. Once we've reached the next level with no data, simply abort. Along the way,
+        # we'll note which ECM level was fastest on average.
+        ecm_counts: dict[int, int] = {}
+        best_maximum_ecm_level = no_ecm_level
+        best_maximum_ecm_level_time = final_time
+
+        for ecm_level in range(first_ecm_level, maximum_ecm_level + 1):
+            ecm_count, average_time = self._get_average_time_internal(
+                digits, threads, final_time, first_ecm_level, ecm_level
+            )
 
             if ecm_count == 0:
                 break
 
             assert average_time is not None  # ruff:ignore[assert]
 
-            if best_maximum_ecm_level is None or average_time < best_maximum_ecm_level_time:
+            if average_time < best_maximum_ecm_level_time:
                 best_maximum_ecm_level = ecm_level
                 best_maximum_ecm_level_time = average_time
 
             ecm_counts[ecm_level] = ecm_count
 
-        # If no data at all was collected, limit the ECM work to one-third the digit count. This is probably too little
-        # for smaller numbers, but it's only for the first run, at which point the other metrics will take over. This
-        # prevents trying to do way too much ECM on the first run, which will be more important with medium and large
-        # numbers.
-        if best_maximum_ecm_level is None:
-            return (None, digits // 3)
+        if not ecm_counts:
+            return initial_cutoffs
 
-        # Cap the maximum ECM level based on the final method statistics. There's no point doing an ECM level if any of
-        # those are faster. We do apply a fudge factor in case of measurement inaccuracy.
-        final_time = self.get_final_time(digits, threads, methods)
-
-        for ecm_level in range(min(ECM_CURVES.keys()), maximum_ecm_level + 1):
+        # Cap the maximum ECM level based on the final method statistics. A level that takes longer than the fastest
+        # final method can never be worthwhile, no matter how often it finds a factor, so there's no point collecting
+        # more data. We do apply a fudge factor in case of measurement inaccuracy.
+        for ecm_level in range(ECM_MIN_LEVEL, maximum_ecm_level + 1):
             test_ecm_time = self.get_ecm_stats(digits, ecm_level, threads)[1]
 
-            if final_time is not None and test_ecm_time is not None and final_time * 1.25 < test_ecm_time:
+            if test_ecm_time is not None and final_time * 1.25 < test_ecm_time:
                 maximum_ecm_level = ecm_level - 1
                 break
 
@@ -464,14 +525,16 @@ class FactoringStats:
         # from the minimum up to the test level because in certain situations, the numbers won't be monotonically
         # decreasing.
         test_ecm_level = best_maximum_ecm_level + 1
-        lowest_ecm_count = min(
-            ecm_counts.get(ecm_level, 0) for ecm_level in range(min(ECM_CURVES.keys()), test_ecm_level + 1)
-        )
+        test_ecm_levels = range(first_ecm_level, test_ecm_level + 1)
+        lowest_ecm_count = min(ecm_counts.get(ecm_level, 0) for ecm_level in test_ecm_levels)
         lowest_ecm_count = max(lowest_ecm_count, 1)
 
         extra_ecm_levels = max(0, math.ceil(-math.log2(lowest_ecm_count) + 10))
 
-        return (best_maximum_ecm_level, min(best_maximum_ecm_level + extra_ecm_levels, maximum_ecm_level))
+        return ECMCutoffs(
+            _normalize_ecm_level(best_maximum_ecm_level),
+            _normalize_ecm_level(min(best_maximum_ecm_level + extra_ecm_levels, maximum_ecm_level)),
+        )
 
     def _get_average_time_internal(
         self, digits: int, threads: int, final_time: float, next_ecm_level: int, maximum_ecm_level: int
@@ -509,3 +572,12 @@ class FactoringStats:
             average_time += (1 - ecm_p_factor) * extra_time
 
         return (final_ecm_count, average_time)
+
+
+def _normalize_ecm_level(ecm_level: int) -> int:
+    """Convert any ECM cutoff below the first level to zero, as they all mean doing no ECM at all.
+
+    Returns:
+        int: The ECM cutoff, or zero if it is below the first level.
+    """
+    return ecm_level if ecm_level >= ECM_MIN_LEVEL else 0

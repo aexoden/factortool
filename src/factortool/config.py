@@ -4,14 +4,15 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 import sys
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import Annotated, Literal, NamedTuple
 
 from loguru import logger
-from pydantic import BaseModel, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, ValidationError, field_validator, model_validator
 
 from factortool.constants import FINAL_METHOD_NAMES, NFS_CADO_MIN_DIGITS, NFS_YAFU_MIN_DIGITS
 
@@ -50,28 +51,46 @@ class FinalMethods(NamedTuple):
 
 ASCII_RANGE = range(0x20, 0x7F)
 
+# Settings that each named a state file, before the introduction of a unified state directory.
+REMOVED_STATE_SETTINGS = {
+    "assignment_state_path": "assignment_state.json",
+    "batch_state_path": "batch_state.json",
+    "pending_submissions_path": "pending_submissions.jsonl",
+    "stats_path": "stats.json",
+}
 
-@dataclass
+CooldownPeriod = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+
+
+def _is_executable_file(path: Path) -> bool:
+    """Check if the given path is an executable file.
+
+    Returns:
+        bool: True if the path is an executable file, or on Windows, becomes one once an omitted extension is added.
+    """
+    return (path.is_file() and os.access(path, os.X_OK)) or shutil.which(path) is not None
+
+
 class Config(BaseModel):
     """Configuration for factorization tool."""
 
+    model_config = ConfigDict(frozen=True)
+
     # Required settings
     backend: Literal["factordb", "mersenne_ca"]
-    cado_nfs_path: Path
-    max_threads: int
+    max_threads: PositiveInt
     yafu_path: Path
 
     # Optional settings with defaults
-    assignment_state_path: Path = Path("assignment_state.json")
-    batch_state_path: Path = Path("batch_state.json")
+    cado_nfs_path: Path | None = None
     factordb_api_token: str = ""
-    factordb_cooldown_period: float = 1.0
+    factordb_cooldown_period: CooldownPeriod = 1.0
     factoring_mode: Literal["standard", "yafu"] = "standard"
     gimps_login: str = ""
-    max_siqs_digits: int = 100
-    mersenne_ca_cooldown_period: float = 1.0
+    max_siqs_digits: PositiveInt = 100
+    mersenne_ca_cooldown_period: CooldownPeriod = 1.0
     result_output_path: Path = Path("results")
-    stats_path: Path = Path("stats.json")
+    state_path: Path = Path("state")
     use_nfs_cado: bool = False
     use_nfs_yafu: bool = False
     user_agent: str = ""
@@ -81,12 +100,25 @@ class Config(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def warn_unknown_settings(cls, data: object) -> object:
-        """Warn about unrecognized settings.
+        """Warn about unrecognized settings, and reject no longer supported state file settings.
 
         Returns:
             object: The unmodified input data.
+
+        Raises:
+            ValueError: If any removed state settings are present in the configuration.
         """
         if isinstance(data, dict):
+            removed = sorted(data.keys() & REMOVED_STATE_SETTINGS.keys())
+
+            if removed:
+                msg = (
+                    f"no longer supported: {', '.join(removed)}. State files now have fixed names in the state_path "
+                    f"directory ({', '.join(REMOVED_STATE_SETTINGS[key] for key in removed)}). Move the existing "
+                    "files there and remove the old settings."
+                )
+                raise ValueError(msg)
+
             for key in sorted(data.keys() - cls.model_fields.keys()):
                 logger.warning(f"Ignoring unrecognized configuration setting: {key}")
 
@@ -104,6 +136,22 @@ class Config(BaseModel):
         """
         if self.backend == "mersenne_ca" and not self.gimps_login:
             msg = "the mersenne_ca backend requires gimps_login"
+            raise ValueError(msg)
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_cado_nfs_path(self) -> Config:
+        """Require the path to CADO-NFS when it is enabled.
+
+        Returns:
+            Config: The validated configuration object.
+
+        Raises:
+            ValueError: If CADO-NFS is enabled without a path to it.
+        """
+        if self.use_nfs_cado and self.cado_nfs_path is None:
+            msg = "use_nfs_cado requires cado_nfs_path"
             raise ValueError(msg)
 
         return self
@@ -127,6 +175,26 @@ class Config(BaseModel):
         return value
 
     @property
+    def assignment_state_path(self) -> Path:
+        """Path to the assignment state file within the state directory."""
+        return self.state_path / "assignment_state.json"
+
+    @property
+    def batch_state_path(self) -> Path:
+        """Path to the batch state file within the state directory."""
+        return self.state_path / "batch_state.json"
+
+    @property
+    def pending_submissions_path(self) -> Path:
+        """Path to the pending submissions file within the state directory."""
+        return self.state_path / "pending_submissions.jsonl"
+
+    @property
+    def stats_path(self) -> Path:
+        """Path to the stats file within the state directory."""
+        return self.state_path / "stats.json"
+
+    @property
     def yafu_paths(self) -> YafuPaths:
         """Paths needed for a yafu invocation, with yafu.ini defaulting to the one beside the binary."""
         binary = self.yafu_path.absolute()
@@ -137,6 +205,27 @@ class Config(BaseModel):
     def final_methods(self) -> FinalMethods:
         """Settings that decide which final factoring methods may be used."""
         return FinalMethods(self.max_siqs_digits, self.use_nfs_cado, self.use_nfs_yafu)
+
+    def find_tool_problems(self) -> list[str]:
+        """Look for the external tools and files this configuration needs.
+
+        Returns:
+            list[str]: A description of each one that is missing or unusable.
+        """
+        problems: list[str] = []
+        tools = {"yafu_path": self.yafu_path}
+
+        if self.use_nfs_cado and self.cado_nfs_path is not None:
+            tools["cado_nfs_path"] = self.cado_nfs_path
+
+        for setting, path in sorted(tools.items()):
+            if not _is_executable_file(path.absolute()):
+                problems.append(f"{setting} ({path}) is not an executable file")
+
+        if self.yafu_ini_path is not None and not self.yafu_ini_path.is_file():
+            problems.append(f"yafu_ini_path ({self.yafu_ini_path}) is not a file")
+
+        return problems
 
 
 def read_config(path: Path) -> Config:

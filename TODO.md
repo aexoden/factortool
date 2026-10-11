@@ -7,89 +7,25 @@ later ones.
 
 ## Bug Fixes
 
-- Exceptions raised in the rho and P-1 worker threads are silently discarded,
-  as `_factor_concurrently` waits on its futures without ever retrieving their
-  results. This hides a missing YAFU binary, the `sys.exit(5)` in `factor_yafu`
-  and anything else that goes wrong in those stages.
-- `FactoringStats` is updated from those same worker threads without a lock.
-  Updates can be lost, and serializing the data while another thread adds a key
-  can raise.
-- `factor_yafu_direct` replaces YAFU's entire environment with only
-  `OMP_NUM_THREADS` instead of adding to it, so `yafu` mode runs without `PATH`,
-  `HOME` or `LD_LIBRARY_PATH`. While there, `factor_ecm` doesn't set
-  `OMP_NUM_THREADS` at all; make the three consistent.
-- The time limit clock starts when the engine is created, which is before the
-  fetch. A fetch that has to wait for work can use up the entire limit, and the
-  run then exits after the first number.
-- Ensure the time limit only takes effect if target time is enabled.
-- One level of ECM is always done, even when the cutoff says none is worthwhile.
-  `ecm_needed` compares the level already done (zero) to the target, so a
-  target of one still runs level two, and `get_ecm_cutoffs` never considers
-  doing no ECM at all as it starts its search at level two.
-- FactorDB submissions drop the largest distinct prime as trivial, so a prime
-  power (such as p²) submits nothing at all.
-- `Config` carries a stray `@dataclass` decorator, which replaces pydantic's
-  `__init__`. Constructing a `Config` directly raises a `TypeError`. Only
-  `model_validate` works.
-- Only SIGINT is handled. SIGTERM and SIGHUP end the program without any
-  cleanup: statistics and assignments aren't saved, queued submissions are lost,
-  and the external tools keep running as they're in their own process groups.
-  Both should behave like the third interrupt: kill the running tools, then
-  save state and flush submissions before exiting.
-- The cleanup at the end of `main` is a chain where one failure skips the rest.
-  If recording the batch or writing the results fails, statistics aren't saved
-  and the backend is never closed, which drops any pending submissions.
-- Properly handle YAFU and CADO-NFS failures. If a tool exits with an error or
-  returns factors that don't multiply back to the number, log it, record no
-  statistics, leave the number unfactored and continue with the batch. Abort
-  (exit 5 or 4) only after several consecutive failures, as that suggests a
-  broken installation. Not sure if we can reliably detect a hang. The three
-  YAFU functions duplicate their output parsing, so a shared helper that parses
-  and verifies before the statistics update covers all of them. CADO-NFS output
-  is currently passed directly to `int()` after its statistics are recorded.
-- `_factor_generic` reassigns `method` when a final method is run immediately
-  for statistics, so later composites split by the original method in the same
-  call are logged under the final method's name.
-- Validate more input up front: `max_threads` must be at least one,
-  `--min_digits` must be at least one (currently an unhandled `ValueError`),
-  `--target_duration` must be positive, and `yafu_path` must exist.
-- An interrupt that arrives while a log message is being written loses its own
-  message, as loguru isn't reentrant and the signal handler logs. The interrupt
-  is still counted. Record the level in the handler and log it from the main
-  flow instead.
-- The analyzer currently stops showing ECM data as soon as it encounters a level
-  with no data. While comparatively rare, it's possible for there to be gaps as
-  numbers can start at arbitrary points if they were added as cofactors. The
-  same assumption is in `_get_average_time_internal`, so a digit count mostly
-  reached via cofactors never leaves the initial fallback cutoff.
-- The final factoring stages are now grouped per method (SIQS, YAFU NFS,
-  CADO-NFS), and each number only goes through its own method's stage. The old
-  final NFS stage picked up everything still unfactored, so a number SIQS left
-  unfinished would be retried with NFS; that no longer happens. Possibly part of
-  the YAFU error handling/fallback item above.
-- YAFU reads stdin as a batch file whenever stdin isn't a terminal (cron, systemd,
-  `< /dev/null`, a heredoc), ignoring the expression passed on the command line.
-  It then prints no factors, and `_factor_generic` removes the composite without
-  adding any factors, so the number is treated as factored. Affects every YAFU
-  call. Possible fixes: pass the expression to YAFU on stdin, and/or treat an
-  empty factor list as a failure. The bogus run is also recorded in the
-  statistics with a near-zero time, which skews the final method choice and the
-  ECM cutoffs. The verification in the failure handling item above would catch
-  this, but YAFU should still be given the expression in a way it honors.
-- Submissions are retried forever and can't be interrupted, so a service outage
-  hangs the shutdown. A 429 without a `Retry-After` header waits an hour, and a
-  supplied value isn't clamped. Give up after a bounded time, write the unsent
-  results to a pending file and resubmit them at the start of the next run.
-- Two instances sharing a configuration overwrite each other's statistics,
-  batch state and assignment state. Take a lock file at startup and refuse to
-  run if another instance holds it.
+- Look for any instances of existing tests codifying "odd" behavior. (In other
+  words, the test was written to accept whatever the current behavior was rather
+  than a more objectively correct behavior and implementing the necessary fixes).
 
 ## Minor Features
 
 - Add an option to disable the time limit and adjust the time limit directly,
   rather than always defaulting to double the target time. While there, consider
   if the time limit should abort immediately or finish the current factorization
-  (or some happy medium).
+  (or some happy medium). Killing the running tool at some hard limit is also
+  the only realiable defense against a tool that hangs, which is otherwise never
+  detected. It might be worth checking if YAFU and CADO-NFS regularly generate
+  log output for monitoring. Could also consider looking at their CPU usage, but
+  that wouldn't help with a spinlock. As one more consideration, the time limit
+  is somewhat incompatible with standard mode. In YAFU mode, you generally just
+  let the current run finish. But in standard mode, if you abort early, you've
+  probably just wasted a bunch of ECM work, and if you have a small pool of
+  composites, you may repeat the same useless ECM over and over on each run,
+  never actually getting to the final factoring.
 - Display digit counts even for smaller numbers.
 - For backends that batch submissions, consider a more intelligent submission
   strategy: Submit if X seconds have passed, the current batch is full or if
@@ -98,25 +34,30 @@ later ones.
 - Allow temporarily setting max_threads via a command-line parameter. Along with
   backend, it's probably the option people are most likely to want to change
   between runs.
-- Make `cado_nfs_path` optional, requiring it only if `use_nfs_cado` is enabled
-  (as `gimps_login` is only required by the mersenne.ca backend).
 - Change the README's shell loop to stop on any exit status other than 0 and 3.
-  It currently only stops on 2 and 6, so a configuration error or tool failure
-  retries every second. Note that argument errors also exit with status 2.
+  It currently only stops on 2, 6 and 8, so a configuration error, invalid
+  argument, tool failure or cleanup failure (7) retries every second.
 - Verify whether `cado-nfs.py` uses its own directory under `/tmp` unless given
   `--workdir`. If so, pass the managed working directory so an aborted run
   doesn't leave it behind. The `stdin` passed to it also looks unnecessary.
-- Remove stale `yafu-*` and `nfs-cado-*` working directories at startup, as a
-  hard kill leaves them behind.
+- Remove stale `yafu-*` and `cado-nfs-*` working directories at startup, as a
+  hard kill leaves them behind. The lock on `work_path` makes this safe.
 - Write the assignment state when work is assigned rather than only at exit, so
   a hard kill doesn't forget reserved work.
-- Log when a FactorDB fetch is capped at 1000 numbers, and count the factors
-  FactorDB accepted rather than the ones sent.
+- Log when a FactorDB fetch is capped at 1000 numbers.
 
 ## Code/Architectural Improvements
 
-- Move all state files into a directory with standardized names, changing the
-  configuration to instead specify the directory.
+- Thoroughly check for any opportunities to replace hand-rolled code with a
+  third-party library. Avoid libraries that are not currently maintained.
+- Track ECM progress for each composite factor rather than for the number as a
+  whole. ECM currently runs on every remaining composite at a level chosen by
+  the largest one, so a small composite is carried through levels it would
+  never choose for itself, and the statistics for its digit count gain runs at
+  those levels. This may go along with revisiting how factors are stored and
+  with accounting for all factors in the time estimates.
+- Determine how multithreaded YAFU's implementation of SIQS is (may vary by
+  digit count), and consider threading it ourselves like with rho and P-1.
 - Why is `max_siqs_digits` even an option? Is there a historical reason for it?
   At the same time, investigate if there are any other superfluous options.
 - Consider whether the mersenne.ca one-hour assignment window should influence
@@ -124,10 +65,13 @@ later ones.
   the default of ten minutes), it's fine, but perhaps a warning if the user tries
   to use too large a duration such that their assignments risk expiring.
 - Investigate moving away from Tap (Typed Argument Parser) for argument parsing.
-  The obvious alternatives are click and typer, both of which are far more active
-  projects than Tap, but this list isn't exhaustive. If opting to keep Tap, at
-  least standardize on using hyphens rather than underscores in option names.
-- Investigate switching from the FactorDB list_by_type endpoing to the download
+  The obvious alternatives are click and typer, both of which are far more
+  active projects than Tap, but this list isn't exhaustive. If opting to keep
+  Tap, at least standardize on using hyphens rather than underscores in option
+  names. At the same time, consider looking at the current exit status codes,
+  and see if there are changes that can be made to improve the codes or to
+  better follow any standards.
+- Investigate switching from the FactorDB list_by_type endpoint to the download
   endpoint. The offset option would no longer be supported, but that was largely
   intended to minimize the risk of overlapping work, and the `random` option
   provides much of that benefit. (Though it's not quite as good, as download is
@@ -170,9 +114,11 @@ later ones.
   any sort of consistent distribution, but somehow I doubt this to be consistent.
   If going with theoretical numbers, I have no idea how to calculate the odds of
   the various stages finding factors (e.g. P-1's probability assuming TF and rho
-  have been done). The current code seems to always do one level of ECM, even
-  though for some smaller digit counts, it would be faster to just jump straight
-  to SIQS at that point. It's possible a tweaked ECM schedule could change that.
+  have been done). Also may need to consider how multithreading affects any of
+  these numbers. (You don't want to compare a rho run at 1 thread with a SIQS run
+  at 16 threads without taking into account that 16 rho runs can take place at the
+  same time--obviously this only applies if you have enough numbers to saturate
+  the threads).
 - Refactor to eliminate as many linting exceptions as possible.
 - Dynamic batch sizes can be slow to ramp up. This may not be as bad as it was
   in the past, but it's still worth looking at once more. One cause: after a
@@ -204,7 +150,11 @@ later ones.
   in continuous mode. Whether this is implemented as a simple outer loop or via
   a different mechanism that refills its queue when low remains an open question.
   The current one-shot mode should remain an option in any case. The choice here
-  may go along with the dashboard item.
+  may go along with the dashboard item. Revisit the submission policy at this
+  point. There's no real need to cap submission attempts. It's not like quitting
+  and starting the next run is going to make contacting the service more
+  successful. In continuous mode, we'd just want contact attempts to continue
+  anyway. The standard backoff capped at an hour is probably sufficient.
 - Add an alternate buffer dashboard for more convenient viewing of the work. This
   makes the most sense with a continuous mode.
 - As an alternative to the existing breadth-first standard mode, allow for a

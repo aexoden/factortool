@@ -18,6 +18,9 @@ FINAL_METHOD_NAMES: dict[str, str] = {
     "nfs_yafu": "YAFU NFS",
 }
 
+# Maximum number of consecutive failures allowed for a tool before it is considered broken.
+MAX_CONSECUTIVE_TOOL_FAILURES = 3
+
 ECM_P_FACTOR_DEFAULT = 0.1
 ECM_P_FACTOR_DECAY = pow(0.5, 1 / 16)
 
@@ -92,3 +95,6 @@ ECM_CURVES: dict[int, tuple[int, int]] = {
     69: (10393, 6050000000),
     70: (11253, 7760000000),
 }
+
+ECM_MIN_LEVEL = min(ECM_CURVES)
+ECM_MAX_LEVEL = max(ECM_CURVES)

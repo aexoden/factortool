@@ -13,24 +13,28 @@ import math
 
 from typing import TYPE_CHECKING, Any, cast, override
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
 import requests
 
 from loguru import logger
 
-from factortool.backend import BaseBackend, parse_composites
+from factortool.backend import BaseBackend, SubmitOutcome, parse_composites
+from factortool.http import PermanentHttpError
 from factortool.number import format_factorization
 
 if TYPE_CHECKING:
     from factortool.backend import FetchCriteria
     from factortool.config import Config
     from factortool.interrupt import InterruptState
-    from factortool.number import Number
     from factortool.stats import FactoringStats
+    from factortool.submissions import Submission
 
 API_URL = "https://www.mersenne.ca/aliquot/index.php"
 
 
-def check_factorization(n: int, factors: list[int]) -> bool:
+def check_factorization(n: int, factors: Sequence[int]) -> bool:
     """Check that a list of factors actually multiplies back to the original number.
 
     Returns:
@@ -47,8 +51,7 @@ class MersenneCA(BaseBackend):
     # Fetched composites are reserved for this client for an hour.
     assigns_work = True
     assignment_lifetime = 3600.0
-
-    submission_unit = "factorizations"
+    submission_lifetime = assignment_lifetime
 
     def __init__(self, config: Config, stats: FactoringStats, interrupts: InterruptState | None = None) -> None:
         """Initialize the mersenne.ca interface.
@@ -63,6 +66,8 @@ class MersenneCA(BaseBackend):
         if not config.gimps_login:
             msg = "No GIMPS login is configured; mersenne.ca requires one to assign and accept work"
             raise ValueError(msg)
+
+        self._start_submitting()
 
     @override
     def _validate_criteria(self, criteria: FetchCriteria) -> None:
@@ -97,60 +102,60 @@ class MersenneCA(BaseBackend):
         }
 
         return parse_composites(
-            self._service_request("GET", API_URL, params=params, timeout=30.0, interruptible=True).text
+            self._service_request("GET", API_URL, params=params, timeout=30.0, wait=self._interrupts.wait).text
         )
 
-    def _submit_number(self, number: Number) -> int:
-        """Report a single composite's factorization, complete or partial.
+    def _submit_number(self, submission: Submission) -> SubmitOutcome:
+        """Make a single attempt to report a composite's factorization, complete or partial.
 
         Returns:
-            int: 1 if the service accepted the factorization, otherwise 0.
+            SubmitOutcome: The outcome of the submission.
         """
-        factors = number.prime_factors + number.composite_factors
-
-        if not check_factorization(number.n, factors):
-            logger.error("Refusing to report an inconsistent factorization for {}", number.n)
-            return 0
+        if not check_factorization(submission.n, submission.prime_factors + submission.composite_factors):
+            logger.error("Refusing to report an inconsistent factorization for {}", submission.n)
+            return SubmitOutcome.REJECTED
 
         # The service expects a multipart POST, matching the documented "curl -F" invocation.
         payload: dict[str, tuple[None, str]] = {
-            "compositefactorization": (None, format_factorization(number, "*")),
+            "compositefactorization": (None, format_factorization(submission, "*")),
             "gimps_login": (None, self._config.gimps_login),
         }
 
         try:
-            response = self._service_request("POST", API_URL, files=payload, timeout=30.0)
+            response = self._service_request("POST", API_URL, files=payload, timeout=30.0, wait=self._submission_wait)
+        except PermanentHttpError as e:
+            logger.error("Discarding the factorization for {} that mersenne.ca will not accept: {}", submission.n, e)
+            return SubmitOutcome.REJECTED
         except requests.RequestException as e:
-            logger.error("Error reporting factorization for {}: {}", number.n, e)
-            return 0
+            logger.warning("Error reporting factorization for {}: {}", submission.n, e)
+            return SubmitOutcome.FAILED
 
-        return int(self._log_response(number, response))
+        return self._log_response(submission.n, response)
 
     @staticmethod
-    def _log_response(number: Number, response: requests.Response) -> bool:
-        """Log the response and return whether the service accepted the submission.
+    def _log_response(n: int, response: requests.Response) -> SubmitOutcome:
+        """Log the response and determine whether the submission was accepted.
 
         Returns:
-            bool: Whether the service accepted the submission.
+            SubmitOutcome: The outcome of the submission.
         """
         try:
             body: Any = response.json()
         except ValueError:
-            logger.error("mersenne.ca returned a malformed response for {}", number.n)
-            return False
+            body = None
 
         if not isinstance(body, dict):
-            logger.error("mersenne.ca returned a malformed response for {}", number.n)
-            return False
+            logger.warning("mersenne.ca returned a malformed response for {}", n)
+            return SubmitOutcome.FAILED
 
         fields = cast("dict[str, Any]", body)
 
         if warning := fields.get("warning"):
-            logger.warning("mersenne.ca reported a warning for {}: {}", number.n, warning)
+            logger.warning("mersenne.ca reported a warning for {}: {}", n, warning)
 
         if error := fields.get("error"):
-            logger.error("mersenne.ca reported an error for {}: {}", number.n, error)
-            return False
+            logger.error("mersenne.ca reported an error for {}: {}", n, error)
+            return SubmitOutcome.REJECTED
 
-        logger.debug("Reported factorization for {}", number.n)
-        return True
+        logger.debug("Reported factorization for {}", n)
+        return SubmitOutcome.ACCEPTED

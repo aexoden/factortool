@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 from pathlib import Path
 
@@ -17,11 +18,11 @@ from factortool.config import Config, read_config
 
 from .helpers import make_config
 
-BOTH_NFS = {"use_nfs_cado": True, "use_nfs_yafu": True}
+CADO_NFS = {"cado_nfs_path": "cado-nfs.py", "use_nfs_cado": True}
+BOTH_NFS = {**CADO_NFS, "use_nfs_yafu": True}
 
 REQUIRED_SETTINGS = {
     "backend": "factordb",
-    "cado_nfs_path": "cado-nfs.py",
     "max_threads": 1,
     "yafu_path": "yafu",
 }
@@ -72,6 +73,27 @@ def read_invalid_config(path: Path) -> list[str]:
     return messages
 
 
+def test_config_can_be_constructed_directly() -> None:
+    """Test that constructing a configuration directly validates and applies defaults like reading a file does."""
+    config = Config(backend="factordb", max_threads=1, yafu_path=Path("yafu"))
+
+    assert config == make_config()
+
+    with pytest.raises(ValidationError, match="gimps_login"):
+        Config(backend="mersenne_ca", max_threads=1, yafu_path=Path("yafu"))
+
+
+def test_config_is_immutable() -> None:
+    """Test that a configuration cannot be changed once built, as it is shared across threads."""
+    config = make_config()
+
+    with pytest.raises(ValidationError, match="frozen"):
+        config.max_threads = 2
+
+    assert config.model_copy(update={"max_threads": 2}) == make_config(max_threads=2)
+    assert config == make_config()
+
+
 def test_mersenne_ca_requires_gimps_login() -> None:
     """Test that selecting the mersenne.ca backend without a GIMPS login is rejected."""
     with pytest.raises(ValidationError, match="gimps_login"):
@@ -85,6 +107,106 @@ def test_read_config_rejects_mersenne_ca_without_gimps_login(tmp_path: Path) -> 
     (message,) = read_invalid_config(write_config(tmp_path, {**REQUIRED_SETTINGS, "backend": "mersenne_ca"}))
 
     assert "gimps_login" in message
+
+
+def test_cado_nfs_requires_its_path() -> None:
+    """Test that the path to CADO-NFS is only required when CADO-NFS is enabled."""
+    with pytest.raises(ValidationError, match="use_nfs_cado requires cado_nfs_path"):
+        make_config(use_nfs_cado=True)
+
+    assert make_config().cado_nfs_path is None
+    assert make_config(**CADO_NFS).cado_nfs_path == Path("cado-nfs.py")
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("max_threads", 0),
+        ("max_threads", -1),
+        ("max_siqs_digits", 0),
+        ("factordb_cooldown_period", -0.5),
+        ("factordb_cooldown_period", float("inf")),
+        ("mersenne_ca_cooldown_period", -0.5),
+        ("mersenne_ca_cooldown_period", float("nan")),
+    ],
+)
+def test_out_of_range_settings_are_rejected(setting: str, value: float) -> None:
+    """Test that a setting outside its usable range is rejected rather than failing once work has been fetched."""
+    with pytest.raises(ValidationError) as exc_info:
+        make_config(**{setting: value})
+
+    assert [error["loc"] for error in exc_info.value.errors()] == [(setting,)]
+
+
+def test_read_config_rejects_out_of_range_settings(tmp_path: Path) -> None:
+    """Test that reading a configuration file with an out of range setting names the setting."""
+    (message,) = read_invalid_config(write_config(tmp_path, {**REQUIRED_SETTINGS, "max_threads": 0}))
+
+    assert "max_threads" in message
+
+
+def make_executable(path: Path) -> Path:
+    """Create an empty file that may be executed.
+
+    Returns:
+        Path: The path of the file.
+    """
+    path.touch()
+    path.chmod(0o755)
+    return path
+
+
+def test_tools_that_are_present_have_no_problems(tmp_path: Path) -> None:
+    """Test that executable tools and an existing yafu.ini are accepted."""
+    yafu_ini_path = tmp_path / "custom.ini"
+    yafu_ini_path.touch()
+    config = make_config(
+        cado_nfs_path=make_executable(tmp_path / "cado-nfs.py"),
+        use_nfs_cado=True,
+        yafu_ini_path=yafu_ini_path,
+        yafu_path=make_executable(tmp_path / "yafu"),
+    )
+
+    assert config.find_tool_problems() == []
+
+
+def test_missing_tools_are_all_reported(tmp_path: Path) -> None:
+    """Test that every missing tool and file is reported at once."""
+    config = make_config(
+        cado_nfs_path=tmp_path / "cado-nfs.py",
+        use_nfs_cado=True,
+        yafu_ini_path=tmp_path / "custom.ini",
+        yafu_path=tmp_path / "yafu",
+    )
+
+    assert config.find_tool_problems() == [
+        f"cado_nfs_path ({tmp_path / 'cado-nfs.py'}) is not an executable file",
+        f"yafu_path ({tmp_path / 'yafu'}) is not an executable file",
+        f"yafu_ini_path ({tmp_path / 'custom.ini'}) is not a file",
+    ]
+
+
+def test_cado_nfs_and_the_default_yafu_ini_are_only_needed_when_used(tmp_path: Path) -> None:
+    """Test that a disabled CADO-NFS and the optional yafu.ini beside YAFU may both be missing."""
+    config = make_config(cado_nfs_path=tmp_path / "cado-nfs.py", yafu_path=make_executable(tmp_path / "yafu"))
+
+    assert config.find_tool_problems() == []
+
+
+def test_a_tool_that_is_a_directory_is_a_problem(tmp_path: Path) -> None:
+    """Test that a directory is not mistaken for a tool."""
+    assert make_config(yafu_path=tmp_path).find_tool_problems() == [f"yafu_path ({tmp_path}) is not an executable file"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no execute permission")
+def test_a_tool_without_execute_permission_is_a_problem(tmp_path: Path) -> None:
+    """Test that a file that cannot be executed is not accepted as a tool."""
+    yafu_path = tmp_path / "yafu"
+    yafu_path.touch(mode=0o644)
+
+    assert make_config(yafu_path=yafu_path).find_tool_problems() == [
+        f"yafu_path ({yafu_path}) is not an executable file"
+    ]
 
 
 def test_read_config_defaults_optional_settings(tmp_path: Path) -> None:
@@ -124,6 +246,26 @@ def test_read_config_warns_about_unrecognized_settings(tmp_path: Path) -> None:
         "Ignoring unrecognized configuration setting: max_siqs_digit\n",
         "Ignoring unrecognized configuration setting: use_nfs\n",
     ]
+
+
+def test_state_files_live_in_the_state_directory() -> None:
+    """Test that every state file is found under state_path."""
+    config = make_config(state_path="somewhere")
+
+    assert config.assignment_state_path == Path("somewhere/assignment_state.json")
+    assert config.batch_state_path == Path("somewhere/batch_state.json")
+    assert config.pending_submissions_path == Path("somewhere/pending_submissions.jsonl")
+    assert config.stats_path == Path("somewhere/stats.json")
+
+
+def test_read_config_rejects_the_removed_state_file_settings(tmp_path: Path) -> None:
+    """Test that a setting that used to name a state file is an error, rather than silently starting fresh state."""
+    settings = {**REQUIRED_SETTINGS, "pending_submissions_path": "unsent.jsonl", "stats_path": "old.json"}
+
+    (message,) = read_invalid_config(write_config(tmp_path, settings))
+
+    assert "no longer supported: pending_submissions_path, stats_path" in message
+    assert "state_path" in message
 
 
 def test_dist_config_matches_defaults() -> None:
@@ -175,7 +317,7 @@ def test_user_agent_rejects_invalid_overrides(user_agent: str) -> None:
     ("digits", "overrides", "expected"),
     [
         pytest.param(56, {}, ("siqs",), id="below-nfs-cado-minimum"),
-        pytest.param(57, {"use_nfs_cado": True}, ("siqs", "nfs_cado"), id="nfs-cado-minimum"),
+        pytest.param(57, CADO_NFS, ("siqs", "nfs_cado"), id="nfs-cado-minimum"),
         pytest.param(84, BOTH_NFS, ("siqs", "nfs_cado"), id="below-yafu-minimum"),
         pytest.param(85, BOTH_NFS, ("siqs", "nfs_cado", "nfs_yafu"), id="yafu-minimum"),
         pytest.param(101, BOTH_NFS, ("nfs_cado", "nfs_yafu"), id="above-max-siqs-digits"),
@@ -183,6 +325,6 @@ def test_user_agent_rejects_invalid_overrides(user_agent: str) -> None:
         pytest.param(101, {"use_nfs_cado": False, "use_nfs_yafu": False}, ("siqs",), id="siqs-as-last-resort"),
     ],
 )
-def test_final_methods_for_digits(digits: int, overrides: dict[str, bool], expected: tuple[str, ...]) -> None:
+def test_final_methods_for_digits(digits: int, overrides: dict[str, object], expected: tuple[str, ...]) -> None:
     """Allow only the enabled final methods suited to the size, falling back to SIQS when none are."""
     assert make_config(**overrides).final_methods.for_digits(digits) == expected
