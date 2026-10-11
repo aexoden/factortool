@@ -65,7 +65,9 @@ bash -c '
     while true ; do
         uv run factortool --min_digits 55 --batch_size 60 --skip_count 277 ;
         status=$? ;
-        if [ $status -eq 2 ] || [ $status -eq 6 ]; then exit $status ; fi ;
+        if [ $status -eq 2 ] || [ $status -eq 6 ] || [ $status -eq 8 ]; then
+            exit $status ;
+        fi ;
         sleep 1 ;
     done
 '
@@ -80,7 +82,8 @@ it easy to prefix the whole loop with another command, such as `taskset -c
 To stop the script, simply press Ctrl-C. `factortool` will finish the current
 batch it is working on, submit any finished results, and then exit. The shell
 script is designed to stop if `factortool` exits due to an interrupt such as
-Ctrl-C (exit status 2) or for a permanent HTTP error (exit status 6).
+Ctrl-C (exit status 2), for a permanent HTTP error (exit status 6) or because
+another instance is already running (exit status 8).
 
 Repeated interrupts escalate:
 
@@ -140,13 +143,13 @@ where factors are submitted.
   is required, and `--skip_count` is not supported (or needed to avoid conflict).
 
 Partial factorizations are submitted if a run ends after finding one or more
-factors. For `mersenne_ca`, unfinished assignments are saved in `assignment_state_path`
-and resumed on the next run. Assignments will be dropped if they come within ten
-minutes of expiration without being started.
+factors. For `mersenne_ca`, unfinished assignments are saved in the state
+directory and resumed on the next run. Assignments will be dropped if they come
+within ten minutes of expiration without being started.
 
 ## Unsent Results
 
-Every result is recorded in `pending_submissions_path` as soon as it is ready to
+Every result is recorded in the state directory as soon as it is ready to
 submit, and removed once the backend has accepted or rejected it. Whatever is
 left when `factortool` exits is submitted at the start of the next run with the
 same backend. Unsent results do not change the exit status.
@@ -193,6 +196,7 @@ The program returns the following non-zero error codes:
 * 5: Unexpected YAFU failure
 * 6: Permanent HTTP error in the backend
 * 7: Error saving state or results or during shutdown
+* 8: Another instance is using the state or working directory
 
 ## License
 

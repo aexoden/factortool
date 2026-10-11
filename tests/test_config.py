@@ -248,6 +248,26 @@ def test_read_config_warns_about_unrecognized_settings(tmp_path: Path) -> None:
     ]
 
 
+def test_state_files_live_in_the_state_directory() -> None:
+    """Test that every state file is found under state_path."""
+    config = make_config(state_path="somewhere")
+
+    assert config.assignment_state_path == Path("somewhere/assignment_state.json")
+    assert config.batch_state_path == Path("somewhere/batch_state.json")
+    assert config.pending_submissions_path == Path("somewhere/pending_submissions.jsonl")
+    assert config.stats_path == Path("somewhere/stats.json")
+
+
+def test_read_config_rejects_the_removed_state_file_settings(tmp_path: Path) -> None:
+    """Test that a setting that used to name a state file is an error, rather than silently starting fresh state."""
+    settings = {**REQUIRED_SETTINGS, "pending_submissions_path": "unsent.jsonl", "stats_path": "old.json"}
+
+    (message,) = read_invalid_config(write_config(tmp_path, settings))
+
+    assert "no longer supported: pending_submissions_path, stats_path" in message
+    assert "state_path" in message
+
+
 def test_dist_config_matches_defaults() -> None:
     """Test that the distributed configuration file matches the default settings."""
     dist = json.loads((Path(__file__).parent.parent / "config.dist.json").read_text(encoding="utf-8"))

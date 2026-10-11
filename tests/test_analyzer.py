@@ -32,7 +32,7 @@ def run_analyzer(
     """
     stats.save_data()
 
-    config = {"backend": "factordb", "max_threads": 1, "stats_path": str(tmp_path / "stats.json"), "yafu_path": "yafu"}
+    config = {"backend": "factordb", "max_threads": 1, "state_path": str(tmp_path), "yafu_path": "yafu"}
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(config), encoding="utf-8")
 
