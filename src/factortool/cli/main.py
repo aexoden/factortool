@@ -26,7 +26,7 @@ from factortool.assignments import Assignment, AssignmentStore, assignment_expir
 from factortool.backend import Backend, FetchCriteria, create_backend
 from factortool.batch import BatchController, BatchKey
 from factortool.config import read_config
-from factortool.engine import ExitStatus, FactorEngine
+from factortool.engine import ExitStatus, FactorEngine, TimeLimits
 from factortool.http import PermanentHttpError
 from factortool.interrupt import EXIT_STATUS as INTERRUPTED_EXIT_STATUS
 from factortool.interrupt import Interrupted, InterruptState
@@ -39,7 +39,7 @@ from factortool.util import ArgumentParser, setup_logger
 if TYPE_CHECKING:
     from factortool.config import Config
 
-# How far past the target duration an automatically sized batch may run before the run is cut short.
+# How far past the target duration an automatically sized batch may run by default before no more work is started.
 TIME_LIMIT_FACTOR = 2.0
 
 # The exit status of a run that is cut short by its time limit.
@@ -65,8 +65,10 @@ class Arguments(ArgumentParser):
     config_path: Path = Path("config.json")  # Path to the JSON-formatted configuration file
     min_digits: int = 1  # Minimum number of digits fetched composite numbers should have
     max_digits: int = 0  # Maximum number of digits fetched composite numbers should have (required by mersenne.ca)
-    batch_size: int = 0  # Number of composite numbers to work on at a time (0 for automatic, with a time limit)
+    batch_size: int = 0  # Number of composite numbers to work on at a time (0 for automatic)
     target_duration: float = 600.0  # Target duration in seconds for each batch (only used when batch_size is 0)
+    time_limit: float | None = None  # Seconds after which no new factorizations are started (0 for no limit)
+    hard_time_limit: float = 0.0  # Seconds after which running factorizations are abandoned (0 for no limit)
     skip_count: int = 0  # Skip this many numbers when fetching from FactorDB (to hopefully avoid conflict)
     no_new_work: bool = False  # Do not fetch new work from the backend. Only supported by mersenne.ca.
 
@@ -122,6 +124,11 @@ def validate_argument_ranges(args: Arguments) -> None:
     if not (math.isfinite(args.target_duration) and args.target_duration > 0):
         logger.error("--target_duration ({}) must be a positive number of seconds", args.target_duration)
         sys.exit(1)
+
+    for option, limit in (("--time_limit", args.time_limit), ("--hard_time_limit", args.hard_time_limit)):
+        if limit is not None and not (math.isfinite(limit) and limit >= 0):
+            logger.error("{} ({}) must be a number of seconds, or 0 for no limit", option, limit)
+            sys.exit(1)
 
     if args.skip_count < 0:
         logger.error("--skip_count ({}) cannot be negative", args.skip_count)
@@ -301,25 +308,35 @@ def lock_instance(config: Config) -> contextlib.ExitStack:
         sys.exit(1)
 
 
-def get_time_limit(args: Arguments) -> float | None:
+def get_time_limits(args: Arguments, backend: Backend) -> TimeLimits:
     """Determine how long the factoring may run before the run is cut short.
 
+    Unless a time limit is given, an automatically sized batch stops starting factorizations at a multiple of its target
+    duration. A backend that assigns work needs no such limit.
+
     Returns:
-        float | None: The time limit in seconds, or None if there is no time limit.
+        TimeLimits: The time limits for the factoring run, including the soft and hard limits.
     """
-    if args.batch_size > 0:
-        return None
+    hard = args.hard_time_limit or None
 
-    return TIME_LIMIT_FACTOR * args.target_duration
+    if args.time_limit is not None:
+        return TimeLimits(soft=args.time_limit or None, hard=hard)
+
+    if args.batch_size > 0 or backend.assigns_work:
+        return TimeLimits(hard=hard)
+
+    return TimeLimits(soft=TIME_LIMIT_FACTOR * args.target_duration, hard=hard)
 
 
-def warn_if_assignments_may_expire(backend: Backend, time_limit: float | None) -> None:
+def warn_if_assignments_may_expire(backend: Backend, args: Arguments) -> None:
     """Warn if a run may outlast the assignments it fetches."""
-    if time_limit is None or not backend.assigns_work:
+    if args.batch_size > 0 or not backend.assigns_work:
         return
 
-    if time_limit > backend.assignment_lifetime:
-        logger.warning("With a time limit of {:.0f}s, assignments may expire before completion", time_limit)
+    if args.target_duration > backend.assignment_lifetime:
+        logger.warning(
+            "With a target duration of {:.0f}s, assignments may expire before completion", args.target_duration
+        )
 
 
 def preserve_unfinished(backend: Backend, assignments: AssignmentStore, numbers: Collection[Number]) -> None:
@@ -357,7 +374,7 @@ def run_batch(args: Arguments, session: Session) -> int:
         int: The exit status for the batch, not counting any cleanup failure.
     """
     config, stats, backend = session.config, session.stats, session.backend
-    time_limit = get_time_limit(args)
+    limits = get_time_limits(args, backend)
 
     max_digits = args.max_digits if args.max_digits > 0 else None
     batch_controller = BatchController(
@@ -370,7 +387,7 @@ def run_batch(args: Arguments, session: Session) -> int:
     if args.no_new_work:
         logger.info("As requested, not fetching new work")
 
-    warn_if_assignments_may_expire(backend, time_limit)
+    warn_if_assignments_may_expire(backend, args)
 
     assignments = AssignmentStore(config.assignment_state_path, config.backend)
 
@@ -400,7 +417,7 @@ def run_batch(args: Arguments, session: Session) -> int:
     # Each number retains its own state, so we can safely process them independently, regardless of what happens in the
     # engine.
     try:
-        status = FactorEngine(config, session.interrupts).run(sorted(numbers), time_limit)
+        status = FactorEngine(config, session.interrupts).run(sorted(numbers), limits)
     except ToolError as e:
         logger.critical("{}", e)
         tool_error = e

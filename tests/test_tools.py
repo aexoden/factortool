@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
+import sys
+import time
 
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
@@ -17,16 +19,19 @@ import pytest
 from factortool.constants import MAX_CONSECUTIVE_TOOL_FAILURES
 from factortool.tools import (
     CadoNfsError,
+    ToolDeadlineExceeded,
     ToolFailure,
     ToolFailures,
     ToolState,
     YafuError,
     parse_yafu_factors,
+    run_tool,
     run_yafu,
+    tool_deadline,
     tool_failures,
 )
 
-from .helpers import make_config
+from .helpers import TOOL_STOP_TIMEOUT, heartbeat_stopped, make_config, make_tool_with_helper
 
 
 def test_yafu_factors_are_read_whatever_their_primality_label() -> None:
@@ -170,3 +175,47 @@ def test_resetting_forgets_earlier_failures() -> None:
     tool_failures.reset()
 
     fail(tool_failures, "ECM")
+
+
+def test_a_tool_still_running_at_its_deadline_is_killed_with_its_helpers(tmp_path: Path) -> None:
+    """Test that the deadline kills the whole process tree, rather than waiting for the tool to finish."""
+    heartbeat = tmp_path / "heartbeat"
+    start = time.monotonic()
+
+    with tool_deadline(start + 1.0), pytest.raises(ToolDeadlineExceeded, match="the tool"):
+        run_tool(make_tool_with_helper(heartbeat), tmp_path, 1, description="the tool")
+
+    assert time.monotonic() - start < TOOL_STOP_TIMEOUT
+    assert heartbeat_stopped(heartbeat)
+
+
+def test_a_tool_that_finishes_before_its_deadline_is_unaffected(tmp_path: Path) -> None:
+    """Test that a deadline does not disturb the input or output of a tool that finishes in time."""
+    script = "import sys; print(sys.stdin.read().upper())"
+
+    with tool_deadline(time.monotonic() + TOOL_STOP_TIMEOUT):
+        result = run_tool([sys.executable, "-c", script], tmp_path, 1, stdin="factors")
+
+    assert result.stdout.strip() == "FACTORS"
+
+
+def test_a_deadline_only_applies_inside_its_block(tmp_path: Path) -> None:
+    """Test that a tool started after the block has ended is not held to the block's deadline."""
+    with tool_deadline(time.monotonic() - 1.0):
+        pass
+
+    assert run_tool([sys.executable, "-c", "print(1)"], tmp_path, 1).stdout.strip() == "1"
+
+
+def test_a_long_running_tool_is_warned_about_until_it_finishes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that a tool that keeps running is reported periodically, so that a hung tool can be noticed."""
+    warning = Mock()
+    monkeypatch.setattr("factortool.tools.STILL_RUNNING_INTERVAL", 0.2, raising=True)
+    monkeypatch.setattr("factortool.tools.logger.warning", warning, raising=True)
+    script = "import sys, time; time.sleep(0.7); print(sys.stdin.read())"
+
+    result = run_tool([sys.executable, "-c", script], tmp_path, 1, stdin="factors", description="SIQS on 15")
+
+    assert result.stdout.strip() == "factors"
+    assert len(warning.call_args_list) >= 2  # ruff: ignore[magic-value-comparison]
+    assert warning.call_args.args[1] == "SIQS on 15"

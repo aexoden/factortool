@@ -8,7 +8,9 @@ import concurrent.futures
 import threading
 import time
 
+from dataclasses import dataclass
 from enum import Enum
+from functools import partial
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -19,7 +21,8 @@ from loguru import logger
 from factortool.constants import ECM_CURVES, ECM_MAX_LEVEL, ECM_MIN_LEVEL, FINAL_METHOD_NAMES
 from factortool.interrupt import Interrupted, InterruptState
 from factortool.number import Number
-from factortool.tools import abandon_tools
+from factortool.tools import ToolDeadlineExceeded, abandon_tools, tool_deadline
+from factortool.util import format_number
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -33,6 +36,22 @@ class ExitStatus(Enum):
     TIME_LIMIT_EXCEEDED = 2
 
 
+@dataclass(frozen=True)
+class TimeLimits:
+    """How long a run may take, in seconds from its start. None means no limit."""
+
+    # Once this has passed, no further factorizations are started.
+    soft: float | None = None
+
+    # Once this has passed, the factorizations still running are abandoned.
+    hard: float | None = None
+
+    @property
+    def earliest(self) -> float | None:
+        """The limit that ends the run, as nothing is started once either limit has passed."""
+        return min((limit for limit in (self.soft, self.hard) if limit is not None), default=None)
+
+
 class FactorEngine:
     """Engine for managing factorization tasks."""
 
@@ -40,9 +59,10 @@ class FactorEngine:
         """Initialize the factorization engine."""
         self._config = config
 
-        # Both are set at the start of each run.
-        self._time_limit: float | None = None
+        self._limits = TimeLimits()
         self._start_time = time.monotonic()
+        self._expired: set[Number] = set()
+        self._expired_lock = threading.Lock()
 
         if interrupts is None:
             interrupts = InterruptState()
@@ -50,22 +70,21 @@ class FactorEngine:
 
         self._interrupts = interrupts
 
-        self._expired: set[Number] = set()
-        self._expired_lock = threading.Lock()
-
     def _skip_expired(self, number: Number) -> bool:
         """Check if a number's assignment is expired, logging the first time it is skipped.
 
         Returns:
             bool: True if the number's assignment is expired, False otherwise.
         """
-        if not number.assignment_expired:
-            return False
-
         with self._expired_lock:
-            if number not in self._expired:
-                self._expired.add(number)
-                logger.warning("Skipping {} as its assignment has expired", number.n)
+            if number in self._expired:
+                return True
+
+            if not number.assignment_expired:
+                return False
+
+            self._expired.add(number)
+            logger.warning("Skipping {} as its assignment has expired", number.n)
 
         return True
 
@@ -73,9 +92,50 @@ class FactorEngine:
         """Check if the current run has exceeded its time limit.
 
         Returns:
-            bool: True if the run has a time limit and has exceeded it, False otherwise.
+            bool: True if the run has a time limit and has reached it, False otherwise.
         """
-        return self._time_limit is not None and time.monotonic() - self._start_time > self._time_limit
+        time_limit = self._limits.earliest
+
+        return time_limit is not None and time.monotonic() - self._start_time > time_limit
+
+    def _is_hard_time_limit_exceeded(self) -> bool:
+        """Check if the current run has exceeded its hard time limit.
+
+        Returns:
+            bool: True if the run has a hard time limit and has exceeded it, False otherwise.
+        """
+        return self._limits.hard is not None and time.monotonic() - self._start_time >= self._limits.hard
+
+    def _tool_deadline(self, number: Number) -> float | None:
+        """Compute the earliest deadline for a number, considering both the hard time limit and the number's expiration.
+
+        Returns:
+            float | None: The earliest deadline as a monotonic timestamp, or None if no deadlines are set.
+        """
+        deadlines: list[float] = []
+
+        if self._limits.hard is not None:
+            deadlines.append(self._start_time + self._limits.hard)
+
+        if number.expires_at is not None:
+            deadlines.append(time.monotonic() + number.expires_at - time.time())
+
+        return min(deadlines, default=None)
+
+    def _attempt(self, number: Number, factor: Callable[[Number], None]) -> None:
+        """Apply a factoring method to a number, abandoning it if a tool is still running at its deadline."""
+        try:
+            with tool_deadline(self._tool_deadline(number)):
+                factor(number)
+        except ToolDeadlineExceeded as e:
+            if self._is_hard_time_limit_exceeded():
+                logger.warning("Abandoned {}, as the hard time limit was reached", e)
+                return
+
+            with self._expired_lock:
+                self._expired.add(number)
+
+            logger.warning("Abandoned {}, as the assignment for {} has expired", e, format_number(number.n))
 
     def _stop_status(self, stage: str | None = None) -> ExitStatus | None:
         """Check if the run should end early, either due to an interrupt or the time limit.
@@ -95,7 +155,7 @@ class FactorEngine:
             logger.warning(
                 "Time limit exceeded: runtime ({:.1f}s) exceeds ({:.1f}s)",
                 time.monotonic() - self._start_time,
-                self._time_limit,
+                self._limits.earliest,
             )
             return ExitStatus.TIME_LIMIT_EXCEEDED
 
@@ -122,7 +182,7 @@ class FactorEngine:
                 return
 
             try:
-                factor(number)
+                self._attempt(number, factor)
             except BaseException:
                 failed.set()
                 raise
@@ -142,7 +202,7 @@ class FactorEngine:
     # Public Methods
     #
 
-    def run(self, numbers: Collection[Number], time_limit: float | None = None) -> ExitStatus:
+    def run(self, numbers: Collection[Number], limits: TimeLimits | None = None) -> ExitStatus:
         """Run factorization using the configured mode.
 
         Returns:
@@ -153,8 +213,12 @@ class FactorEngine:
         Raises:
             ToolError: If an external tool fails several times in a row.
         """
-        self._time_limit = time_limit
+        self._limits = limits if limits is not None else TimeLimits()
         self._start_time = time.monotonic()
+
+        # A number may come back with a new assignment after an earlier one expired.
+        with self._expired_lock:
+            self._expired.clear()
 
         try:
             with self._interrupts.abortable(abandon_tools):
@@ -185,7 +249,7 @@ class FactorEngine:
                 continue
 
             logger.info("Factoring {} using YAFU", number.n)
-            number.factor_yafu_direct()
+            self._attempt(number, Number.factor_yafu_direct)
 
         # Check once more for an interrupt that may have occurred during the final factorization.
         if (status := self._stop_status()) is not None:
@@ -206,7 +270,7 @@ class FactorEngine:
             if self._skip_expired(number):
                 continue
 
-            number.factor_tf()
+            self._attempt(number, Number.factor_tf)
 
             if (status := self._stop_status()) is not None:
                 return status
@@ -254,7 +318,7 @@ class FactorEngine:
                 if self._skip_expired(number):
                     continue
 
-                number.factor_ecm(ecm_level)
+                self._attempt(number, partial(Number.factor_ecm, level=ecm_level))
 
                 if (status := self._stop_status("ECM")) is not None:
                     return status
@@ -288,7 +352,7 @@ class FactorEngine:
                 if not number.active or self._skip_expired(number):
                     continue
 
-                number.factor_final()
+                self._attempt(number, Number.factor_final)
 
                 if (status := self._stop_status("final")) is not None:
                     return status

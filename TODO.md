@@ -7,24 +7,6 @@ later ones.
 
 ## Minor Features
 
-- Add an option to disable the time limit and adjust the time limit directly,
-  rather than always defaulting to double the target time. While there, consider
-  if the time limit should abort immediately or finish the current factorization
-  (or some happy medium). Killing the running tool at some hard limit is also
-  the only realiable defense against a tool that hangs, which is otherwise never
-  detected. It might be worth checking if YAFU and CADO-NFS regularly generate
-  log output for monitoring. Could also consider looking at their CPU usage, but
-  that wouldn't help with a spinlock. As one more consideration, the time limit
-  is somewhat incompatible with standard mode. In YAFU mode, you generally just
-  let the current run finish. But in standard mode, if you abort early, you've
-  probably just wasted a bunch of ECM work, and if you have a small pool of
-  composites, you may repeat the same useless ECM over and over on each run,
-  never actually getting to the final factoring. The time limit's original
-  purpose was to avoid a FactorDB run from going too long and risking someone
-  else grabbing the same composites. However, for mersenne.ca, we're guaranteed
-  the assignment. So at least for the mersenne.ca backend, the time limit is
-  much less necessary. If there at all, it should probably be set to the
-  expected expiry time (maybe with some grace) for the newest assignment.
 - Display digit counts even for smaller numbers. During the early data gathering
   phase, numbers can run way longer too as they do excessive ECM (standard mode).
 - For backends that batch submissions, consider a more intelligent submission

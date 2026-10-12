@@ -48,9 +48,17 @@ You may then run the program. It accepts the following options:
 * `--batch_size`: The number of composite numbers to fetch. A value of 0 (default)
   attempts to use an automatic batch size to meet a target time.
 * `--target_duration`: The number of seconds to target when using an automatic
-  batch size. Must be positive. The default is 600 seconds (ten minutes). If
-  factoring takes more than twice this long, the run ends after the current
-  factorization. A run with an explicit `--batch_size` has no time limit.
+  batch size. Must be positive. The default is 600 seconds (ten minutes).
+* `--time_limit`: The number of seconds after which no more factorizations are
+  started. The run ends once the current one finishes. A value of 0 means no
+  limit. By default, a `factordb` run with an automatic batch size is limited to
+  twice the target duration, and any other run has no limit.
+* `--hard_time_limit`: The number of seconds after which the factorizations
+  still running are abandoned, ending the run. A value of 0 (default) means no
+  limit. This is the only protection against a hung tool on `factordb` (on
+  `mersenne_ca`, the assignment expiry time will provide a limit), but it will
+  also kill a slow factorization, so choose it to suit the largest numbers you
+  expect to work on.
 * `--skip_count`: How many composite numbers to skip on FactorDB. Useful for working
   at an offset to avoid conflicts. Not supported by the mersenne.ca backend (which
   assigns distinct work to each user).
@@ -102,6 +110,10 @@ the rest for the next run.
 SIGTERM, SIGHUP and, on Windows, Ctrl-Break have the same effect as the third
 interrupt. Once the current factorization has been abandoned, one more signal
 exits immediately, without saving anything further or submitting the remaining results.
+
+A YAFU or CADO-NFS run that lasts more than half an hour is noted in the log
+with a warning, which repeats every half hour until it finishes. Nothing is done
+about it unless `--hard_time_limit` is set.
 
 If YAFU or CADO-NFS fail on a number (by exiting with an error or returning an
 incomplete factorization), the failure is logged and the batch continues. A

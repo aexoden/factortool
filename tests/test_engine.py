@@ -19,11 +19,11 @@ if TYPE_CHECKING:
 import pytest
 
 from factortool.constants import MAX_CONSECUTIVE_TOOL_FAILURES
-from factortool.engine import ExitStatus, FactorEngine
+from factortool.engine import ExitStatus, FactorEngine, TimeLimits
 from factortool.interrupt import ABORT, FINISH_BATCH, POLL_INTERVAL, STOP_SOON, Interrupted, InterruptState
 from factortool.number import Number
 from factortool.stats import ECMCutoffs, FactoringStats
-from factortool.tools import YafuError, run_tool
+from factortool.tools import YafuError, run_tool, tool_failures
 
 from .helpers import (
     TOOL_STOP_TIMEOUT,
@@ -470,7 +470,7 @@ class FakeClock:
 def run_with_clock(
     monkeypatch: pytest.MonkeyPatch,
     mode: Literal["standard", "yafu"],
-    time_limit: float | None,
+    limits: TimeLimits,
     *,
     wait_before_run: float = 0.0,
     seconds_per_factorization: float = 0.0,
@@ -495,7 +495,7 @@ def run_with_clock(
 
     clock.now += wait_before_run
 
-    return engine.run(numbers, time_limit), numbers
+    return engine.run(numbers, limits), numbers
 
 
 @pytest.mark.parametrize("mode", ["yafu", "standard"])
@@ -503,7 +503,7 @@ def test_time_before_the_run_does_not_count_toward_the_time_limit(
     monkeypatch: pytest.MonkeyPatch, mode: Literal["standard", "yafu"]
 ) -> None:
     """Test that time passing between creating the engine and running it, such as a slow fetch, is not counted."""
-    status, numbers = run_with_clock(monkeypatch, mode, 1200.0, wait_before_run=7200.0)
+    status, numbers = run_with_clock(monkeypatch, mode, TimeLimits(soft=1200.0), wait_before_run=7200.0)
 
     assert status == ExitStatus.SUCCESS
     assert all(x.factored for x in numbers)
@@ -514,7 +514,7 @@ def test_exceeding_the_time_limit_ends_the_run(
     monkeypatch: pytest.MonkeyPatch, mode: Literal["standard", "yafu"]
 ) -> None:
     """Test that the run stops starting factorizations once the time limit has passed."""
-    status, numbers = run_with_clock(monkeypatch, mode, 1200.0, seconds_per_factorization=1000.0)
+    status, numbers = run_with_clock(monkeypatch, mode, TimeLimits(soft=1200.0), seconds_per_factorization=1000.0)
 
     assert status == ExitStatus.TIME_LIMIT_EXCEEDED
     assert [x.factored for x in numbers] == [True, True, False]
@@ -537,7 +537,7 @@ def test_exceeding_the_time_limit_stops_queued_concurrent_work(monkeypatch: pyte
 
     monkeypatch.setattr(f"factortool.number.Number.{stage}", factor, raising=True)
 
-    assert engine.run([make_number(n) for n in COMPOSITES], 1200.0) == ExitStatus.TIME_LIMIT_EXCEEDED
+    assert engine.run([make_number(n) for n in COMPOSITES], TimeLimits(soft=1200.0)) == ExitStatus.TIME_LIMIT_EXCEEDED
     assert attempted == COMPOSITES[:2]
 
 
@@ -546,7 +546,7 @@ def test_a_run_without_a_time_limit_is_never_cut_short(
     monkeypatch: pytest.MonkeyPatch, mode: Literal["standard", "yafu"]
 ) -> None:
     """Test that a run given no time limit finishes however long it takes."""
-    status, numbers = run_with_clock(monkeypatch, mode, None, seconds_per_factorization=1e9)
+    status, numbers = run_with_clock(monkeypatch, mode, TimeLimits(), seconds_per_factorization=1e9)
 
     assert status == ExitStatus.SUCCESS
     assert all(x.factored for x in numbers)
@@ -565,8 +565,8 @@ def test_each_run_gets_a_fresh_time_limit(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setattr("factortool.number.Number.factor_yafu_direct", factor, raising=True)
 
-    assert engine.run([make_number(COMPOSITES[0])], 1200.0) == ExitStatus.SUCCESS
-    assert engine.run([make_number(COMPOSITES[1])], 1200.0) == ExitStatus.SUCCESS
+    assert engine.run([make_number(COMPOSITES[0])], TimeLimits(soft=1200.0)) == ExitStatus.SUCCESS
+    assert engine.run([make_number(COMPOSITES[1])], TimeLimits(soft=1200.0)) == ExitStatus.SUCCESS
 
 
 @pytest.mark.parametrize("mode", ["yafu", "standard"])
@@ -592,6 +592,119 @@ def test_numbers_whose_assignment_has_expired_are_skipped(
     assert engine.run([lapsed, assigned, unassigned]) == ExitStatus.SUCCESS
     assert attempted == {assigned.n, unassigned.n}
     assert not lapsed.factored
+
+
+def slow_tool_engine(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mode: Literal["standard", "yafu"],
+    finished: frozenset[int],
+    max_threads: int = 1,
+) -> FactorEngine:
+    """Build an engine whose tools run until they are killed, apart from on the numbers given as finished.
+
+    Returns:
+        FactorEngine: The engine, in the given factoring mode.
+    """
+
+    def factor(n: int, *_args: object) -> list[int]:
+        if n not in finished:
+            run_tool(make_tool_with_helper(tmp_path / f"heartbeat-{n}"), tmp_path, 1, description=f"the tool on {n}")
+
+        return [2, n // 2]
+
+    monkeypatch.setattr("factortool.number.factor_tf", lambda n, _stats: [n], raising=True)
+    monkeypatch.setattr("factortool.number.factor_yafu", factor, raising=True)
+    monkeypatch.setattr("factortool.number.factor_yafu_direct", factor, raising=True)
+    monkeypatch.setattr("factortool.number.is_prime", lambda n: n not in COMPOSITES, raising=True)
+
+    config = make_config(factoring_mode=mode, max_threads=max_threads)
+
+    return FactorEngine(config, InterruptState())
+
+
+@pytest.mark.parametrize("mode", ["yafu", "standard"])
+def test_the_hard_time_limit_kills_the_running_tool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mode: Literal["standard", "yafu"]
+) -> None:
+    """Test that a tool still running at the hard time limit is killed, without counting as a tool failure."""
+    numbers = [make_number(n) for n in COMPOSITES[:2]]
+    engine = slow_tool_engine(monkeypatch, tmp_path, mode, frozenset())
+    tool_failures.reset()
+    start = time.monotonic()
+
+    assert engine.run(numbers, TimeLimits(hard=1.0)) == ExitStatus.TIME_LIMIT_EXCEEDED
+    assert time.monotonic() - start < TOOL_STOP_TIMEOUT
+    assert heartbeat_stopped(tmp_path / f"heartbeat-{COMPOSITES[0]}")
+    assert [x.composite_factors for x in numbers] == [[n] for n in COMPOSITES[:2]]
+    assert not any(x.tool_failed for x in numbers)
+    assert not tool_failures._streaks
+
+
+def test_a_hard_time_limit_below_the_soft_one_still_ends_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that nothing is started once the hard time limit has passed, even if the soft one has not."""
+    limits = TimeLimits(soft=1e9, hard=1200.0)
+    status, numbers = run_with_clock(monkeypatch, "yafu", limits, seconds_per_factorization=1000.0)
+
+    assert status == ExitStatus.TIME_LIMIT_EXCEEDED
+    assert [x.factored for x in numbers] == [True, True, False]
+
+
+@pytest.mark.parametrize("mode", ["yafu", "standard"])
+def test_a_tool_is_killed_when_its_assignment_expires(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mode: Literal["standard", "yafu"]
+) -> None:
+    """Test that an assignment's expiry ends the work on that number alone, leaving the rest of the batch to run."""
+    expiring, other = (make_number(n) for n in COMPOSITES[:2])
+    expiring.expires_at = time.time() + 1.0
+    other.expires_at = time.time() + 3600.0
+    engine = slow_tool_engine(monkeypatch, tmp_path, mode, frozenset({other.n}))
+    start = time.monotonic()
+
+    assert engine.run([expiring, other]) == ExitStatus.SUCCESS
+    assert time.monotonic() - start < TOOL_STOP_TIMEOUT
+    assert heartbeat_stopped(tmp_path / f"heartbeat-{expiring.n}")
+    assert expiring.composite_factors == [expiring.n]
+    assert not expiring.tool_failed
+    assert other.factored
+
+
+def test_tools_running_at_once_are_each_killed_at_their_own_expiry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that one worker's deadline does not apply to a tool another worker is running at the same time."""
+    sooner, later = (make_number(n) for n in COMPOSITES[:2])
+    now = time.time()
+    sooner.expires_at = now + 1.0
+    later.expires_at = now + 3.0
+    engine = slow_tool_engine(monkeypatch, tmp_path, "standard", frozenset(), max_threads=2)
+
+    assert engine.run([sooner, later]) == ExitStatus.SUCCESS
+
+    # Each helper stops writing its heartbeat when it is killed.
+    stopped = {x.n: (tmp_path / f"heartbeat-{x.n}").stat().st_mtime for x in (sooner, later)}
+
+    assert stopped[sooner.n] == pytest.approx(sooner.expires_at, abs=0.75)
+    assert stopped[later.n] == pytest.approx(later.expires_at, abs=0.75)
+    assert [x.composite_factors for x in (sooner, later)] == [[sooner.n], [later.n]]
+
+
+def test_a_number_expired_in_one_run_is_not_skipped_with_a_new_assignment_in_the_next(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that a reused engine forgets which numbers had expired, as equal numbers are the same to it."""
+    engine = FactorEngine(make_config(factoring_mode="yafu"), InterruptState())
+    lapsed, reassigned = make_number(COMPOSITES[0]), make_number(COMPOSITES[0])
+    lapsed.expires_at = time.time()
+    reassigned.expires_at = time.time() + 3600.0
+    factor = Mock()
+    monkeypatch.setattr("factortool.number.Number.factor_yafu_direct", factor, raising=True)
+
+    assert engine.run([lapsed]) == ExitStatus.SUCCESS
+    factor.assert_not_called()
+
+    assert engine.run([reassigned]) == ExitStatus.SUCCESS
+    factor.assert_called_once_with(reassigned)
 
 
 def test_composites_too_small_for_nfs_are_finished_with_siqs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

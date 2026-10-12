@@ -29,7 +29,7 @@ from factortool.cli.main import (
     Arguments,
     Cleanup,
     acquire_numbers,
-    get_time_limit,
+    get_time_limits,
     main,
     preserve_unfinished,
     report_summary,
@@ -39,7 +39,7 @@ from factortool.cli.main import (
     write_results,
 )
 from factortool.constants import MAX_CONSECUTIVE_TOOL_FAILURES
-from factortool.engine import ExitStatus, FactorEngine
+from factortool.engine import ExitStatus, FactorEngine, TimeLimits
 from factortool.http import PermanentHttpError
 from factortool.interrupt import EXIT_STATUS, Interrupted, InterruptState
 from factortool.lock import lock_directories
@@ -125,7 +125,7 @@ def factoring(outcome: ExitStatus | Exception = ExitStatus.SUCCESS) -> Mock:
         Mock: A replacement for FactorEngine.run.
     """
 
-    def run(numbers: Collection[Number], _time_limit: float | None) -> ExitStatus:
+    def run(numbers: Collection[Number], _limits: TimeLimits) -> ExitStatus:
         for number in numbers:
             number.factor_tf()
 
@@ -255,6 +255,10 @@ def test_no_new_work_is_rejected_by_a_backend_that_assigns_nothing() -> None:
         ["--target_duration", "-600"],
         ["--target_duration", "nan"],
         ["--target_duration", "inf"],
+        ["--time_limit", "-1"],
+        ["--time_limit", "nan"],
+        ["--hard_time_limit", "-1"],
+        ["--hard_time_limit", "inf"],
         ["--max_digits", "-1"],
         ["--min_digits", "60", "--max_digits", "50"],
     ],
@@ -271,7 +275,12 @@ def test_out_of_range_arguments_are_rejected(arguments: list[str]) -> None:
 
 @pytest.mark.parametrize(
     "arguments",
-    [[], ["--min_digits", "1", "--max_digits", "1"], ["--batch_size", "5", "--skip_count", "0"]],
+    [
+        [],
+        ["--min_digits", "1", "--max_digits", "1"],
+        ["--batch_size", "5", "--skip_count", "0"],
+        ["--time_limit", "0", "--hard_time_limit", "0"],
+    ],
 )
 def test_arguments_at_the_edge_of_their_range_are_accepted(arguments: list[str]) -> None:
     """Test that the smallest usable values are not refused."""
@@ -344,7 +353,7 @@ def test_a_termination_signal_still_saves_state_before_exiting_as_interrupted(
     backend.close = Mock()  # type: ignore[method-assign]
     interrupts = InterruptState()
 
-    def run(_self: FactorEngine, numbers: Collection[Number], _time_limit: float | None) -> ExitStatus:
+    def run(_self: FactorEngine, numbers: Collection[Number], _limits: TimeLimits) -> ExitStatus:
         for number in numbers:
             number.factor_tf()
 
@@ -372,34 +381,68 @@ def test_a_termination_signal_still_saves_state_before_exiting_as_interrupted(
     backend.close.assert_called_once()
 
 
-def test_an_automatic_batch_is_limited_to_twice_its_target_duration() -> None:
-    """Test that a run with an automatic batch size may take up to twice the target duration."""
-    assert get_time_limit(Arguments().parse_args(["--target_duration", "300"])) == pytest.approx(600.0)
-
-
-def test_an_explicit_batch_size_has_no_time_limit() -> None:
-    """Test that the target duration imposes no time limit when the batch size was chosen by the user."""
-    assert get_time_limit(Arguments().parse_args(["--batch_size", "3", "--target_duration", "300"])) is None
-
-
-@pytest.mark.parametrize(("time_limit", "warned"), [(3601.0, True), (3600.0, False), (None, False)])
-def test_a_time_limit_that_may_outlast_assignments_is_warned_about(
-    monkeypatch: pytest.MonkeyPatch, time_limit: float | None, *, warned: bool
+@pytest.mark.parametrize(
+    ("arguments", "assigns_work", "limits"),
+    [
+        (["--target_duration", "300"], False, TimeLimits(soft=600.0)),
+        (["--target_duration", "300"], True, TimeLimits()),
+        (["--batch_size", "3", "--target_duration", "300"], False, TimeLimits()),
+        (["--time_limit", "900"], True, TimeLimits(soft=900.0)),
+        (["--batch_size", "3", "--time_limit", "900"], False, TimeLimits(soft=900.0)),
+        (["--time_limit", "0"], False, TimeLimits()),
+        (["--hard_time_limit", "7200"], False, TimeLimits(soft=1200.0, hard=7200.0)),
+        (["--hard_time_limit", "7200"], True, TimeLimits(hard=7200.0)),
+        (["--time_limit", "0", "--hard_time_limit", "7200"], False, TimeLimits(hard=7200.0)),
+    ],
+    ids=[
+        "automatic-batch",
+        "assigned-work",
+        "explicit-batch",
+        "explicit-limit-on-assigned-work",
+        "explicit-limit-on-explicit-batch",
+        "disabled",
+        "hard-limit",
+        "hard-limit-on-assigned-work",
+        "hard-limit-only",
+    ],
+)
+def test_the_time_limits_follow_the_arguments_and_the_backend(
+    arguments: list[str], limits: TimeLimits, *, assigns_work: bool
 ) -> None:
-    """Test that the expiry warning depends on the time limit, and is skipped when there is none."""
+    """Test that only an automatic batch of unassigned work is limited by default, and that the options override it."""
+    backend = FakeBackend(assigns_work=assigns_work)
+
+    assert get_time_limits(Arguments().parse_args(arguments), backend) == limits
+
+
+@pytest.mark.parametrize(
+    ("arguments", "warned"),
+    [
+        (["--target_duration", "3601"], True),
+        (["--target_duration", "3600"], False),
+        (["--target_duration", "3601", "--batch_size", "3"], False),
+    ],
+)
+def test_a_target_duration_that_outlasts_assignments_is_warned_about(
+    monkeypatch: pytest.MonkeyPatch, arguments: list[str], *, warned: bool
+) -> None:
+    """Test that the expiry warning depends on the target duration, and is skipped for an explicit batch size."""
     warning = Mock()
     monkeypatch.setattr("factortool.cli.main.logger.warning", warning, raising=True)
 
-    warn_if_assignments_may_expire(FakeBackend(), time_limit)
+    warn_if_assignments_may_expire(FakeBackend(), Arguments().parse_args(arguments))
 
     assert warning.called == warned
 
 
-@pytest.mark.parametrize(("arguments", "time_limit"), [([], 1200.0), (["--batch_size", "3"], None)])
-def test_the_run_is_given_the_time_limit(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, arguments: list[str], time_limit: float | None
+@pytest.mark.parametrize(
+    ("arguments", "limits"),
+    [([], TimeLimits(soft=1200.0)), (["--batch_size", "3", "--hard_time_limit", "60"], TimeLimits(hard=60.0))],
+)
+def test_the_run_is_given_the_time_limits(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, arguments: list[str], limits: TimeLimits
 ) -> None:
-    """Test that the time limit reaches the engine with the run rather than when the engine is created."""
+    """Test that the time limits reach the engine with the run rather than when the engine is created."""
     write_config(tmp_path)
     run = Mock(return_value=ExitStatus.SUCCESS)
     monkeypatch.chdir(tmp_path)
@@ -411,7 +454,7 @@ def test_the_run_is_given_the_time_limit(
 
     main()
 
-    assert run.call_args.args[1] == time_limit
+    assert run.call_args.args[1] == limits
 
 
 def test_a_failed_cleanup_step_does_not_skip_the_rest() -> None:
@@ -523,7 +566,7 @@ def test_a_cleanup_failure_only_gives_way_to_another_error(
 def test_tool_failures_are_saved_for_the_next_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Test that a tool failing once in each run is reported as broken once the runs add up."""
 
-    def run(_numbers: Collection[Number], _time_limit: float | None) -> ExitStatus:
+    def run(_numbers: Collection[Number], _limits: TimeLimits) -> ExitStatus:
         with contextlib.suppress(ToolFailure):
             tool_failures.failed(YafuError, "ECM", "it broke")
 

@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import contextlib
+import contextvars
+import datetime
 import math
 import os
 import re
@@ -14,17 +16,18 @@ import sys
 import threading
 import time
 
+from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Generator
 
 from loguru import logger
 from pydantic import BaseModel, NonNegativeInt, ValidationError
 
 from factortool.constants import MAX_CONSECUTIVE_TOOL_FAILURES
 from factortool.interrupt import Interrupted
-from factortool.util import get_work_dir, safe_write
+from factortool.util import format_number, get_work_dir, safe_write
 
 if TYPE_CHECKING:
     from factortool.config import YafuPaths
@@ -32,6 +35,10 @@ if TYPE_CHECKING:
 
 class ToolFailure(Exception):  # ruff: ignore[error-suffix-on-exception-name]
     """Exception raised when a single run of an external tool fails."""
+
+
+class ToolDeadlineExceeded(Exception):  # ruff: ignore[error-suffix-on-exception-name]
+    """Exception raised when an external tool is killed for still running at its deadline."""
 
 
 class ToolError(Exception):
@@ -254,7 +261,68 @@ def abandon_tools() -> None:
             _kill_tool(process, job)
 
 
-def run_tool(cmd: list[str], cwd: Path, threads: int, *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+# How long a tool runs between warnings that it is still running.
+STILL_RUNNING_INTERVAL = 1800.0
+
+# When the tools started by the current thread are to be killed.
+_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar("tool_deadline", default=None)
+
+
+@contextlib.contextmanager
+def tool_deadline(deadline: float | None) -> Generator[None]:
+    """Kill any tool the current thread runs inside this block that is still running at the deadline.
+
+    The deadline is a time.monotonic() value, or None for no deadline. The run of a killed tool raises
+    ToolDeadlineExceeded.
+
+    Yields:
+        None: Control, for the duration of the work the deadline applies to.
+    """
+    token = _deadline.set(deadline)
+
+    try:
+        yield
+    finally:
+        _deadline.reset(token)
+
+
+def _communicate(process: subprocess.Popen[str], stdin: str | None, description: str) -> tuple[str, str]:
+    """Wait for a tool to finish, warning periodically that it is still running.
+
+    Returns:
+        tuple[str, str]: The tool's standard output and standard error.
+
+    Raises:
+        ToolDeadlineExceeded: If the tool is still running when the deadline is reached.
+    """
+    deadline = _deadline.get()
+    start_time = time.monotonic()
+    next_warning = start_time + STILL_RUNNING_INTERVAL
+
+    while True:
+        now = time.monotonic()
+
+        if deadline is not None and now >= deadline:
+            raise ToolDeadlineExceeded(description)
+
+        if now >= next_warning:
+            logger.warning(
+                "{} has been running for {}", description, datetime.timedelta(seconds=round(now - start_time))
+            )
+            next_warning += STILL_RUNNING_INTERVAL
+
+        wake = next_warning if deadline is None else min(next_warning, deadline)
+
+        try:
+            return process.communicate(stdin, timeout=wake - now)
+        except subprocess.TimeoutExpired:
+            # The input has already been sent, so we can't send it again.
+            stdin = None
+
+
+def run_tool(
+    cmd: list[str], cwd: Path, threads: int, *, stdin: str | None = None, description: str | None = None
+) -> subprocess.CompletedProcess[str]:
     """Run an external tool in its own process group, capturing its output.
 
     The separate process group ensures that the process isn't immediately killed in the event of a terminal interrupt.
@@ -270,6 +338,7 @@ def run_tool(cmd: list[str], cwd: Path, threads: int, *, stdin: str | None = Non
         OSError: If the tool cannot be started.
         subprocess.CalledProcessError: If the tool exits with a non-zero status.
         Interrupted: If abandon_tools killed the tool while it was running.
+        ToolDeadlineExceeded: If the tool was killed for still running at the deadline set by tool_deadline.
     """
     if sys.platform == "win32":
         creationflags, process_group = subprocess.CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED, None
@@ -305,7 +374,7 @@ def run_tool(cmd: list[str], cwd: Path, threads: int, *, stdin: str | None = Non
             with _tools_lock:
                 _running_tools[process] = job
 
-            stdout, stderr = process.communicate(stdin)
+            stdout, stderr = _communicate(process, stdin, description or Path(cmd[0]).name)
         except BaseException:
             _kill_tool(process, job)
             raise
@@ -390,7 +459,8 @@ def run_yafu(  # ruff: ignore[too-many-arguments]
         with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
             # YAFU ignores the expression on the command line whenever standard input isn't a terminal, except on
             # Windows, where it doesn't recognize a pipe. Providing both covers either case.
-            result = run_tool(cmd, work_dir, threads, stdin=f"{expression}\n")
+            description = f"{method} on {format_number(n)}"
+            result = run_tool(cmd, work_dir, threads, stdin=f"{expression}\n", description=description)
     except (OSError, subprocess.CalledProcessError) as e:
         tool_failures.failed(YafuError, method, f"YAFU failed for {expression}: {_describe_tool_failure(e)}")
 
@@ -422,7 +492,7 @@ def run_cado_nfs(method: str, n: int, threads: int, cado_nfs_path: Path, work_pa
 
     try:
         with get_work_dir(work_path, None, "cado-nfs-") as work_dir:
-            result = run_tool(cmd, work_dir, threads, stdin=str(n))
+            result = run_tool(cmd, work_dir, threads, stdin=str(n), description=f"{method} on {format_number(n)}")
     except (OSError, subprocess.CalledProcessError) as e:
         tool_failures.failed(CadoNfsError, method, f"CADO-NFS failed for {n}: {_describe_tool_failure(e)}")
 
