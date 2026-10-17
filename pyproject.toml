@@ -12,7 +12,7 @@ classifiers = [
   "Programming Language :: Python :: Implementation :: CPython",
 ]
 dependencies = [
-  "filelock==4.0.12",
+  "filelock==4.1.0",
   "gmpy2==2.3.1",
   "loguru==0.7.3",
   "pydantic==2.14.0",
