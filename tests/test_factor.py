@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 
@@ -236,6 +237,22 @@ def test_tools_inherit_the_environment_with_their_thread_budget(
     result = run_tool([sys.executable, "-c", script], tmp_path, 3)
 
     assert result.stdout.split() == ["inherited", "3", "True"]
+
+
+def test_tools_do_not_see_the_virtual_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that a tool doesn't find factortool's virtual environment on PATH, as CADO-NFS would then use its Python."""
+    venv_path = tmp_path / "venv"
+    venv_bin = venv_path / ("Scripts" if sys.platform == "win32" else "bin")
+    other_bin = tmp_path / "bin"
+    monkeypatch.setattr("sys.prefix", str(venv_path), raising=True)
+    monkeypatch.setattr("sys.base_prefix", str(tmp_path / "base"), raising=True)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(venv_bin), str(other_bin), str(venv_bin)]))
+    monkeypatch.setenv("VIRTUAL_ENV", str(venv_path))
+    script = "import os; print(os.environ['PATH']); print('VIRTUAL_ENV' in os.environ)"
+
+    result = run_tool([sys.executable, "-c", script], tmp_path, 1)
+
+    assert result.stdout.splitlines() == [str(other_bin), "False"]
 
 
 @pytest.mark.parametrize(
