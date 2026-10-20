@@ -318,6 +318,24 @@ def _communicate(process: subprocess.Popen[str], stdin: str | None, description:
             stdin = None
 
 
+def _tool_environment(threads: int) -> dict[str, str]:
+    """Build the environment for an external tool allowed the given number of threads.
+
+    Returns:
+        dict[str, str]: The environment for the tool.
+    """
+    env = {**os.environ, "OMP_NUM_THREADS": str(threads)}
+
+    if sys.prefix != sys.base_prefix:
+        venv_bin = os.path.realpath(Path(sys.prefix) / ("Scripts" if sys.platform == "win32" else "bin"))
+        path = env.get("PATH", "").split(os.pathsep)
+        env["PATH"] = os.pathsep.join(entry for entry in path if not entry or os.path.realpath(entry) != venv_bin)
+        env.pop("VIRTUAL_ENV", None)
+        env.pop("VIRTUAL_ENV_PROMPT", None)
+
+    return env
+
+
 def run_tool(
     cmd: list[str], cwd: Path, threads: int, *, stdin: str | None = None, description: str | None = None
 ) -> subprocess.CompletedProcess[str]:
@@ -327,7 +345,8 @@ def run_tool(
     On Windows, the tool is also placed in a job, so that it can be killed along with its helper processes.
 
     The tool inherits the environment, apart from OMP_NUM_THREADS, which is set to the number of threads the tool is
-    allowed, as anything built with OpenMP otherwise uses every available core.
+    allowed, as anything built with OpenMP otherwise uses every available core, and factortool's virtual environment,
+    which is removed from PATH.
 
     Returns:
         subprocess.CompletedProcess[str]: The finished process and its output.
@@ -347,7 +366,7 @@ def run_tool(
         process = subprocess.Popen(  # ruff: ignore[subprocess-without-shell-equals-true]
             cmd,
             cwd=cwd,
-            env={**os.environ, "OMP_NUM_THREADS": str(threads)},
+            env=_tool_environment(threads),
             stdin=subprocess.PIPE if stdin is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
