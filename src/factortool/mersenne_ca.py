@@ -23,6 +23,7 @@ from loguru import logger
 from factortool.backend import BaseBackend, SubmitOutcome, parse_composites
 from factortool.http import PermanentHttpError
 from factortool.number import format_factorization
+from factortool.util import format_number
 
 if TYPE_CHECKING:
     from factortool.backend import FetchCriteria
@@ -120,12 +121,14 @@ class MersenneCA(BaseBackend):
         if submission.composite_factors:
             logger.warning(
                 "Discarding the partial factorization of {}, as mersenne.ca only accepts complete factorizations",
-                submission.n,
+                format_number(submission.n, truncate=False),
             )
             return SubmitOutcome.REJECTED
 
         if not check_factorization(submission.n, submission.prime_factors + submission.composite_factors):
-            logger.error("Refusing to report an inconsistent factorization for {}", submission.n)
+            logger.error(
+                "Refusing to report an inconsistent factorization for {}", format_number(submission.n, truncate=False)
+            )
             return SubmitOutcome.REJECTED
 
         # The service expects a multipart POST, matching the documented "curl -F" invocation.
@@ -137,10 +140,12 @@ class MersenneCA(BaseBackend):
         try:
             response = self._service_request("POST", API_URL, files=payload, timeout=30.0, wait=self._submission_wait)
         except PermanentHttpError as e:
-            logger.error("Leaving the factorization for {} for the next run: {}", submission.n, e)
+            logger.error(
+                "Leaving the factorization for {} for the next run: {}", format_number(submission.n, truncate=False), e
+            )
             return SubmitOutcome.DEFERRED
         except requests.RequestException as e:
-            logger.warning("Error reporting factorization for {}: {}", submission.n, e)
+            logger.warning("Error reporting factorization for {}: {}", format_number(submission.n, truncate=False), e)
             return SubmitOutcome.FAILED
 
         return self._log_response(submission.n, response)
@@ -158,17 +163,17 @@ class MersenneCA(BaseBackend):
             body = None
 
         if not isinstance(body, dict):
-            logger.warning("mersenne.ca returned a malformed response for {}", n)
+            logger.warning("mersenne.ca returned a malformed response for {}", format_number(n, truncate=False))
             return SubmitOutcome.FAILED
 
         fields = cast("dict[str, Any]", body)
 
         if warning := fields.get("warning"):
-            logger.warning("mersenne.ca reported a warning for {}: {}", n, warning)
+            logger.warning("mersenne.ca reported a warning for {}: {}", format_number(n, truncate=False), warning)
 
         if error := fields.get("error"):
-            logger.error("mersenne.ca reported an error for {}: {}", n, error)
+            logger.error("mersenne.ca reported an error for {}: {}", format_number(n, truncate=False), error)
             return SubmitOutcome.REJECTED
 
-        logger.debug("Reported factorization for {}", n)
+        logger.debug("Reported factorization for {}", format_number(n, truncate=False))
         return SubmitOutcome.ACCEPTED

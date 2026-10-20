@@ -17,6 +17,7 @@ from pydantic import BaseModel, TypeAdapter
 from factortool.backend import BaseBackend, SubmitOutcome
 from factortool.http import MAX_DELAY, PermanentHttpError
 from factortool.interrupt import Interrupted
+from factortool.util import format_number
 
 if TYPE_CHECKING:
     from factortool.backend import FetchCriteria
@@ -465,21 +466,25 @@ class FactorDB(BaseBackend):
             result = rpc_result(response)
             report = ReportResult.model_validate(result)
         except PermanentHttpError as e:
-            logger.error("Error submitting factors {} for n={}: {}", factors, n, e)
+            logger.error("Error submitting factors {} for n={}: {}", factors, format_number(n, truncate=False), e)
             return SubmitOutcome.REJECTED
         except (requests.RequestException, ValueError) as e:
             if is_rejection(e):
-                logger.warning("FactorDB did not accept factors {} for n={}: {}", factors, n, e)
+                logger.warning(
+                    "FactorDB did not accept factors {} for n={}: {}", factors, format_number(n, truncate=False), e
+                )
                 return SubmitOutcome.REJECTED
 
-            logger.warning("Error submitting factors {} for n={}: {}", factors, n, e)
+            logger.warning("Error submitting factors {} for n={}: {}", factors, format_number(n, truncate=False), e)
             return SubmitOutcome.FAILED
 
         if report.status == "C":
-            logger.warning("FactorDB did not accept factors {} for n={}: {}", factors, n, result)
+            logger.warning(
+                "FactorDB did not accept factors {} for n={}: {}", factors, format_number(n, truncate=False), result
+            )
             return SubmitOutcome.REJECTED
 
-        logger.debug("Submitted factors {} for n={}: {}", factors, n, result)
+        logger.debug("Submitted factors {} for n={}: {}", factors, format_number(n, truncate=False), result)
         self._credited_count += report.credited
 
         return SubmitOutcome.ACCEPTED

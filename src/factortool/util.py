@@ -54,23 +54,31 @@ class ArgumentParser(Tap):
         self.exit(INVALID_USAGE_EXIT_STATUS, f"{self.prog}: error: {message}\n")
 
 
-def format_number(n: int, max_width: int = 32) -> str:
-    """Format a number for display, truncating if necessary.
+# The width of a number truncated for display, including its digit count.
+NUMBER_DISPLAY_WIDTH = 32
+
+
+def format_number(n: int, *, truncate: bool = True) -> str:
+    """Format a number for display, followed by its digit count.
+
+    If truncate is True, a number that exceeds NUMBER_DISPLAY_WIDTH characters, including the digit count suffix, will
+    be truncated in the middle.
 
     Returns:
         str: Formatted number string.
     """
     str_n = str(n)
     digits = len(str_n)
+    suffix = f" <{digits}>"
 
-    if digits > max_width:
-        to_keep = max_width - 3 - 3 - len(str(digits))
+    if truncate and digits + len(suffix) > NUMBER_DISPLAY_WIDTH:
+        to_keep = NUMBER_DISPLAY_WIDTH - len("...") - len(suffix)
         left = math.ceil(to_keep / 2)
         right = to_keep - left
 
-        return f"{str_n[:left]}...{str_n[-right:]} <{digits}>"
+        return f"{str_n[:left]}...{str_n[-right:]}{suffix}"
 
-    return f"{str_n}"
+    return f"{str_n}{suffix}"
 
 
 @cache

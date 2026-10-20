@@ -195,7 +195,7 @@ def test_preserve_unfinished_discards_a_partial_result_the_backend_does_not_want
 
     partially_factored.report_partial.assert_not_called()  # type: ignore[attr-defined]
     assert store.load() == []
-    assert [call.args[1] for call in warning.call_args_list] == [200]
+    assert [call.args[1] for call in warning.call_args_list] == ["200 <3>"]
 
 
 def test_preserve_unfinished_reports_a_partial_result_whose_assignment_expired(tmp_path: Path) -> None:

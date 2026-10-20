@@ -34,7 +34,7 @@ from factortool.lock import DirectoryInUseError, lock_directories
 from factortool.number import Number, Outcome, format_results
 from factortool.stats import FactoringStats, InvalidStatsError
 from factortool.tools import ToolError, tool_failures
-from factortool.util import ArgumentParser, setup_logger
+from factortool.util import ArgumentParser, format_number, setup_logger
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -183,7 +183,7 @@ def report_summary(numbers: Collection[Number]) -> None:
             "{} number{} failed to factor: {}",
             len(failed_numbers),
             "s" if len(failed_numbers) != 1 else "",
-            ", ".join(str(x.n) for x in failed_numbers),
+            ", ".join(format_number(x.n, truncate=False) for x in failed_numbers),
         )
 
     unfactored = [
@@ -360,7 +360,7 @@ def preserve_unfinished(backend: Backend, assignments: AssignmentStore, numbers:
         else:
             logger.warning(
                 "Discarding the partial factorization of {}, as it was not completed before its assignment expired",
-                number.n,
+                format_number(number.n, truncate=False),
             )
 
     if backend.assigns_work:

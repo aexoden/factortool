@@ -28,7 +28,7 @@ from factortool.http import MAX_DELAY, HttpClient, PermanentHttpError, build_use
 from factortool.interrupt import ABORT, POLL_INTERVAL, Interrupted, InterruptState
 from factortool.number import Number
 from factortool.submissions import Submission, SubmissionJournal
-from factortool.util import is_prime
+from factortool.util import format_number, is_prime
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -540,7 +540,10 @@ class BaseBackend(ABC):
     def _discard_expired(self, submissions: Sequence[Submission]) -> None:
         """Handle submissions that have expired without being submitted."""
         for submission in submissions:
-            logger.warning("Discarding the result for {}, as it was not submitted in time", submission.n)
+            logger.warning(
+                "Discarding the result for {}, as it was not submitted in time",
+                format_number(submission.n, truncate=False),
+            )
 
         self._journal.resolve(submissions)
 
@@ -574,7 +577,7 @@ class BaseBackend(ABC):
             else:
                 logger.warning(
                     "Leaving the result for {} for the next run after {} failed attempts",
-                    queued.submission.n,
+                    format_number(queued.submission.n, truncate=False),
                     queued.attempts,
                 )
 

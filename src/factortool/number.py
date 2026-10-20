@@ -279,7 +279,10 @@ class Number:
         self._ecm_finished = False
 
         if factors and (math.prod(factors) != n or min(factors) <= 1):
-            logger.warning("Ignoring the factors saved for {}, as they are not a factorization of it", n)
+            logger.warning(
+                "Ignoring the factors saved for {}, as they are not a factorization of it",
+                format_number(n, truncate=False),
+            )
             factors = ()
 
         known_factors = factors or (n,)

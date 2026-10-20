@@ -8,10 +8,45 @@ import os
 
 from typing import TYPE_CHECKING
 
-from factortool.util import get_work_dir, rewrite_yafu_ini
+import pytest
+
+from factortool.util import NUMBER_DISPLAY_WIDTH, format_number, get_work_dir, rewrite_yafu_ini
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+@pytest.mark.parametrize(
+    ("n", "expected"),
+    [
+        (7, "7 <1>"),
+        (123456789, "123456789 <9>"),
+        (int("1234567890" * 2 + "1234567"), "123456789012345678901234567 <27>"),
+        (int("1234567890" * 2 + "12345678"), "123456789012...789012345678 <28>"),
+        (int("1234567890" * 3 + "123"), "123456789012...234567890123 <33>"),
+        (int("9" * 150), "999999999999...99999999999 <150>"),
+    ],
+)
+def test_format_number(n: int, expected: str) -> None:
+    """Test that every number shows its digit count, and that long numbers are truncated to the maximum width."""
+    assert format_number(n) == expected
+
+
+@pytest.mark.parametrize("digits", [28, 31, 32, 33, 99, 100, 999, 1000, 4300])
+def test_format_number_truncates_to_display_width(digits: int) -> None:
+    """Test that a number too long to display in full, including its digit count, fills exactly the display width."""
+    formatted = format_number(10 ** (digits - 1) + 7)
+
+    assert formatted.startswith("1")
+    assert formatted.endswith(f"7 <{digits}>")
+    assert len(formatted) == NUMBER_DISPLAY_WIDTH
+
+
+def test_format_number_without_truncation() -> None:
+    """Test that a number can be shown in full, still followed by its digit count."""
+    n = int("1234567890" * 10)
+
+    assert format_number(n, truncate=False) == f"{n} <100>"
 
 
 def test_work_dir_is_isolated_and_removed(tmp_path: Path) -> None:

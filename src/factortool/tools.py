@@ -511,17 +511,23 @@ def run_cado_nfs(method: str, n: int, threads: int, cado_nfs_path: Path, work_pa
         with get_work_dir(work_path, None, "cado-nfs-") as work_dir:
             result = run_tool(cmd, work_dir, threads, stdin=str(n), description=f"{method} on {format_number(n)}")
     except (OSError, subprocess.CalledProcessError) as e:
-        tool_failures.failed(CadoNfsError, method, f"CADO-NFS failed for {n}: {_describe_tool_failure(e)}")
+        tool_failures.failed(
+            CadoNfsError, method, f"CADO-NFS failed for {format_number(n, truncate=False)}: {_describe_tool_failure(e)}"
+        )
 
     execution_time = (time.perf_counter_ns() - start_time) / 1_000_000_000.0
 
     try:
         factors = sorted(map(int, result.stdout.split()))
     except ValueError:
-        tool_failures.failed(CadoNfsError, method, f"CADO-NFS failed for {n}: its output could not be understood")
+        tool_failures.failed(
+            CadoNfsError,
+            method,
+            f"CADO-NFS failed for {format_number(n, truncate=False)}: its output could not be understood",
+        )
 
     if (problem := _check_factors(n, factors, must_split=True)) is not None:
-        tool_failures.failed(CadoNfsError, method, f"CADO-NFS failed for {n}: {problem}")
+        tool_failures.failed(CadoNfsError, method, f"CADO-NFS failed for {format_number(n, truncate=False)}: {problem}")
 
     tool_failures.succeeded(method)
 

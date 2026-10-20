@@ -646,7 +646,7 @@ def test_the_summary_only_counts_tool_failures_as_failures() -> None:
     unfinished.started = True
 
     assert summarize(numbers) == [
-        "1 number failed to factor: 102",
+        "1 number failed to factor: 102 <3>",
         "Factored 1 of 6 numbers (1 failed, 1 expired, 1 unfinished, 2 not started)",
         "The following methods were used: TF (1)",
     ]

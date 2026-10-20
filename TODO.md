@@ -7,8 +7,6 @@ later ones.
 
 ## Minor Features
 
-- Display digit counts even for smaller numbers. During the early data gathering
-  phase, numbers can run way longer too as they do excessive ECM (standard mode).
 - For backends that batch submissions, consider a more intelligent submission
   strategy: Submit if X seconds have passed, the current batch is full or if
   everything's done.

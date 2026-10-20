@@ -84,7 +84,7 @@ class FactorEngine:
                 return False
 
             self._expired.add(number)
-            logger.warning("Skipping {} as its assignment has expired", number.n)
+            logger.warning("Skipping {} as its assignment has expired", format_number(number.n))
 
         return True
 
@@ -248,7 +248,7 @@ class FactorEngine:
             if self._skip_expired(number):
                 continue
 
-            logger.info("Factoring {} using YAFU", number.n)
+            logger.info("Factoring {} using YAFU", format_number(number.n))
             self._attempt(number, Number.factor_yafu_direct)
 
         # Check once more for an interrupt that may have occurred during the final factorization.
