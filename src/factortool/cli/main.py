@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import math
 import sys
 import time
@@ -216,7 +216,7 @@ def write_results(numbers: Collection[Number], output_path: Path) -> None:
 
     output_path.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.datetime.now(tz=datetime.UTC).strftime("%Y%m%d-%H%M%S")
+    timestamp = dt.datetime.now(tz=dt.UTC).strftime("%Y%m%d-%H%M%S")
     attempt = 0
 
     # Instances with separate state can share an output directory.

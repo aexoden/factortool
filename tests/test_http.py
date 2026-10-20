@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import sys
 import time
 
@@ -273,7 +273,7 @@ def test_retry_after_date_is_gmt(monkeypatch: pytest.MonkeyPatch) -> None:
     if sys.platform == "win32":
         return
 
-    retry_date = datetime.datetime.now(tz=datetime.UTC) + datetime.timedelta(minutes=2)
+    retry_date = dt.datetime.now(tz=dt.UTC) + dt.timedelta(minutes=2)
     response = make_response(429, {"Retry-After": retry_date.strftime("%a, %d %b %Y %H:%M:%S GMT")})
 
     monkeypatch.setenv("TZ", "America/Los_Angeles")

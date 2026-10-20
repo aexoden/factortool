@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import threading
 import time
 
@@ -69,14 +69,12 @@ def get_too_many_requests_delay(response: requests.Response, default_delay: floa
         delay = float(int(retry_after))
     except ValueError:
         try:
-            retry_date = datetime.datetime.strptime(retry_after, "%a, %d %b %Y %H:%M:%S GMT").replace(
-                tzinfo=datetime.UTC
-            )
+            retry_date = dt.datetime.strptime(retry_after, "%a, %d %b %Y %H:%M:%S GMT").replace(tzinfo=dt.UTC)
         except ValueError:
             logger.warning("Failed to parse Retry-After header: {}", retry_after)
             return default_delay
 
-        delay = (retry_date - datetime.datetime.now(tz=datetime.UTC)).total_seconds()
+        delay = (retry_date - dt.datetime.now(tz=dt.UTC)).total_seconds()
 
     return max(MIN_RATE_LIMIT_DELAY, delay)
 
