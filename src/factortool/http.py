@@ -245,9 +245,18 @@ class HttpClient:
             rate_limit_delay: float | None = None
             error: requests.RequestException | None = None
 
+            start_time = time.monotonic()
+
             try:  # ruff: ignore[too-many-statements-in-try-clause]
                 response = self.session.request(
                     method, url, params=params, data=data, files=files, json=json, timeout=timeout
+                )
+                logger.debug(
+                    "{} {} returned HTTP {} after {:.2f}s",
+                    method,
+                    url,
+                    response.status_code,
+                    time.monotonic() - start_time,
                 )
 
                 if response.status_code == requests.codes.too_many_requests:
@@ -261,6 +270,7 @@ class HttpClient:
             except requests.Timeout as e:
                 error = e
                 reason = f"HTTP timeout contacting {self._service_name}: {e}"
+                logger.debug("{} {} timed out after {:.2f}s", method, url, time.monotonic() - start_time)
             except requests.HTTPError as e:
                 error = e
                 status = getattr(e.response, "status_code", None)
@@ -272,6 +282,9 @@ class HttpClient:
             except requests.RequestException as e:
                 error = e
                 reason = f"HTTP error contacting {self._service_name}: {e}"
+                logger.debug(
+                    "{} {} failed after {:.2f}s: {}", method, url, time.monotonic() - start_time, type(e).__name__
+                )
 
             if max_attempts is not None and attempts >= max_attempts:
                 msg = f"{reason}. Giving up after {attempts} attempts."

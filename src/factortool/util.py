@@ -12,7 +12,7 @@ import tempfile
 
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, Literal, NoReturn, get_args
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
@@ -41,6 +41,11 @@ def generate_primes(limit: int = 10**6) -> list[int]:
 
 SMALL_PRIMES: list[int] = generate_primes()
 
+# The log levels that can be selected, from the most to the least verbose.
+LogLevel = Literal["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"]
+
+DEFAULT_LOG_LEVEL: LogLevel = "INFO"
+
 # The exit status of a run that was given an invalid configuration or invalid arguments.
 INVALID_USAGE_EXIT_STATUS = 1
 
@@ -52,6 +57,17 @@ class ArgumentParser(Tap):
         """Report invalid arguments and exit, without argparse's exit status of 2."""
         self.print_usage(sys.stderr)
         self.exit(INVALID_USAGE_EXIT_STATUS, f"{self.prog}: error: {message}\n")
+
+
+class ConfigArguments(ArgumentParser):
+    """An argument parser for a utility that reads the configuration file, with options that override its settings."""
+
+    config_path: Path = Path("config.json")
+    log_level: LogLevel | None = None
+
+    def configure(self) -> None:
+        """Accept log levels in any case, as the configuration file does."""
+        self.add_argument("--log_level", type=str.upper, choices=get_args(LogLevel))
 
 
 # The width of a number truncated for display, including its digit count.
@@ -137,16 +153,17 @@ def log_factor_result(methods: Iterable[str], n: int, factors: list[int]) -> Non
     logger.info("{} -> {} = {}", ", ".join(methods), format_number(n), " * ".join(map(format_number, sorted(factors))))
 
 
-def setup_logger() -> None:
-    """Set up the logger for the application."""
-    logger.remove(0)
+def setup_logger(level: LogLevel | None = None) -> None:
+    """Send log messages at or above the given level to standard error, replacing any previous setup.
 
+    The level defaults to DEFAULT_LOG_LEVEL.
+    """
     logger_format = (
         "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <magenta>{elapsed}</magenta> | "
         "<level>{level: <8}</level> | <level>{message}</level>"
     )
 
-    logger.add(sys.stdout, format=logger_format)
+    logger.configure(handlers=[{"sink": sys.stderr, "format": logger_format, "level": level or DEFAULT_LOG_LEVEL}])
 
 
 # Options in yafu.ini that represent file or directory paths.

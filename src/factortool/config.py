@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-# SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+# SPDX-FileCopyrightText: 2024-2026 Jason Lynch <jason@aexoden.com>
 """Configuration for factorization tool."""
 
 from __future__ import annotations
@@ -12,9 +12,19 @@ from pathlib import Path
 from typing import Annotated, Literal, NamedTuple
 
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, Field, PositiveInt, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PositiveInt,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from factortool.constants import FINAL_METHOD_NAMES, NFS_CADO_MIN_DIGITS, NFS_YAFU_MIN_DIGITS
+from factortool.util import DEFAULT_LOG_LEVEL, LogLevel
 
 
 class YafuPaths(NamedTuple):
@@ -67,6 +77,11 @@ RENAMED_SETTINGS = {
 
 RequestInterval = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
+# Log levels are case-insensitive.
+CaseInsensitiveLogLevel = Annotated[
+    LogLevel, BeforeValidator(lambda value: value.upper() if isinstance(value, str) else value)
+]
+
 
 def _is_executable_file(path: Path) -> bool:
     """Check if the given path is an executable file.
@@ -93,6 +108,7 @@ class Config(BaseModel):
     factordb_request_interval: RequestInterval = 1.0
     factoring_mode: Literal["standard", "yafu"] = "standard"
     gimps_login: str = ""
+    log_level: CaseInsensitiveLogLevel = DEFAULT_LOG_LEVEL
     max_siqs_digits: PositiveInt = 100
     mersenne_ca_request_interval: RequestInterval = 1.0
     result_output_path: Path = Path("results")
@@ -186,6 +202,18 @@ class Config(BaseModel):
             raise ValueError(msg)
 
         return value
+
+    def override(self, **settings: object) -> Config:
+        """Override settings, typically with command-line options. A setting given as None is left unchanged.
+
+        Returns:
+            Config: The validated configuration with the overrides applied.
+
+        Raises:
+            ValidationError: If an override is invalid.
+        """
+        overrides = {key: value for key, value in settings.items() if value is not None}
+        return Config.model_validate(self.model_dump() | overrides) if overrides else self
 
     @property
     def assignment_state_path(self) -> Path:

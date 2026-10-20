@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import sys
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -23,13 +22,12 @@ from factortool.constants import (
     NFS_YAFU_MIN_DIGITS,
 )
 from factortool.stats import ECMCutoffs, FactoringStats, InvalidStatsError
-from factortool.util import ArgumentParser, setup_logger
+from factortool.util import ConfigArguments, setup_logger
 
 
-class Arguments(ArgumentParser):
+class Arguments(ConfigArguments):
     """Utility for analyzing statistics gathered by factortool."""
 
-    config_path: Path = Path("config.json")  # Path to the JSON-formatted configuration file
     digits: int  # Digits to analyze
 
 
@@ -117,19 +115,21 @@ def _print_ecm_table(
 
 def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-many-locals, too-many-statements]
     """Analyze factorization statistics."""
-    setup_logger()
-
     args = Arguments().parse_args()
+
+    setup_logger(args.log_level)
 
     if args.digits < 1:
         logger.error("--digits ({}) must be at least 1", args.digits)
         sys.exit(1)
 
     try:
-        config = read_config(args.config_path)
+        config = read_config(args.config_path).override(log_level=args.log_level)
     except FileNotFoundError:
         logger.error("Configuration file not found")
         sys.exit(1)
+
+    setup_logger(config.log_level)
 
     try:
         stats = FactoringStats(config.stats_path, read_only=True)

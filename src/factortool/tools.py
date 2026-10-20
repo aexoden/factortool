@@ -10,6 +10,7 @@ import datetime as dt
 import math
 import os
 import re
+import shlex
 import signal
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
@@ -362,6 +363,10 @@ def run_tool(
     else:
         creationflags, process_group = 0, 0
 
+    description = description or Path(cmd[0]).name
+    logger.debug("Running {} in {}", shlex.join(cmd), cwd)
+    start_time = time.monotonic()
+
     try:
         process = subprocess.Popen(  # ruff: ignore[subprocess-without-shell-equals-true]
             cmd,
@@ -391,7 +396,7 @@ def run_tool(
             with _tools_lock:
                 _running_tools[process] = job
 
-            stdout, stderr = _communicate(process, stdin, description or Path(cmd[0]).name)
+            stdout, stderr = _communicate(process, stdin, description)
         except BaseException:
             _kill_tool(process, job)
             raise
@@ -406,6 +411,10 @@ def run_tool(
 
     if abandoned:
         raise Interrupted
+
+    logger.debug(
+        "{} exited with status {} after {:.2f}s", description, process.returncode, time.monotonic() - start_time
+    )
 
     if process.returncode != 0:
         raise subprocess.CalledProcessError(process.returncode, cmd, stdout, stderr)

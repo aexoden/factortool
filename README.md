@@ -41,6 +41,9 @@ exist if it is set.
 You may then run the program. It accepts the following options:
 
 * `--config_path`: To specify a configuration file other than config.json.
+* `--log_level`: The minimum level of log messages to show, overriding the
+  `log_level` setting for this run. One of `TRACE`, `DEBUG`, `INFO`, `SUCCESS`,
+  `WARNING`, `ERROR` or `CRITICAL`, in any case.
 * `--min_digits`: The minimium number of digits fetched composite numbers should
   have. Must be at least 1.
 * `--max_digits`: The maximum number of digits fetched composite numbers should
@@ -64,6 +67,12 @@ You may then run the program. It accepts the following options:
   assigns distinct work to each user).
 * `--no_new_work`: Work only any retained assignments from a previous run, and
   don't fetch any more. Only supported by the mersenne.ca backend.
+
+Log messages are written to standard error. The `log_level` setting (`INFO` by
+default) chooses the least severe messages that are shown. `INFO` shows each
+factorization, the progress of each batch and a summary of each submission
+request, and `DEBUG` adds detail such as each submitted factorization, every
+external tool invocation and every HTTP request.
 
 Note that the program itself does not loop. Such functionality could be added in
 theory, but this way ensures memory leaks aren't an issue. I find it convenient

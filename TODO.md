@@ -7,10 +7,10 @@ later ones.
 
 ## Minor Features
 
-- Make the log level configurable.
 - Allow temporarily setting max_threads via a command-line parameter. Along with
   backend, it's probably the option people are most likely to want to change
-  between runs.
+  between runs. `--log_level` already does this for `log_level`, via
+  `ConfigArguments` and `Config.override`.
 - Change the README's shell loop to stop on any exit status other than 0 and 3.
   It currently only stops on 2, 6 and 8, so a configuration error, invalid
   argument, tool failure or cleanup failure (7) retries every second.
@@ -43,6 +43,7 @@ later ones.
   and yafu modes with a still pending number.
 - Determine how multithreaded YAFU's implementation of SIQS is (may vary by
   digit count), and consider threading it ourselves like with rho and P-1.
+  Should probably check how well YAFU NFS and CADO-NFS use threads as well.
 - Why is `max_siqs_digits` even an option? Is there a historical reason for it?
   At the same time, investigate if there are any other superfluous options.
   Unrecognized settings are now an error, so any setting that is removed should

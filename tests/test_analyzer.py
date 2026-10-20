@@ -8,7 +8,7 @@ import json
 import sys
 
 from typing import TYPE_CHECKING
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -62,6 +62,35 @@ def test_an_unusable_digit_count_is_rejected(monkeypatch: pytest.MonkeyPatch, di
         main()
 
     assert raised.value.code == 1
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [([], [call(None), call("WARNING")]), (["--log_level", "debug"], [call("DEBUG"), call("DEBUG")])],
+    ids=["configured", "overridden"],
+)
+def test_the_log_level_option_overrides_the_configuration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, argv: list[str], expected: list[object]
+) -> None:
+    """Test that logging is set up before the configuration is read, then at the configured level unless overridden."""
+    config = {
+        "backend": "factordb",
+        "log_level": "warning",
+        "max_threads": 1,
+        "state_path": str(tmp_path),
+        "yafu_path": "yafu",
+    }
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    setup_logger = Mock()
+    monkeypatch.setattr(sys, "argv", ["analyzer", "--config_path", str(config_path), "--digits", str(DIGITS), *argv])
+    monkeypatch.setattr("factortool.analyzer.main.setup_logger", setup_logger, raising=True)
+
+    # Without any statistics, the analyzer exits once the configuration has been read.
+    with pytest.raises(SystemExit):
+        main()
+
+    assert setup_logger.call_args_list == expected
 
 
 def test_ecm_levels_beyond_a_gap_are_shown(

@@ -11,13 +11,13 @@ import time
 
 from collections import Counter
 from dataclasses import dataclass, field, replace
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import contextlib
 
     from collections.abc import Callable, Collection
+    from pathlib import Path
 
 from loguru import logger
 
@@ -34,7 +34,7 @@ from factortool.lock import DirectoryInUseError, lock_directories
 from factortool.number import Number, Outcome, format_results
 from factortool.stats import FactoringStats, InvalidStatsError
 from factortool.tools import ToolError, tool_failures
-from factortool.util import ArgumentParser, format_number, setup_logger
+from factortool.util import ConfigArguments, format_number, setup_logger
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -58,11 +58,10 @@ ALREADY_RUNNING_EXIT_STATUS = 8
 NON_ERROR_EXIT_STATUSES = frozenset({0, INTERRUPTED_EXIT_STATUS, TIME_LIMIT_EXIT_STATUS})
 
 
-class Arguments(ArgumentParser):
+class Arguments(ConfigArguments):
     """Utility for factoring numbers using various methods."""
 
     version: bool = False  # Show the version of the utility and exit
-    config_path: Path = Path("config.json")  # Path to the JSON-formatted configuration file
     min_digits: int = 1  # Minimum number of digits fetched composite numbers should have
     max_digits: int = 0  # Maximum number of digits fetched composite numbers should have (required by mersenne.ca)
     batch_size: int = 0  # Number of composite numbers to work on at a time (0 for automatic)
@@ -491,19 +490,21 @@ def run_session(args: Arguments, config: Config) -> int:
 
 def main() -> None:
     """Factor numbers using various methods."""
-    setup_logger()
-
     args = Arguments().parse_args()
 
     if args.version:
         print(f"Factortool version: {__version__}")  # ruff: ignore[print]
         sys.exit(0)
 
+    setup_logger(args.log_level)
+
     try:
-        config = read_config(args.config_path)
+        config = read_config(args.config_path).override(log_level=args.log_level)
     except FileNotFoundError:
         logger.error("Configuration file not found")
         sys.exit(1)
+
+    setup_logger(config.log_level)
 
     validate_arguments(args, config.backend)
     validate_tools(config)

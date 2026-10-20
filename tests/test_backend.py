@@ -346,6 +346,30 @@ def test_base_close_flushes_submissions(config: Config, sleep: Mock) -> None:
     sleep.assert_not_called()
 
 
+def test_base_summarizes_each_batch_that_resolves_a_submission(config: Config, retry_wait: Mock) -> None:
+    """Test that each batch with an accepted or rejected submission is summarized, but one that only failed is not."""
+    backend = make_fake_backend(config)
+    backend.outcomes[15] = [SubmitOutcome.FAILED, SubmitOutcome.ACCEPTED]
+    backend.outcomes[21] = [SubmitOutcome.REJECTED]
+    messages: list[str] = []
+    sink = logger.add(messages.append, format="{message}", filter=lambda record: record["level"].name == "INFO")
+
+    try:
+        backend.submit(make_factored(config, backend, [3, 5], [3, 7]))
+        backend.close()
+    finally:
+        logger.remove(sink)
+
+    # The worker may send 21 before or after the first attempt at 15.
+    assert sorted(backend.submitted) == [15, 15, 21]
+    assert sorted(messages) == [
+        "Fake accepted 0 of 1 factorization\n",
+        "Fake accepted 1 factorization\n",
+        "Successfully submitted 1 factorizations to Fake\n",
+    ]
+    assert retry_wait.called
+
+
 def test_base_submit_records_the_factorization_as_it_stood(config: Config) -> None:
     """Test that a queued number is recorded with its factors and its assignment's expiry before it is sent."""
     recorded: list[list[Submission]] = []
@@ -759,6 +783,7 @@ def test_factordb_reports_credited_factors(config: Config, http_request: Mock, s
     messages = submit_signed_in(config, http_request, reports)
 
     assert [params["credit"] for method, params in rpc_calls(http_request) if method == "report_factors"] == [True] * 3
+    assert "FactorDB accepted 3 factorizations, crediting 2 factors\n" in messages
     assert "FactorDB credited at least 2 factors to your account\n" in messages
     sleep.assert_not_called()
 

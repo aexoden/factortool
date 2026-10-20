@@ -230,7 +230,10 @@ class FactorDB(BaseBackend):
         super().__init__(config, stats, config.factordb_request_interval, "", interrupts)
 
         self._signed_in = False
+
+        # Factors credited to the account over the whole run, and for the batch most recently submitted.
         self._credited_count = 0
+        self._batch_credited = 0
 
         if not config.factordb_api_token:
             logger.warning("No FactorDB API token is configured; results will be submitted anonymously")
@@ -415,6 +418,7 @@ class FactorDB(BaseBackend):
         Returns:
             list[SubmitOutcome]: The outcomes of the submission attempts for each number.
         """
+        self._batch_credited = 0
         outcomes = [SubmitOutcome.REJECTED] * len(submissions)
         reports = [(i, factors) for i, x in enumerate(submissions) if (factors := self._factors_to_report(x))]
 
@@ -486,8 +490,23 @@ class FactorDB(BaseBackend):
 
         logger.debug("Submitted factors {} for n={}: {}", factors, format_number(n, truncate=False), result)
         self._credited_count += report.credited
+        self._batch_credited += report.credited
 
         return SubmitOutcome.ACCEPTED
+
+    @override
+    def _describe_submissions(self, outcomes: Sequence[SubmitOutcome]) -> str:
+        """Describe the outcomes of a batch of submissions, including the factors credited to the account.
+
+        Returns:
+            str: A summary of how many submissions in the batch were accepted.
+        """
+        description = super()._describe_submissions(outcomes)
+
+        if not self._signed_in:
+            return description
+
+        return f"{description}, crediting {self._batch_credited} factor{'' if self._batch_credited == 1 else 's'}"
 
     @override
     def close(self) -> None:

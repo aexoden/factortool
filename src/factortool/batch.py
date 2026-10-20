@@ -91,7 +91,7 @@ class BatchController:
         factor = pow(1 - BATCH_DECAY_RATE, time_since_update)
         new_items_per_second = self._state.items_per_second * factor + items_per_second * (1 - factor)
 
-        logger.info(
+        logger.debug(
             "Updating average items per second from {:.3f} to {:.3f} (Actual: {:.3f})",
             self._state.items_per_second,
             new_items_per_second,

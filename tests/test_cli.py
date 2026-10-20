@@ -11,7 +11,7 @@ import sys
 import time
 
 from typing import TYPE_CHECKING
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -321,6 +321,28 @@ def test_missing_tools_end_the_run_before_the_backend_is_started(
 
     assert raised.value.code == 1
     create_backend.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [([], [call(None), call("WARNING")]), (["--log_level", "debug"], [call("DEBUG"), call("DEBUG")])],
+    ids=["configured", "overridden"],
+)
+def test_the_log_level_option_overrides_the_configuration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, argv: list[str], expected: list[object]
+) -> None:
+    """Test that logging is set up before the configuration is read, then at the configured level unless overridden."""
+    write_config(tmp_path, log_level="warning", yafu_path="missing-yafu")
+    setup_logger = Mock()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["factortool", *argv])
+    monkeypatch.setattr("factortool.cli.main.setup_logger", setup_logger, raising=True)
+
+    # The missing tool ends the run once the configuration has been read.
+    with pytest.raises(SystemExit):
+        main()
+
+    assert setup_logger.call_args_list == expected
 
 
 @pytest.mark.parametrize(("error", "exit_status"), [(YafuError("YAFU failed"), 5), (CadoNfsError("CADO failed"), 4)])

@@ -12,8 +12,13 @@ import time
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
 import pytest
 import requests
+
+from loguru import logger
 
 from factortool.__about__ import PROJECT_URL, __version__
 from factortool.http import (
@@ -25,9 +30,6 @@ from factortool.http import (
     get_too_many_requests_delay,
 )
 from factortool.interrupt import Interrupted
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
 
 
 @pytest.mark.parametrize(
@@ -143,6 +145,41 @@ def test_every_failure_counts_toward_max_attempts(
         client.request("GET", "https://example.com/", max_attempts=max_attempts)
 
     assert len(sleeps) == max_attempts - 1
+
+
+def test_every_attempt_is_logged_with_its_duration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests that each attempt is logged at DEBUG with how long it took, whether or not a response arrived."""
+    client, sleeps = make_client(monkeypatch, [])
+    attempts: list[requests.Response | requests.RequestException] = [
+        requests.Timeout("timed out"),
+        requests.ConnectionError("refused"),
+        make_response(200),
+    ]
+    outcomes = iter(attempts)
+
+    def slow_request(*_args: object, **_kwargs: object) -> requests.Response:
+        sleeps.append(2.5)
+        outcome = next(outcomes)
+
+        if isinstance(outcome, requests.RequestException):
+            raise outcome
+
+        return outcome
+
+    monkeypatch.setattr(client.session, "request", slow_request)
+    messages: list[str] = []
+    sink = logger.add(messages.append, format="{message}", filter=lambda record: record["level"].name == "DEBUG")
+
+    try:
+        client.request("GET", "https://example.com/")
+    finally:
+        logger.remove(sink)
+
+    assert messages == [
+        "GET https://example.com/ timed out after 2.50s\n",
+        "GET https://example.com/ failed after 2.50s: ConnectionError\n",
+        "GET https://example.com/ returned HTTP 200 after 2.50s\n",
+    ]
 
 
 @pytest.mark.parametrize("status_code", [400, 403, 404, 422])

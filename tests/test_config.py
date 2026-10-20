@@ -341,3 +341,33 @@ def test_user_agent_rejects_invalid_overrides(user_agent: str) -> None:
 def test_final_methods_for_digits(digits: int, overrides: dict[str, object], expected: tuple[str, ...]) -> None:
     """Allow only the enabled final methods suited to the size, falling back to SIQS when none are."""
     assert make_config(**overrides).final_methods.for_digits(digits) == expected
+
+
+@pytest.mark.parametrize(("log_level", "expected"), [("debug", "DEBUG"), ("Warning", "WARNING"), ("TRACE", "TRACE")])
+def test_log_level_is_case_insensitive(log_level: str, expected: str) -> None:
+    """Test that a log level is accepted in any case, and stored in the form loguru expects."""
+    assert make_config(log_level=log_level).log_level == expected
+
+
+@pytest.mark.parametrize("log_level", ["", "verbose", 10])
+def test_log_level_rejects_unknown_levels(log_level: object) -> None:
+    """Test that a log level that is not one of loguru's standard levels is rejected."""
+    with pytest.raises(ValidationError, match="log_level"):
+        make_config(log_level=log_level)
+
+
+def test_override_replaces_only_the_settings_given() -> None:
+    """Test that an override changes the given settings, leaving those given as None and the rest untouched."""
+    config = make_config(log_level="warning", max_threads=4)
+
+    overridden = config.override(log_level="debug", max_threads=None)
+
+    assert overridden.log_level == "DEBUG"
+    assert overridden.model_dump(exclude={"log_level"}) == config.model_dump(exclude={"log_level"})
+    assert config.override(log_level=None) is config
+
+
+def test_override_validates_the_overrides() -> None:
+    """Test that an override is held to the same validation as the configuration file."""
+    with pytest.raises(ValidationError, match="max_threads"):
+        make_config().override(max_threads=0)

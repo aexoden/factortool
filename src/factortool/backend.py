@@ -627,11 +627,26 @@ class BaseBackend(ABC):
 
         if resolved:
             self._last_progress = time.monotonic()
+            logger.info("{}", self._describe_submissions(outcomes))
 
         with self._submission_lock:
             self._successful_submissions += outcomes.count(SubmitOutcome.ACCEPTED)
 
         return retrying
+
+    def _describe_submissions(self, outcomes: Sequence[SubmitOutcome]) -> str:
+        """Describe the outcomes of a batch of submissions for the log.
+
+        Returns:
+            str: A summary of how many submissions in the batch were accepted.
+        """
+        accepted = outcomes.count(SubmitOutcome.ACCEPTED)
+        noun = "factorization" if len(outcomes) == 1 else "factorizations"
+
+        if accepted == len(outcomes):
+            return f"{self.name} accepted {accepted} {noun}"
+
+        return f"{self.name} accepted {accepted} of {len(outcomes)} {noun}"
 
     def _submit_queued(self) -> None:
         """Submit queued numbers until closed and the queue is empty or no more retries are possible.
