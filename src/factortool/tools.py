@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
-import datetime
+import datetime as dt
 import math
 import os
 import re
@@ -306,9 +306,7 @@ def _communicate(process: subprocess.Popen[str], stdin: str | None, description:
             raise ToolDeadlineExceeded(description)
 
         if now >= next_warning:
-            logger.warning(
-                "{} has been running for {}", description, datetime.timedelta(seconds=round(now - start_time))
-            )
+            logger.warning("{} has been running for {}", description, dt.timedelta(seconds=round(now - start_time)))
             next_warning += STILL_RUNNING_INTERVAL
 
         wake = next_warning if deadline is None else min(next_warning, deadline)
