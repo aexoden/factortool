@@ -124,10 +124,10 @@ def test_cado_nfs_requires_its_path() -> None:
         ("max_threads", 0),
         ("max_threads", -1),
         ("max_siqs_digits", 0),
-        ("factordb_cooldown_period", -0.5),
-        ("factordb_cooldown_period", float("inf")),
-        ("mersenne_ca_cooldown_period", -0.5),
-        ("mersenne_ca_cooldown_period", float("nan")),
+        ("factordb_request_interval", -0.5),
+        ("factordb_request_interval", float("inf")),
+        ("mersenne_ca_request_interval", -0.5),
+        ("mersenne_ca_request_interval", float("nan")),
     ],
 )
 def test_out_of_range_settings_are_rejected(setting: str, value: float) -> None:
@@ -269,6 +269,16 @@ def test_read_config_rejects_the_removed_state_file_settings(tmp_path: Path) -> 
 
     assert "no longer supported: pending_submissions_path, stats_path" in message
     assert "state_path" in message
+
+
+def test_read_config_rejects_the_renamed_cooldown_settings(tmp_path: Path) -> None:
+    """Test that a cooldown setting is an error naming its replacement, as its meaning changed along with its name."""
+    settings = {**REQUIRED_SETTINGS, "factordb_cooldown_period": 1.0}
+
+    (message,) = read_invalid_config(write_config(tmp_path, settings))
+
+    assert "no longer supported: factordb_cooldown_period" in message
+    assert "Use factordb_request_interval instead" in message
 
 
 def test_dist_config_matches_defaults() -> None:

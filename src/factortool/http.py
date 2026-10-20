@@ -21,6 +21,9 @@ from loguru import logger
 from factortool.__about__ import PROJECT_URL, __version__
 from factortool.interrupt import Interrupted
 
+# The first backoff between attempts for failures with no specific Retry-After header.
+RETRY_DELAY = 1.0
+
 # The longest backoff between attempts for failures with no specific Retry-After header.
 MAX_DELAY = 3600.0
 
@@ -95,13 +98,14 @@ class PermanentHttpError(requests.RequestException):
 class HttpClient:
     """HTTP client that retries transient failures with exponential backoff.
 
-    Client errors (4xx) other than 408 and 429 are treated as permanent and fail immediately regardless of max_attempts.
+    Requests, including each retry, are spaced at least request_interval apart across all threads. Client errors (4xx)
+    other than 408 and 429 are treated as permanent and fail immediately regardless of max_attempts.
     """
 
     def __init__(
         self,
         service_name: str,
-        cooldown_period: float,
+        request_interval: float,
         user_agent: str | None = None,
         rate_limited_until: float = 0.0,
         on_rate_limit: Callable[[float], None] | None = None,
@@ -110,13 +114,15 @@ class HttpClient:
 
         Args:
             service_name (str): Name of the remote service. Only used for logging purposes.
-            cooldown_period (float): Cooldown period between requests in seconds.
+            request_interval (float): The minimum time between the starts of consecutive requests, in seconds.
             user_agent (str | None): Custom User-Agent header value. If None, a default User-Agent will be used.
             rate_limited_until (float): When a rate limit already in effect ends, as a timestamp.
             on_rate_limit (Callable[[float], None] | None): Called with the timestamp at which each new rate limit ends.
         """
         self._service_name = service_name
-        self._cooldown_period = cooldown_period
+        self._request_interval = request_interval
+        self._next_request_at = 0.0
+        self._request_lock = threading.Lock()
         self._rate_limited_until = rate_limited_until
         self._rate_limit_lock = threading.Lock()
         self._on_rate_limit = on_rate_limit
@@ -127,6 +133,11 @@ class HttpClient:
     def rate_limited_until(self) -> float:
         """When the rate limit most recently reported by the service ends, as a timestamp."""
         return self._rate_limited_until
+
+    @property
+    def next_request_at(self) -> float:
+        """When request_interval allows the next request, as a time.monotonic() value."""
+        return self._next_request_at
 
     def _pause(self, delay: float, wait: Callable[[float], bool] | None) -> None:
         """Wait between attempts, abandoning the request if the wait function indicates so.
@@ -140,14 +151,36 @@ class HttpClient:
             msg = f"Abandoned a request to {self._service_name} while waiting to send it"
             raise Interrupted(msg)
 
-    def _await_rate_limit(self, wait: Callable[[float], bool] | None, *, announce: bool) -> None:
-        """Wait for any rate limit to end, including one extended by another thread in the meantime."""
-        while (remaining := self._rate_limited_until - time.time()) > 0:
-            if announce:
-                logger.info("Waiting {:.0f} seconds for the {} rate limit to end", remaining, self._service_name)
+    def _await_turn(self, wait: Callable[[float], bool] | None, *, reserve: bool, announce: bool) -> None:
+        """Wait until any rate limit has ended and request_interval has passed since the last request.
+
+        If reserve is set, the turn is claimed for a request about to be sent.
+        """
+        while True:
+            with self._request_lock:
+                now = time.monotonic()
+                rate_limit = self._rate_limited_until - time.time()
+                remaining = max(rate_limit, self._next_request_at - now)
+
+                if remaining <= 0:
+                    if reserve:
+                        self._next_request_at = now + self._request_interval
+
+                    return
+
+            if announce and rate_limit > 0:
+                logger.info("Waiting {:.0f} seconds for the {} rate limit to end", rate_limit, self._service_name)
                 announce = False
 
             self._pause(remaining, wait)
+
+    def await_ready(self, wait: Callable[[float], bool] | None = None) -> None:
+        """Wait until a request could be sent without delay, for callers that prepare a request as late as possible.
+
+        Raises:
+            Interrupted: If the wait was abandoned.
+        """
+        self._await_turn(wait, reserve=False, announce=True)
 
     def _note_rate_limit(self, response: requests.Response) -> float:
         """Record the rate limit reported by a 429 response.
@@ -202,11 +235,11 @@ class HttpClient:
             PermanentHttpError: Immediately on a permanent client error.
             requests.RequestException: If the request still fails after the maximum number of attempts.
         """
-        delay = max(0.1, self._cooldown_period)
+        delay = RETRY_DELAY
         attempts = 0
 
         while True:
-            self._await_rate_limit(wait, announce=attempts == 0)
+            self._await_turn(wait, reserve=True, announce=attempts == 0)
 
             attempts += 1
             rate_limit_delay: float | None = None

@@ -7,9 +7,6 @@ later ones.
 
 ## Minor Features
 
-- For backends that batch submissions, consider a more intelligent submission
-  strategy: Submit if X seconds have passed, the current batch is full or if
-  everything's done.
 - Make the log level configurable.
 - Allow temporarily setting max_threads via a command-line parameter. Along with
   backend, it's probably the option people are most likely to want to change
@@ -29,8 +26,6 @@ later ones.
   the results in it are kept for the next run, but each later batch still sends
   one more request. Consider not submitting anything further for the rest of the
   run, as the cause is most likely a ban or a bad token.
-- The submission worker waits out the spacing between submissions even after a
-  batch in which nothing was sent (e.g. a number that turned out to be prime).
 
 ## Code/Architectural Improvements
 
@@ -123,9 +118,6 @@ later ones.
   which is close to nothing for a fast batch. Seeding directly from the first
   measurement when there's no prior rate would help.
 - Remove the unused `flask` dependency.
-- The `*_cooldown_period` settings are only used as the initial retry delay,
-  not as a cooldown between requests. Either rename them or implement the
-  cooldown.
 - Consider `gmpy2.is_strong_bpsw_prp` for `is_prime` above the range where the
   fixed Miller-Rabin bases are deterministic.
 - Documentation: add an Unreleased section to the changelog (mersenne.ca, YAFU

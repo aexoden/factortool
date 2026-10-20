@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 import sys
+import threading
 import time
 
 from typing import TYPE_CHECKING
@@ -114,6 +115,7 @@ def make_client(
     monkeypatch.setattr(client.session, "request", fake_request)
     monkeypatch.setattr(time, "sleep", sleeps.append)
     monkeypatch.setattr(time, "time", lambda: START_TIME + sum(sleeps))
+    monkeypatch.setattr(time, "monotonic", lambda: sum(sleeps))
 
     return client, sleeps
 
@@ -286,3 +288,59 @@ def test_retry_after_date_is_gmt(monkeypatch: pytest.MonkeyPatch) -> None:
         time.tzset()
 
     assert delay == pytest.approx(120, abs=5)
+
+
+def test_requests_are_spaced_by_the_request_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests that consecutive requests wait out the request interval, but a retry's backoff already counts toward it."""
+    client, sleeps = make_client(monkeypatch, [make_response(200), make_response(503), make_response(200)])
+
+    client.request("GET", "https://example.com/")
+    client.request("GET", "https://example.com/")
+
+    assert sleeps == [1.0, 1.0]
+
+
+def test_await_ready_does_not_claim_the_next_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests that waiting until a request could be sent leaves the turn for the request itself."""
+    client, sleeps = make_client(monkeypatch, [make_response(200), make_response(200)])
+
+    client.request("GET", "https://example.com/")
+    client.await_ready()
+    client.request("GET", "https://example.com/")
+
+    assert sleeps == [1.0]
+
+
+def test_a_rate_limit_received_while_awaiting_a_turn_is_honored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests that a request waiting for its turn still waits for a rate limit another thread noted in the meantime."""
+    client, sleeps = make_client(
+        monkeypatch, [make_response(200), make_response(429, {"Retry-After": "60"}), make_response(200)]
+    )
+    send: Callable[..., requests.Response] = client.session.request
+    sent_at: list[float] = []
+
+    def recording_send(*args: object, **kwargs: object) -> requests.Response:
+        sent_at.append(time.time())
+        return send(*args, **kwargs)
+
+    def other_thread_request() -> None:
+        with pytest.raises(requests.RequestException, match="Giving up after 1 attempts"):
+            client.request("GET", "https://example.com/", max_attempts=1)
+
+    def wait(delay: float) -> bool:
+        if len(sent_at) == 1:
+            other = threading.Thread(target=other_thread_request)
+            other.start()
+            other.join()
+
+        sleeps.append(delay)
+        return False
+
+    monkeypatch.setattr(client.session, "request", recording_send)
+    client.request("GET", "https://example.com/")
+    rate_limited_at = START_TIME + sum(sleeps)
+    client.request("GET", "https://example.com/", wait=wait)
+
+    assert len(sent_at) == 3  # ruff: ignore[magic-value-comparison]
+    assert sent_at[2] >= client.rate_limited_until
+    assert client.rate_limited_until >= rate_limited_at + 60.0

@@ -65,7 +65,7 @@ class MersenneCA(BaseBackend):
         Raises:
             ValueError: If no GIMPS login is configured.
         """
-        super().__init__(config, stats, config.mersenne_ca_cooldown_period, config.gimps_login, interrupts)
+        super().__init__(config, stats, config.mersenne_ca_request_interval, config.gimps_login, interrupts)
 
         # In theory, this should never happen because the configuration would be rejected, but this is provides a
         # fallback in case of a configuration created without validation.

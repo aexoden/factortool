@@ -33,7 +33,7 @@ def mersenne_ca(tmp_path: Path) -> Iterator[MersenneCA]:
     """
     config = make_config(
         gimps_login="tester",
-        mersenne_ca_cooldown_period=0.0,
+        mersenne_ca_request_interval=0.0,
         state_path=tmp_path,
     )
     backend = MersenneCA(config, FactoringStats(tmp_path / "stats.json", read_only=True))

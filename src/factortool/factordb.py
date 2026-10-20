@@ -15,7 +15,7 @@ from loguru import logger
 from pydantic import BaseModel, TypeAdapter
 
 from factortool.backend import BaseBackend, SubmitOutcome
-from factortool.http import MAX_DELAY, PermanentHttpError
+from factortool.http import MAX_DELAY, RETRY_DELAY, PermanentHttpError
 from factortool.interrupt import Interrupted
 from factortool.util import format_number
 
@@ -227,7 +227,7 @@ class FactorDB(BaseBackend):
             Interrupted: If an interrupt arrived while waiting to verify the configured API token.
             PermanentHttpError: If FactorDB does not recognize the configured API token, or refuses to verify it.
         """
-        super().__init__(config, stats, config.factordb_cooldown_period, "", interrupts)
+        super().__init__(config, stats, config.factordb_request_interval, "", interrupts)
 
         self._signed_in = False
         self._credited_count = 0
@@ -259,7 +259,7 @@ class FactorDB(BaseBackend):
             Interrupted: If an interrupt arrived while waiting for another attempt.
             PermanentHttpError: If FactorDB does not recognize the API token, or refuses to verify it.
         """
-        delay = max(0.1, self._cooldown_period)
+        delay = RETRY_DELAY
 
         while True:
             try:

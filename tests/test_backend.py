@@ -23,7 +23,6 @@ from loguru import logger
 from factortool.backend import (
     NO_WORK_DELAY,
     SUBMIT_ATTEMPTS,
-    SUBMIT_SPACING,
     Backend,
     BaseBackend,
     FetchCriteria,
@@ -147,8 +146,8 @@ def config(tmp_path: Path) -> Config:
         Config: The test configuration.
     """
     return make_config(
-        factordb_cooldown_period=0.0,
-        mersenne_ca_cooldown_period=0.0,
+        factordb_request_interval=0.0,
+        mersenne_ca_request_interval=0.0,
         result_output_path=tmp_path / "results",
         state_path=tmp_path,
         work_path=tmp_path / "work",
@@ -344,7 +343,7 @@ def test_base_close_flushes_submissions(config: Config, sleep: Mock) -> None:
 
     assert backend.submitted == [15, 21]
     assert backend.get_successful_submission_count() == len(factored)
-    assert sleep.call_args_list == [call(SUBMIT_SPACING)] * len(factored)
+    sleep.assert_not_called()
 
 
 def test_base_submit_records_the_factorization_as_it_stood(config: Config) -> None:
@@ -402,7 +401,7 @@ def test_base_retries_failed_submissions_then_leaves_them_for_the_next_run(
     assert backend.submitted.count(35) == 1
     assert backend.get_successful_submission_count() == 1
     assert retry_wait.call_args_list[0] == call(1.0)
-    assert sleep.called
+    sleep.assert_not_called()
     assert journaled(config) == [21]
 
 
@@ -417,7 +416,7 @@ def test_base_resubmits_what_a_previous_run_left_unsent(config: Config, sleep: M
     assert backend.submitted == [15, 35]
     assert backend.get_successful_submission_count() == 2  # ruff: ignore[magic-value-comparison]
     assert not config.pending_submissions_path.exists()
-    assert sleep.called
+    sleep.assert_not_called()
 
 
 def test_base_discards_a_new_result_whose_assignment_has_expired(config: Config, retry_wait: Mock) -> None:
@@ -447,7 +446,7 @@ def test_base_leaves_a_deferred_submission_for_the_next_run(config: Config, slee
     assert backend.get_successful_submission_count() == 1
     retry_wait.assert_not_called()
     assert journaled(config) == [15]
-    assert sleep.called
+    sleep.assert_not_called()
 
 
 def test_base_honors_a_rate_limit_from_a_previous_run(config: Config) -> None:
@@ -605,7 +604,7 @@ def test_factordb_submits_distinct_factors_in_one_call(  # ruff: ignore[too-many
             {"target": {"expr": str(n)}, "factors": [str(f) for f in expected], "credit": False},
         )
     ]
-    assert sleep.call_args_list == [call(SUBMIT_SPACING)]
+    sleep.assert_not_called()
 
 
 def test_factordb_skips_submission_of_a_prime(
@@ -619,7 +618,7 @@ def test_factordb_skips_submission_of_a_prime(
 
     assert factordb.get_successful_submission_count() == 0
     http_request.assert_not_called()
-    assert sleep.call_args_list == [call(SUBMIT_SPACING)]
+    sleep.assert_not_called()
 
 
 def test_factordb_counts_rejected_submission_as_failure(
@@ -636,7 +635,7 @@ def test_factordb_counts_rejected_submission_as_failure(
 
     assert factordb.get_successful_submission_count() == 0
     http_request.assert_called_once()
-    assert sleep.call_args_list == [call(SUBMIT_SPACING)]
+    sleep.assert_not_called()
 
 
 def test_factordb_leaves_repeated_submission_errors_for_the_next_run(
@@ -653,8 +652,8 @@ def test_factordb_leaves_repeated_submission_errors_for_the_next_run(
 
     assert factordb.get_successful_submission_count() == 0
     assert http_request.call_count == SUBMIT_ATTEMPTS
-    assert retry_wait.call_args_list == [call(0.1), call(0.2), call(0.4), call(0.8)]
-    assert sleep.call_args_list == [call(SUBMIT_SPACING)]
+    assert retry_wait.call_args_list == [call(1.0), call(2.0), call(4.0), call(8.0)]
+    sleep.assert_not_called()
     assert journaled(config) == [15]
 
 
@@ -676,8 +675,8 @@ def test_factordb_retries_submission_errors(
 
     assert factordb.get_successful_submission_count() == 1
     assert http_request.call_count == 3  # ruff: ignore[magic-value-comparison]
-    assert retry_wait.call_args_list == [call(0.1), call(0.2)]
-    assert sleep.call_args_list == [call(SUBMIT_SPACING)]
+    assert retry_wait.call_args_list == [call(1.0), call(2.0)]
+    sleep.assert_not_called()
     assert not config.pending_submissions_path.exists()
 
 
@@ -695,7 +694,7 @@ def test_factordb_does_not_retry_malformed_submissions(
 
     assert factordb.get_successful_submission_count() == 0
     http_request.assert_called_once()
-    assert sleep.call_args_list == [call(SUBMIT_SPACING)]
+    sleep.assert_not_called()
 
 
 def make_factor_submission_responder(results_by_target: Mapping[str, object]) -> Callable[..., Mock]:
@@ -761,7 +760,7 @@ def test_factordb_reports_credited_factors(config: Config, http_request: Mock, s
 
     assert [params["credit"] for method, params in rpc_calls(http_request) if method == "report_factors"] == [True] * 3
     assert "FactorDB credited at least 2 factors to your account\n" in messages
-    assert all(c == call(SUBMIT_SPACING) for c in sleep.call_args_list)
+    sleep.assert_not_called()
 
 
 def make_submission(*prime_factors: int, lifetime: float = 3600.0) -> Submission:
@@ -909,7 +908,7 @@ def test_base_keeps_a_newer_result_when_an_older_one_is_resolved(config: Config,
 
     assert backend.get_successful_submission_count() == 1
     assert [x.prime_factors for x in journal.load()] == [(3, 5, 7, 11, 13)]
-    assert sleep.called
+    sleep.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -927,8 +926,9 @@ def test_factordb_leaves_a_whole_batch_for_another_attempt(
     assert factordb._submit_numbers(submissions) == [SubmitOutcome.FAILED] * len(submissions)
 
 
-def test_base_worker_submits_a_backlog_in_batches(config: Config, sleep: Mock) -> None:
+def test_base_worker_submits_a_backlog_in_batches(config: Config, sleep: Mock, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that numbers queued while a submission is in progress are submitted together, up to the batch size."""
+    monkeypatch.setattr("factortool.backend.SUBMIT_MAX_HOLD", 0.0)
     started = threading.Event()
     release = threading.Event()
     batches: list[list[int]] = []
@@ -956,7 +956,7 @@ def test_base_worker_submits_a_backlog_in_batches(config: Config, sleep: Mock) -
 
     assert batches == [[15], [21, 35], [77]]
     assert backend.get_successful_submission_count() == len(numbers)
-    assert sleep.call_args_list == [call(SUBMIT_SPACING)] * 3
+    sleep.assert_not_called()
 
 
 def test_factordb_counts_unaccepted_submission_as_failure(
@@ -975,7 +975,7 @@ def test_factordb_counts_unaccepted_submission_as_failure(
 
     assert factordb.get_successful_submission_count() == 0
     http_request.assert_called_once()
-    assert sleep.call_args_list == [call(SUBMIT_SPACING)]
+    sleep.assert_not_called()
 
 
 def test_fetch_maps_criteria(factordb: FactorDB, http_request: Mock) -> None:
@@ -1169,7 +1169,7 @@ def test_factordb_retries_until_the_token_is_verified(
     finally:
         backend.close()
 
-    assert wait.call_args_list == [call(0.1), call(0.2)]
+    assert wait.call_args_list == [call(1.0), call(2.0)]
 
 
 def test_factordb_stops_verifying_the_token_on_an_interrupt(config: Config, http_request: Mock, wait: Mock) -> None:
@@ -1237,3 +1237,131 @@ def test_factordb_stops_if_token_verification_is_invalid(config: Config, http_re
 
     with pytest.raises(PermanentHttpError, match="invalid params"):
         FactorDB(config.model_copy(update={"factordb_api_token": "secret"}), FactoringStats(config.stats_path))
+
+
+class RecordingBatchesBackend(FakeBackend):
+    """A fake backend that records each batch it is asked to submit."""
+
+    submit_batch_size = 3
+
+    def __init__(self, config: Config) -> None:
+        """Initialize the backend with no batches submitted."""
+        self.batches: list[list[int]] = []
+        self.batch_sent = threading.Event()
+        super().__init__(config, FactoringStats(config.stats_path, read_only=True), ())
+
+    @override
+    def _submit_numbers(self, submissions: Sequence[Submission]) -> list[SubmitOutcome]:
+        self.batches.append([submission.n for submission in submissions])
+        self.batch_sent.set()
+        return [SubmitOutcome.ACCEPTED] * len(submissions)
+
+
+def test_base_holds_a_partial_batch_until_it_is_full(config: Config) -> None:
+    """Test that results arriving close together are held until they fill a batch, which is then sent at once."""
+    backend = RecordingBatchesBackend(config)
+    numbers = make_factored(config, backend, [3, 5], [3, 7], [5, 7], [7, 11])
+
+    try:
+        backend.submit(numbers[:1])
+        assert not backend.batch_sent.wait(timeout=0.5)
+        backend.submit(numbers[1:])
+        assert backend.batch_sent.wait(timeout=5.0)
+        assert backend.batches == [[15, 21, 35]]
+    finally:
+        backend.close()
+
+    assert backend.batches == [[15, 21, 35], [77]]
+
+
+def test_base_sends_a_partial_batch_once_its_hold_ends(config: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a partial batch is sent without waiting to close once its oldest result has been held long enough."""
+    monkeypatch.setattr("factortool.backend.SUBMIT_MAX_HOLD", 0.5)
+    backend = RecordingBatchesBackend(config)
+
+    try:
+        start = time.monotonic()
+        backend.submit(make_factored(config, backend, [3, 5]))
+        assert backend.batch_sent.wait(timeout=5.0)
+        assert time.monotonic() - start >= 0.5  # ruff: ignore[magic-value-comparison]
+    finally:
+        backend.close()
+
+    assert backend.batches == [[15]]
+
+
+def test_base_sends_an_isolated_result_at_once(config: Config) -> None:
+    """Test that a result arriving long after the previous one is sent without waiting for others to join it."""
+    backend = RecordingBatchesBackend(config)
+    backend._last_queued = time.monotonic() - 60.0
+
+    try:
+        backend.submit(make_factored(config, backend, [3, 5]))
+        assert backend.batch_sent.wait(timeout=5.0)
+    finally:
+        backend.close()
+
+    assert backend.batches == [[15]]
+
+
+def test_base_does_not_hold_a_result_close_to_expiry(config: Config) -> None:
+    """Test that a result whose assignment expires within the hold is sent at once rather than risk expiring."""
+    backend = RecordingBatchesBackend(config)
+    (number,) = make_factored(config, backend, [3, 5])
+    number.expires_at = time.time() + 20.0
+
+    try:
+        backend.submit([number])
+        assert backend.batch_sent.wait(timeout=5.0)
+    finally:
+        backend.close()
+
+    assert backend.batches == [[15]]
+
+
+def test_base_close_sends_a_held_batch_at_once(config: Config) -> None:
+    """Test that closing sends a held partial batch without waiting for its hold to end."""
+    backend = RecordingBatchesBackend(config)
+    backend.submit(make_factored(config, backend, [3, 5], [3, 7]))
+
+    start = time.monotonic()
+    backend.close()
+
+    assert time.monotonic() - start < 5.0  # ruff: ignore[magic-value-comparison]
+    assert backend.batches == [[15, 21]]
+
+
+def test_base_sends_what_a_previous_run_left_unsent_without_holding_it(config: Config) -> None:
+    """Test that results carried over from a previous run are sent at once, even as a partial batch."""
+    SubmissionJournal(config.pending_submissions_path, config.backend).add([make_submission(3, 5)])
+    backend = RecordingBatchesBackend(config)
+
+    try:
+        assert backend.batch_sent.wait(timeout=5.0)
+    finally:
+        backend.close()
+
+    assert backend.batches == [[15]]
+
+
+def test_base_close_does_not_count_request_spacing_as_a_stall(config: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that waiting out the request interval while closing doesn't give up on a service that is answering."""
+    monkeypatch.setattr("factortool.backend.FLUSH_TIMEOUT", 0.3)
+    response = requests.Response()
+    response.status_code = 200
+
+    class SpacedBackend(FakeBackend):
+        @override
+        def _submit_number(self, submission: Submission) -> SubmitOutcome:
+            self._service_request("POST", "https://example.invalid/", timeout=1.0, wait=self._submission_wait)
+            return super()._submit_number(submission)
+
+    backend = SpacedBackend(config, FactoringStats(config.stats_path, read_only=True), ())
+    monkeypatch.setattr(backend._http_client.session, "request", Mock(return_value=response))
+
+    # FakeBackend spaces its requests a second apart, well beyond the shortened flush timeout.
+    backend.submit(make_factored(config, backend, [3, 5], [3, 7]))
+    backend.close()
+
+    assert backend.submitted == [15, 21]
+    assert not config.pending_submissions_path.exists()

@@ -59,7 +59,13 @@ REMOVED_STATE_SETTINGS = {
     "stats_path": "stats.json",
 }
 
-CooldownPeriod = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+# Settings that were renamed, with their new names.
+RENAMED_SETTINGS = {
+    "factordb_cooldown_period": "factordb_request_interval",
+    "mersenne_ca_cooldown_period": "mersenne_ca_request_interval",
+}
+
+RequestInterval = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
 def _is_executable_file(path: Path) -> bool:
@@ -84,11 +90,11 @@ class Config(BaseModel):
     # Optional settings with defaults
     cado_nfs_path: Path | None = None
     factordb_api_token: str = ""
-    factordb_cooldown_period: CooldownPeriod = 1.0
+    factordb_request_interval: RequestInterval = 1.0
     factoring_mode: Literal["standard", "yafu"] = "standard"
     gimps_login: str = ""
     max_siqs_digits: PositiveInt = 100
-    mersenne_ca_cooldown_period: CooldownPeriod = 1.0
+    mersenne_ca_request_interval: RequestInterval = 1.0
     result_output_path: Path = Path("results")
     state_path: Path = Path("state")
     use_nfs_cado: bool = False
@@ -100,22 +106,32 @@ class Config(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def reject_removed_settings(cls, data: object) -> object:
-        """Reject no longer supported state file settings, explaining how to migrate them.
+        """Reject no longer supported settings, explaining how to migrate them.
 
         Returns:
             object: The unmodified input data.
 
         Raises:
-            ValueError: If any removed state settings are present in the configuration.
+            ValueError: If any removed or renamed settings are present in the configuration.
         """
         if isinstance(data, dict):
             removed = sorted(data.keys() & REMOVED_STATE_SETTINGS.keys())
+            renamed = sorted(data.keys() & RENAMED_SETTINGS.keys())
 
             if removed:
                 msg = (
                     f"no longer supported: {', '.join(removed)}. State files now have fixed names in the state_path "
                     f"directory ({', '.join(REMOVED_STATE_SETTINGS[key] for key in removed)}). Move the existing "
                     "files there and remove the old settings."
+                )
+                raise ValueError(msg)
+
+            if renamed:
+                msg = (
+                    f"no longer supported: {', '.join(renamed)}. Use "
+                    f"{', '.join(RENAMED_SETTINGS[key] for key in renamed)} instead, which "
+                    f"{'is' if len(renamed) == 1 else 'are'} the minimum time in seconds between requests to the "
+                    "service rather than the initial delay before a retry."
                 )
                 raise ValueError(msg)
 

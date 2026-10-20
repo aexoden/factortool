@@ -7,6 +7,7 @@ Also provides BaseBackend, which implements the fetch and submission behavior sh
 
 from __future__ import annotations
 
+import contextlib
 import enum
 import queue
 import threading
@@ -24,7 +25,7 @@ import requests
 from loguru import logger
 
 from factortool.constants import MIN_FACTORABLE
-from factortool.http import MAX_DELAY, HttpClient, PermanentHttpError, build_user_agent
+from factortool.http import MAX_DELAY, RETRY_DELAY, HttpClient, PermanentHttpError, build_user_agent
 from factortool.interrupt import ABORT, POLL_INTERVAL, Interrupted, InterruptState
 from factortool.number import Number
 from factortool.submissions import Submission, SubmissionJournal
@@ -34,8 +35,8 @@ if TYPE_CHECKING:
     from factortool.config import Config
     from factortool.stats import FactoringStats
 
-# How long to wait between consecutive submissions to a service.
-SUBMIT_SPACING = 0.2
+# The longest a partial batch of submissions is held before submission.
+SUBMIT_MAX_HOLD = 30.0
 
 # How many times to attempt a submission during a run before leaving it for the next run.
 SUBMIT_ATTEMPTS = 5
@@ -102,6 +103,9 @@ class QueuedSubmission:
 
     submission: Submission
     attempts: int = 0
+
+    # When the submission should be sent even if its batch isn't full, as a time.monotonic() value.
+    hold_until: float = 0.0
 
 
 class Backend(Protocol):
@@ -186,7 +190,7 @@ class BaseBackend(ABC):
         self,
         config: Config,
         stats: FactoringStats,
-        cooldown_period: float,
+        request_interval: float,
         identity: str,
         interrupts: InterruptState | None = None,
     ) -> None:
@@ -195,13 +199,12 @@ class BaseBackend(ABC):
         Args:
             config (Config): Application configuration.
             stats (FactoringStats): Factoring statistics.
-            cooldown_period (float): Cooldown period between requests in seconds.
+            request_interval (float): The minimum time between the starts of consecutive requests, in seconds.
             identity (str): Account name used with the service, included in the User-Agent. May be empty.
             interrupts (InterruptState | None): Interrupt state for interrupt signals, or None for a private one.
         """
         self._config = config
         self._stats = stats
-        self._cooldown_period = cooldown_period
         self._interrupts = interrupts if interrupts is not None else InterruptState()
         self._journal = SubmissionJournal(config.pending_submissions_path, config.backend)
         self._submit_queue: queue.Queue[QueuedSubmission] = queue.Queue()
@@ -218,7 +221,7 @@ class BaseBackend(ABC):
 
         self._http_client = HttpClient(
             self.name,
-            cooldown_period,
+            request_interval,
             build_user_agent(identity, config.user_agent),
             self._journal.rate_limited_until,
             self._journal.note_rate_limit,
@@ -232,6 +235,7 @@ class BaseBackend(ABC):
         self._give_up = threading.Event()
 
         self._last_progress = time.monotonic()
+        self._last_queued = time.monotonic()
         self._successful_submissions = 0
         self._submission_lock = threading.Lock()
 
@@ -283,7 +287,7 @@ class BaseBackend(ABC):
         if criteria.count == 0:
             return set()
 
-        delay = max(0.1, self._cooldown_period)
+        delay = RETRY_DELAY
 
         while not self._interrupts.stop_fetching:
             try:
@@ -329,7 +333,11 @@ class BaseBackend(ABC):
         return set()
 
     def submit(self, numbers: Collection[Number]) -> None:
-        """Add factored numbers to the submission queue."""
+        """Add factored numbers to the submission queue.
+
+        Each is held for up to SUBMIT_MAX_HOLD in the hope of filling a batch, unless the previous result arrived at
+        least that long ago. A submission is never held within SUBMIT_MAX_HOLD of its expiration.
+        """
         now = time.time()
         submissions = [
             Submission(
@@ -342,10 +350,20 @@ class BaseBackend(ABC):
             if len(number.prime_factors) > 0
         ]
 
+        if not submissions:
+            return
+
         self._journal.add(submissions)
 
-        for submission in submissions:
-            self._submit_queue.put_nowait(QueuedSubmission(submission))
+        with self._submission_lock:
+            queued_at = time.monotonic()
+            hold = SUBMIT_MAX_HOLD if queued_at - self._last_queued < SUBMIT_MAX_HOLD else 0.0
+            self._last_queued = queued_at
+
+            for submission in submissions:
+                lifetime = submission.expires_at - now
+                hold_until = queued_at + min(hold, max(0.0, lifetime - SUBMIT_MAX_HOLD))
+                self._submit_queue.put_nowait(QueuedSubmission(submission, hold_until=hold_until))
 
     def get_successful_submission_count(self) -> int:
         """Get the number of accepted factorizations.
@@ -496,9 +514,11 @@ class BaseBackend(ABC):
                 if not was_closing:
                     return False
 
-                # Waiting for the rate limit to expire isn't a sign of a broken service.
+                # Waiting for a rate limit or a request interval isn't a sign of a broken service.
                 rate_limit_ended = now + self._http_client.rate_limited_until - time.time()
-                stalled_since = max(self._last_progress, self._closing_since, rate_limit_ended)
+                stalled_since = max(
+                    self._last_progress, self._closing_since, rate_limit_ended, self._http_client.next_request_at
+                )
                 allowance = stalled_since + FLUSH_TIMEOUT - now
 
                 if allowance <= 0:
@@ -513,28 +533,49 @@ class BaseBackend(ABC):
 
         return True
 
-    def _next_batch(self) -> list[QueuedSubmission]:
-        """Take up to submit_batch_size submissions from the queue.
+    def _collect(self, held: list[QueuedSubmission], timeout: float) -> None:
+        """Move everything queued into held, first waiting up to timeout for something to be queued."""
+        with contextlib.suppress(queue.Empty):
+            held.append(self._submit_queue.get(timeout=timeout) if timeout > 0 else self._submit_queue.get_nowait())
+
+            while True:
+                held.append(self._submit_queue.get_nowait())
+
+    def _batch_ready(self, held: Sequence[QueuedSubmission]) -> bool:
+        """Determine whether to send a batch now rather than wait for more submissions.
 
         Returns:
-            list[QueuedSubmission]: The batch, which is empty if nothing was queued in time.
+            bool: True if anything is held and a batch is full, the backend is closing or a hold has ended.
+        """
+        if not held:
+            return False
+
+        return (
+            len(held) >= self.submit_batch_size
+            or self._closing.is_set()
+            or min(queued.hold_until for queued in held) <= time.monotonic()
+        )
+
+    def _take_batch(self, held: list[QueuedSubmission]) -> list[QueuedSubmission]:
+        """Take up to submit_batch_size submissions from the front of held, discarding any that have expired.
+
+        Returns:
+            list[QueuedSubmission]: The batch, which is empty if everything taken had expired.
         """
         batch: list[QueuedSubmission] = []
+        expired: list[Submission] = []
         now = time.time()
 
-        while len(batch) < self.submit_batch_size:
-            try:
-                queued = self._submit_queue.get_nowait() if batch else self._submit_queue.get(timeout=POLL_INTERVAL)
-            except queue.Empty:
-                break
+        while held and len(batch) < self.submit_batch_size:
+            queued = held.pop(0)
 
             # The composite behind an expired assignment may have already been reassigned.
             if queued.submission.expires_at <= now:
-                self._discard_expired([queued.submission])
-                continue
+                expired.append(queued.submission)
+            else:
+                batch.append(queued)
 
-            batch.append(queued)
-
+        self._discard_expired(expired)
         return batch
 
     def _discard_expired(self, submissions: Sequence[Submission]) -> None:
@@ -595,18 +636,35 @@ class BaseBackend(ABC):
     def _submit_queued(self) -> None:
         """Submit queued numbers until closed and the queue is empty or no more retries are possible.
 
+        Submissions are held until a batch is full, the oldest hold ends or the backend is closing. Spacing between
+        batches is left to the HTTP client.
+
         Raises:
             Interrupted: If the submission process is interrupted.
         """
-        delay = max(0.1, self._cooldown_period)
+        held: list[QueuedSubmission] = []
+        delay = RETRY_DELAY
 
         while not self._give_up.is_set():
-            batch = self._next_batch()
+            if not self._batch_ready(held):
+                timeout = POLL_INTERVAL
 
-            if not batch:
-                if self._closing.is_set() and self._submit_queue.empty():
+                if held:
+                    timeout = min(timeout, min(queued.hold_until for queued in held) - time.monotonic())
+
+                self._collect(held, timeout)
+
+                if not held and self._closing.is_set() and self._submit_queue.empty():
                     return
 
+                continue
+
+            # Anything queued while waiting for the service joins the batch.
+            self._http_client.await_ready(self._submission_wait)
+            self._collect(held, 0.0)
+            batch = self._take_batch(held)
+
+            if not batch:
                 continue
 
             if self._submit_batch(batch):
@@ -615,8 +673,7 @@ class BaseBackend(ABC):
 
                 delay = min(MAX_DELAY, delay * 2)
             else:
-                delay = max(0.1, self._cooldown_period)
-                time.sleep(SUBMIT_SPACING)
+                delay = RETRY_DELAY
 
     def _submit_worker(self) -> None:
         """Background worker that submits queued numbers, leaving whatever it cannot send for the next run."""
