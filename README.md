@@ -7,24 +7,26 @@ FactorDB and mersenne.ca.
 
 ## Features
 
-* Uses multiple factoring methods, including trial factoring, rho, P-1, ECM, SIQS
-  and NFS (via CADO-NFS or YAFU's built-in NFS).
-* Automatically measures duration and success rate to determine the optimal ECM
+- Uses multiple factoring methods, including trial factoring, rho, P-1, ECM,
+  SIQS and NFS (via CADO-NFS or YAFU's built-in NFS).a
+- Automatically measures duration and success rate to determine the optimal ECM
   crossover threshold and the final choice of SIQS, YAFU NFS or CADO-NFS.
-* As an alternative to the built-in breadth-first factoring, can also simply
+- As an alternative to the built-in breadth-first factoring, can also simply
   directly use YAFU for each fetched number.
-* Automatically fetches composite numbers and submits results, either from FactorDB
-  or from the mersenne.ca Aliquot composite service.
+- Automatically fetches composite numbers and submits results, either from
+  FactorDB or from the mersenne.ca Aliquot composite service.
 
 ## Usage
 
-`factortool` currently leverages both [YAFU](https://github.com/bbuhrow/yafu) and
-[CADO-NFS](https://gitlab.inria.fr/cado-nfs/cado-nfs) to do most of the factoring
-work. As such, you will need a correctly configured installation of YAFU. For NFS
-support, you will need either YAFU's NFS configured, or CADO-NFS installed.
+`factortool` currently leverages both [YAFU](https://github.com/bbuhrow/yafu)
+and [CADO-NFS](https://gitlab.inria.fr/cado-nfs/cado-nfs) to do most of the
+factoring work. As such, you will need a correctly configured installation of
+YAFU. For NFS support, you will need either YAFU's NFS configured, or CADO-NFS
+installed.
 
-The recommended way to install the program is to have [uv](https://docs.astral.sh/uv/)
-installed, and to simply run the program with `uv run factortool`.
+The recommended way to install the program is to have
+[uv](https://docs.astral.sh/uv/) installed, and to simply run the program with
+`uv run factortool`.
 
 Copy the `config.dist.json` to `config.json` and edit it as appropriate. Only
 `backend`, `max_threads` and `yafu_path` are required. If you are using the
@@ -40,32 +42,32 @@ exist if it is set.
 
 You may then run the program. It accepts the following options:
 
-* `--config_path`: To specify a configuration file other than config.json.
-* `--log_level`: The minimum level of log messages to show, overriding the
+- `--config_path`: To specify a configuration file other than config.json.
+- `--log_level`: The minimum level of log messages to show, overriding the
   `log_level` setting for this run. One of `TRACE`, `DEBUG`, `INFO`, `SUCCESS`,
   `WARNING`, `ERROR` or `CRITICAL`, in any case.
-* `--min_digits`: The minimium number of digits fetched composite numbers should
+- `--min_digits`: The minimium number of digits fetched composite numbers should
   have. Must be at least 1.
-* `--max_digits`: The maximum number of digits fetched composite numbers should
+- `--max_digits`: The maximum number of digits fetched composite numbers should
   have. Required by the mersenne.ca backend.
-* `--batch_size`: The number of composite numbers to fetch. A value of 0 (default)
-  attempts to use an automatic batch size to meet a target time.
-* `--target_duration`: The number of seconds to target when using an automatic
+- `--batch_size`: The number of composite numbers to fetch. A value of 0
+  (default) attempts to use an automatic batch size to meet a target time.
+- `--target_duration`: The number of seconds to target when using an automatic
   batch size. Must be positive. The default is 600 seconds (ten minutes).
-* `--time_limit`: The number of seconds after which no more factorizations are
+- `--time_limit`: The number of seconds after which no more factorizations are
   started. The run ends once the current one finishes. A value of 0 means no
   limit. By default, a `factordb` run with an automatic batch size is limited to
   twice the target duration, and any other run has no limit.
-* `--hard_time_limit`: The number of seconds after which the factorizations
+- `--hard_time_limit`: The number of seconds after which the factorizations
   still running are abandoned, ending the run. A value of 0 (default) means no
   limit. This is the only protection against a hung tool on `factordb` (on
   `mersenne_ca`, the assignment expiry time will provide a limit), but it will
   also kill a slow factorization, so choose it to suit the largest numbers you
   expect to work on.
-* `--skip_count`: How many composite numbers to skip on FactorDB. Useful for working
-  at an offset to avoid conflicts. Not supported by the mersenne.ca backend (which
-  assigns distinct work to each user).
-* `--no_new_work`: Work only any retained assignments from a previous run, and
+- `--skip_count`: How many composite numbers to skip on FactorDB. Useful for
+  working at an offset to avoid conflicts. Not supported by the mersenne.ca
+  backend (which assigns distinct work to each user).
+- `--no_new_work`: Work only any retained assignments from a previous run, and
   don't fetch any more. Only supported by the mersenne.ca backend.
 
 Log messages are written to standard error. The `log_level` setting (`INFO` by
@@ -105,12 +107,12 @@ another instance is already running (exit status 8).
 
 Repeated interrupts escalate:
 
-* The first stops `factortool` from fetching any more work, but lets the already
+- The first stops `factortool` from fetching any more work, but lets the already
   fetched batch run to completion as normal (subject to the time limit, if any).
-* The second gives up on the rest of the batch, but completes the current
+- The second gives up on the rest of the batch, but completes the current
   factorization. Unfinished work is handled as described under
   [Backends](#backends).
-* The third abandons the current factorization.
+- The third abandons the current factorization.
 
 All three submit whatever results are in hand before exiting. An interrupt that
 arrives while those results are being submitted stops the submission, and leaves
@@ -118,7 +120,8 @@ the rest for the next run.
 
 SIGTERM, SIGHUP and, on Windows, Ctrl-Break have the same effect as the third
 interrupt. Once the current factorization has been abandoned, one more signal
-exits immediately, without saving anything further or submitting the remaining results.
+exits immediately, without saving anything further or submitting the remaining
+results.
 
 A YAFU or CADO-NFS run that lasts more than half an hour is noted in the log
 with a warning, which repeats every half hour until it finishes. Nothing is done
@@ -141,29 +144,32 @@ configured.
 In `standard` mode, once an appropriate amount of ECM is done, each remaining
 composite is finished with one of three methods:
 
-* SIQS, via YAFU, for composites of up to `max_siqs_digits` digits.
-* YAFU's built-in NFS, if `use_nfs_yafu` is `true`, for composites of at least
+- SIQS, via YAFU, for composites of up to `max_siqs_digits` digits.
+- YAFU's built-in NFS, if `use_nfs_yafu` is `true`, for composites of at least
   85 digits. Configure YAFU via the `yafu.ini` configuration file, and make sure
   `nfs()` works in YAFU.
-* CADO-NFS, if `use_nfs_cado` is `true`, for composites of at least 57 digits.
+- CADO-NFS, if `use_nfs_cado` is `true`, for composites of at least 57 digits.
 
 Among the eligible methods, `factortool` picks the one with the lowest average
-time for that digit count. A method without any data is run first to collect a sample.
+time for that digit count. A method without any data is run first to collect a
+sample.
 
 ## Backends
 
 The `backend` setting in config.json selects the source of composite numbers and
 where factors are submitted.
 
-* `factordb`: fetches composites from FactorDB and submits factors back there,
-  using its [JSON-RPC API](https://factordb.com/api.php). Set `factordb_api_token`
-  to submit as your account (and be credited for factors); otherwise, results
-  are submitted anonymously. You can get your API token by signing in and
-  clicking your username in the upper right to access your account page.
-* `mersenne_ca`: fetches assigned composites from the [mersenne.ca Aliquot composite
-  service](https://www.mersenne.ca/aliquot/?compositelist=1) and submits results
-  through that service. Set `gimps_login` to your GIMPS username. `--max_digits`
-  is required, and `--skip_count` is not supported (or needed to avoid conflict).
+- `factordb`: fetches composites from FactorDB and submits factors back there,
+  using its [JSON-RPC API](https://factordb.com/api.php). Set
+  `factordb_api_token` to submit as your account (and be credited for factors);
+  otherwise, results are submitted anonymously. You can get your API token by
+  signing in and clicking your username in the upper right to access your
+  account page.
+- `mersenne_ca`: fetches assigned composites from the [mersenne.ca Aliquot
+  composite service](https://www.mersenne.ca/aliquot/?compositelist=1) and
+  submits results through that service. Set `gimps_login` to your GIMPS
+  username. `--max_digits` is required, and `--skip_count` is not supported (or
+  needed to avoid conflict).
 
 For `factordb`, partial factorizations are submitted if a run ends after finding
 one or more factors.
@@ -189,8 +195,9 @@ submit, and removed once the backend has accepted or rejected it. Whatever is
 left when `factortool` exits is submitted at the start of the next run with the
 same backend. Unsent results do not change the exit status.
 
-If the backend refuses a submission request outright (for example, with HTTP 403),
-the results in it are kept for the next run rather than treated as rejected.
+If the backend refuses a submission request outright (for example, with HTTP
+403), the results in it are kept for the next run rather than treated as
+rejected.
 
 A result that still has not been submitted is eventually discarded: after 30
 days for `factordb`, or when its assignment expires for `mersenne_ca`. Rate
@@ -205,8 +212,8 @@ and the configured account for the selected backend. For example:
 factortool/0.1.0 (Username; +https://github.com/aexoden/factortool)
 ```
 
-Set `user_agent` in config.json to replace the value entirely if you would rather
-send something else.
+Set `user_agent` in config.json to replace the value entirely if you would
+rather send something else.
 
 ## YAFU Working Directories
 
@@ -219,23 +226,24 @@ YAFU binary; set `yafu_ini_path` to use a different file.
 
 ## Notes
 
-I suspect using YAFU directly is faster, though I have not done an apples-to-apples
-test. The `standard` mode is left in both for fun and as a historical curiosity.
+I suspect using YAFU directly is faster, though I have not done an
+apples-to-apples test. The `standard` mode is left in both for fun and as a
+historical curiosity.
 
 ## Error Codes
 
 The program returns the following non-zero error codes:
 
-* 1: Configuration error, invalid arguments or invalid statistics data
-* 2: Interrupted (any interrupt level) or asked to end by a signal
-* 3: Time limit exceeded
-* 4: Unexpected CADO-NFS failure
-* 5: Unexpected YAFU failure
-* 6: Permanent HTTP error in the backend
-* 7: Error saving state or results or during shutdown
-* 8: Another instance is using the state or working directory
+- 1: Configuration error, invalid arguments or invalid statistics data
+- 2: Interrupted (any interrupt level) or asked to end by a signal
+- 3: Time limit exceeded
+- 4: Unexpected CADO-NFS failure
+- 5: Unexpected YAFU failure
+- 6: Permanent HTTP error in the backend
+- 7: Error saving state or results or during shutdown
+- 8: Another instance is using the state or working directory
 
 ## License
 
-`factortool` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html)
-license.
+`factortool` is distributed under the terms of the
+[MIT](https://spdx.org/licenses/MIT.html) license.
