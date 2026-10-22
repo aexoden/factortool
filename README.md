@@ -87,34 +87,23 @@ factorization, the progress of each batch and a summary of each submission
 request, and `DEBUG` adds detail such as each submitted factorization, every
 external tool invocation and every HTTP request.
 
-Note that the program itself does not loop. Such functionality could be added in
-theory, but this way ensures memory leaks aren't an issue. I find it convenient
-to use a shell script such as the following:
+Note that the program itself does not loop. Such functionality may be added in
+the future. Until then, `factortool` exits with status 0 only when it is safe to
+start the next run, so a shell loop such as the following works well:
 
 ```sh
-bash -c '
-    while true ; do
-        uv run factortool --min_digits 55 --batch_size 60 --skip_count 277 ;
-        status=$? ;
-        if [ $status -eq 2 ] || [ $status -eq 6 ] || [ $status -eq 8 ]; then
-            exit $status ;
-        fi ;
-        sleep 1 ;
-    done
-'
+while uv run factortool --min_digits 55 --batch_size 60 --skip_count 277; do
+    sleep 1
+done
 ```
 
-I typically run this as a one-liner. It's been split into multiple lines here to
-keep the line length down. The loop runs under `bash -c` so that `exit` only
-ends the loop, rather than the entire shell it was typed into. This also makes
-it easy to prefix the whole loop with another command, such as `taskset -c
-12-15` to pin `factortool` (and the processes it spawns) to specific CPU cores.
+The loop stops as soon as `factortool` exits with any other status. To pin
+`factortool` (and the processes it spawns) to specific CPU cores, prefix the
+command in the loop with something like 'taskset -c 12-15'.
 
-To stop the script, simply press Ctrl-C. `factortool` will finish the current
-batch it is working on, submit any finished results, and then exit. The shell
-script is designed to stop if `factortool` exits due to an interrupt such as
-Ctrl-C (exit status 2), for a permanent HTTP error (exit status 6) or because
-another instance is already running (exit status 8).
+To stop the loop, simply press Ctrl-C. `factortool` will finish the current
+batch it is working on, submit any finished results, and then exit with status
+130, ending the loop.
 
 Repeated interrupts escalate:
 
@@ -142,9 +131,8 @@ If YAFU or CADO-NFS fail on a number (by exiting with an error or returning an
 incomplete factorization), the failure is logged and the batch continues. A
 final factoring method that fails is first retried with the other eligible final
 methods. If the same method fails three times in a row, the installation is
-assumed to be broken and `factortool` exits with status 5 (YAFU) or 4
-(CADO-NFS). The count carries over from one run to the next, and only resets
-once that method succeeds.
+assumed to be broken and `factortool` exits with status 4. The count carries
+over from one run to the next, and only resets once that method succeeds.
 
 If you are using direct YAFU support (by setting `factoring_mode` to `yafu` in
 config.json), I recommend ensuring YAFU's NFS functionality is correctly
@@ -241,18 +229,23 @@ I suspect using YAFU directly is faster, though I have not done an
 apples-to-apples test. The `standard` mode is left in both for fun and as a
 historical curiosity.
 
-## Error Codes
+## Exit Statuses
 
-The program returns the following non-zero error codes:
+`factortool` exits with one of the following statuses:
 
-- 1: Configuration error, invalid arguments or invalid statistics data
-- 2: Interrupted (any interrupt level) or asked to end by a signal
-- 3: Time limit exceeded
-- 4: Unexpected CADO-NFS failure
-- 5: Unexpected YAFU failure
-- 6: Permanent HTTP error in the backend
-- 7: Error saving state or results or during shutdown
-- 8: Another instance is using the state or working directory
+- 0: The run completed, including a run that ended due to reaching the time limit
+- 1: An unexpected error, reported with a traceback
+- 2: Invalid arguments, configuration or statistics data, or state or working
+  directories that can't be used
+- 3: Another instance is using the state or working directory
+- 4: YAFU or CADO-NFS failed repeatedly
+- 5: The backend refused a request with a permanent HTTP error
+- 6: Error saving state or results or during shutdown
+- 130: Interrupted (any interrupt level) or asked to end by a signal
+
+The analyzer exits with status 2 for invalid arguments, configuration or
+statistics data, and with status 1 if it has no YAFU, SIQS or NFS data for the
+requested digit count.
 
 ## License
 

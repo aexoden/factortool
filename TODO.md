@@ -7,9 +7,6 @@ later ones.
 
 ## Minor Features
 
-- Change the README's shell loop to stop on any exit status other than 0 and 3.
-  It currently only stops on 2, 6 and 8, so a configuration error, invalid
-  argument, tool failure or cleanup failure (7) retries every second.
 - Verify whether `cado-nfs.py` uses its own directory under `/tmp` unless given
   `--workdir`. If so, pass the managed working directory so an aborted run
   doesn't leave it behind. The `stdin` passed to it also looks unnecessary.
@@ -56,10 +53,9 @@ later ones.
   The obvious alternatives are click and typer, both of which are far more
   active projects than Tap, but this list isn't exhaustive. If opting to keep
   Tap, at least standardize on using hyphens rather than underscores in option
-  names. At the same time, consider looking at the current exit status codes,
-  and see if there are changes that can be made to improve the codes or to
-  better follow any standards. The analyzer exits with status 2 when it has no
-  data for a digit count, which is the status that means interrupted elsewhere.
+  names. Whatever the parser, invalid arguments should probably keep exiting
+  with status 2 (`ExitStatus.INVALID_INPUT`), as click and argparse both do by
+  default.
 - Investigate switching from the FactorDB list_by_type endpoint to the download
   endpoint. The offset option would no longer be supported, but that was largely
   intended to minimize the risk of overlapping work, and the `random` option

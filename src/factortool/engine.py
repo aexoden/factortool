@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from factortool.config import Config
 
 
-class ExitStatus(Enum):
-    """Exit status codes for the factorization engine."""
+class EngineStatus(Enum):
+    """Status codes for the factorization engine."""
 
     SUCCESS = 0
     INTERRUPTED = 1
@@ -137,19 +137,19 @@ class FactorEngine:
 
             logger.warning("Abandoned {}, as the assignment for {} has expired", e, format_number(number.n))
 
-    def _stop_status(self, stage: str | None = None) -> ExitStatus | None:
+    def _stop_status(self, stage: str | None = None) -> EngineStatus | None:
         """Check if the run should end early, either due to an interrupt or the time limit.
 
         If a stage is named, an interrupt is logged as leaving that stage's remaining factorizations unfinished.
 
         Returns:
-            ExitStatus | None: The status to end the run with, or None if it should continue.
+            EngineStatus | None: The status to end the run with, or None if it should continue.
         """
         if self._interrupts.stop_factoring:
             if stage is not None:
                 logger.info("Not finishing remaining {} factorizations due to interrupt", stage)
 
-            return ExitStatus.INTERRUPTED
+            return EngineStatus.INTERRUPTED
 
         if self._is_time_limit_exceeded():
             logger.warning(
@@ -157,7 +157,7 @@ class FactorEngine:
                 time.monotonic() - self._start_time,
                 self._limits.earliest,
             )
-            return ExitStatus.TIME_LIMIT_EXCEEDED
+            return EngineStatus.TIME_LIMIT_EXCEEDED
 
         return None
 
@@ -202,11 +202,11 @@ class FactorEngine:
     # Public Methods
     #
 
-    def run(self, numbers: Collection[Number], limits: TimeLimits | None = None) -> ExitStatus:
+    def run(self, numbers: Collection[Number], limits: TimeLimits | None = None) -> EngineStatus:
         """Run factorization using the configured mode.
 
         Returns:
-            ExitStatus: The exit status of the factorization run.
+            EngineStatus: The ending status of the factorization run.
 
         A number that an external tool fails on is left unfactored, and the run continues with the rest.
 
@@ -228,15 +228,15 @@ class FactorEngine:
                     status = self._run_standard(numbers)
         except Interrupted:
             logger.warning("Abandoned the factorization in progress")
-            status = ExitStatus.INTERRUPTED
+            status = EngineStatus.INTERRUPTED
 
         return status
 
-    def _run_yafu(self, numbers: Collection[Number]) -> ExitStatus:
+    def _run_yafu(self, numbers: Collection[Number]) -> EngineStatus:
         """Factor numbers using direct YAFU calls.
 
         Returns:
-            ExitStatus: The exit status of the factorization run.
+            EngineStatus: The ending status of the factorization run.
         """
         logger.info("Using direct YAFU factoring mode for {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
 
@@ -255,13 +255,13 @@ class FactorEngine:
         if (status := self._stop_status()) is not None:
             return status
 
-        return ExitStatus.SUCCESS
+        return EngineStatus.SUCCESS
 
-    def _run_standard(self, numbers: Collection[Number]) -> ExitStatus:  # ruff: ignore[complex-structure, too-many-branches]
+    def _run_standard(self, numbers: Collection[Number]) -> EngineStatus:  # ruff: ignore[complex-structure, too-many-branches]
         """Factor numbers using the built-in sequence of methods.
 
         Returns:
-            ExitStatus: The exit status of the factorization run.
+            EngineStatus: The ending status of the factorization run.
         """
         # Attempt to trial factor each number.
         logger.info("Attempting trial factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
@@ -357,4 +357,4 @@ class FactorEngine:
                 if (status := self._stop_status("final")) is not None:
                     return status
 
-        return ExitStatus.SUCCESS
+        return EngineStatus.SUCCESS

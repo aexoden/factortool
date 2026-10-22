@@ -26,9 +26,9 @@ from factortool.assignments import Assignment, AssignmentStore, assignment_expir
 from factortool.backend import Backend, FetchCriteria, create_backend
 from factortool.batch import BatchController, BatchKey
 from factortool.config import BackendName, FactoringMode, load_config
-from factortool.engine import ExitStatus, FactorEngine, TimeLimits
+from factortool.engine import EngineStatus, FactorEngine, TimeLimits
+from factortool.exit_status import ExitStatus
 from factortool.http import PermanentHttpError
-from factortool.interrupt import EXIT_STATUS as INTERRUPTED_EXIT_STATUS
 from factortool.interrupt import Interrupted, InterruptState
 from factortool.lock import DirectoryInUseError, lock_directories
 from factortool.number import Number, Outcome, format_results
@@ -42,20 +42,8 @@ if TYPE_CHECKING:
 # How far past the target duration an automatically sized batch may run by default before no more work is started.
 TIME_LIMIT_FACTOR = 2.0
 
-# The exit status of a run that is cut short by its time limit.
-TIME_LIMIT_EXIT_STATUS = 3
-
-# The exit status of a run with a permanent HTTP error.
-PERMANENT_HTTP_ERROR_EXIT_STATUS = 6
-
-# The exit status of a run that could not save its state or results or shut down its backend.
-CLEANUP_FAILED_EXIT_STATUS = 7
-
-# The exit status of a run that found another instance using its state or working directory.
-ALREADY_RUNNING_EXIT_STATUS = 8
-
 # Exit statuses that do not report an error, and so give way to a cleanup failure.
-NON_ERROR_EXIT_STATUSES = frozenset({0, INTERRUPTED_EXIT_STATUS, TIME_LIMIT_EXIT_STATUS})
+NON_ERROR_EXIT_STATUSES = frozenset({ExitStatus.SUCCESS, ExitStatus.INTERRUPTED})
 
 
 class Arguments(ConfigArguments):
@@ -108,32 +96,32 @@ def validate_argument_ranges(args: Arguments) -> None:
     """Reject arguments that are out of range."""
     if args.min_digits < 1:
         logger.error("--min_digits ({}) must be at least 1", args.min_digits)
-        sys.exit(1)
+        sys.exit(ExitStatus.INVALID_INPUT)
 
     if args.max_digits < 0:
         logger.error("--max_digits ({}) cannot be negative", args.max_digits)
-        sys.exit(1)
+        sys.exit(ExitStatus.INVALID_INPUT)
 
     if 0 < args.max_digits < args.min_digits:
         logger.error("--max_digits ({}) is below --min_digits ({})", args.max_digits, args.min_digits)
-        sys.exit(1)
+        sys.exit(ExitStatus.INVALID_INPUT)
 
     if args.batch_size < 0:
         logger.error("--batch_size ({}) cannot be negative", args.batch_size)
-        sys.exit(1)
+        sys.exit(ExitStatus.INVALID_INPUT)
 
     if not (math.isfinite(args.target_duration) and args.target_duration > 0):
         logger.error("--target_duration ({}) must be a positive number of seconds", args.target_duration)
-        sys.exit(1)
+        sys.exit(ExitStatus.INVALID_INPUT)
 
     for option, limit in (("--time_limit", args.time_limit), ("--hard_time_limit", args.hard_time_limit)):
         if limit is not None and not (math.isfinite(limit) and limit >= 0):
             logger.error("{} ({}) must be a number of seconds, or 0 for no limit", option, limit)
-            sys.exit(1)
+            sys.exit(ExitStatus.INVALID_INPUT)
 
     if args.skip_count < 0:
         logger.error("--skip_count ({}) cannot be negative", args.skip_count)
-        sys.exit(1)
+        sys.exit(ExitStatus.INVALID_INPUT)
 
 
 def validate_arguments(args: Arguments, backend_name: str) -> None:
@@ -143,15 +131,15 @@ def validate_arguments(args: Arguments, backend_name: str) -> None:
     if backend_name == "mersenne_ca":
         if args.max_digits <= 0:
             logger.error("The mersenne.ca backend requires --max_digits")
-            sys.exit(1)
+            sys.exit(ExitStatus.INVALID_INPUT)
 
         if args.skip_count != 0:
             logger.error("The mersenne.ca backend does not support --skip_count, since it assigns distinct work")
-            sys.exit(1)
+            sys.exit(ExitStatus.INVALID_INPUT)
     elif args.no_new_work:
         # FactorDB doesn't assign work, and we don't retain unfinished work, so this option would have no effect.
         logger.error("The FactorDB backend does not support --no_new_work, since it does not assign work.")
-        sys.exit(1)
+        sys.exit(ExitStatus.INVALID_INPUT)
 
 
 def validate_tools(config: Config) -> None:
@@ -162,7 +150,7 @@ def validate_tools(config: Config) -> None:
         logger.error("Configuration error: {}", problem)
 
     if problems:
-        sys.exit(1)
+        sys.exit(ExitStatus.INVALID_INPUT)
 
 
 def report_summary(numbers: Collection[Number]) -> None:
@@ -287,10 +275,10 @@ def start_backend(config: Config, stats: FactoringStats, interrupts: InterruptSt
         return create_backend(config, stats, interrupts)
     except Interrupted:
         logger.warning("Interrupted while starting the {} backend", config.backend)
-        sys.exit(INTERRUPTED_EXIT_STATUS)
+        sys.exit(ExitStatus.INTERRUPTED)
     except PermanentHttpError as e:
         logger.error("Unable to start the {} backend: {}", config.backend, e)
-        sys.exit(PERMANENT_HTTP_ERROR_EXIT_STATUS)
+        sys.exit(ExitStatus.PERMANENT_HTTP_ERROR)
 
 
 def lock_instance(config: Config) -> contextlib.ExitStack:
@@ -303,10 +291,10 @@ def lock_instance(config: Config) -> contextlib.ExitStack:
         return lock_directories([config.state_path, config.work_path])
     except DirectoryInUseError as e:
         logger.error("{}", e)
-        sys.exit(ALREADY_RUNNING_EXIT_STATUS)
+        sys.exit(ExitStatus.ALREADY_RUNNING)
     except OSError as e:
         logger.error("Unable to lock the state and working directories: {}", e)
-        sys.exit(1)
+        sys.exit(ExitStatus.INVALID_INPUT)
 
 
 def get_time_limits(args: Arguments, backend: Backend) -> TimeLimits:
@@ -368,11 +356,11 @@ def preserve_unfinished(backend: Backend, assignments: AssignmentStore, numbers:
         assignments.save(retained)
 
 
-def run_batch(args: Arguments, session: Session) -> int:
+def run_batch(args: Arguments, session: Session) -> ExitStatus:
     """Acquire a batch of numbers, factor them, and save state and results.
 
     Returns:
-        int: The exit status for the batch, not counting any cleanup failure.
+        ExitStatus: The exit status for the batch, not counting any cleanup failure.
     """
     config, stats, backend = session.config, session.stats, session.backend
     limits = get_time_limits(args, backend)
@@ -412,14 +400,14 @@ def run_batch(args: Arguments, session: Session) -> int:
         )
     except PermanentHttpError as e:
         logger.error("Unable to fetch numbers: {}", e)
-        return PERMANENT_HTTP_ERROR_EXIT_STATUS
+        return ExitStatus.PERMANENT_HTTP_ERROR
 
     if not numbers:
         logger.warning("No numbers to factor")
-        return INTERRUPTED_EXIT_STATUS if session.interrupts.interrupted else 0
+        return ExitStatus.INTERRUPTED if session.interrupts.interrupted else ExitStatus.SUCCESS
 
-    status = ExitStatus.SUCCESS
-    tool_error: ToolError | None = None
+    status = EngineStatus.SUCCESS
+    tool_failed = False
     start_time = time.monotonic()
 
     # Each number retains its own state, so we can safely process them independently, regardless of what happens in the
@@ -428,7 +416,7 @@ def run_batch(args: Arguments, session: Session) -> int:
         status = FactorEngine(config, session.interrupts).run(sorted(numbers), limits)
     except ToolError as e:
         logger.critical("{}", e)
-        tool_error = e
+        tool_failed = True
     finally:
         duration = time.monotonic() - start_time
         factored_count = len([number for number in numbers if number.factored])
@@ -447,23 +435,21 @@ def run_batch(args: Arguments, session: Session) -> int:
         cleanup.run("save statistics", stats.save_data)
         cleanup.run("save tool state", tool_failures.save, config.tool_state_path)
 
-    if tool_error is not None:
-        return tool_error.exit_status
+    if tool_failed:
+        return ExitStatus.TOOL_FAILURE
 
-    if status == ExitStatus.INTERRUPTED or session.interrupts.interrupted:
-        return INTERRUPTED_EXIT_STATUS
+    if status == EngineStatus.INTERRUPTED or session.interrupts.interrupted:
+        return ExitStatus.INTERRUPTED
 
-    if status == ExitStatus.TIME_LIMIT_EXCEEDED:
-        return TIME_LIMIT_EXIT_STATUS
-
-    return 0
+    # Reaching the time limit is the expected end of a batch that overran its target, and it's not an error.
+    return ExitStatus.SUCCESS
 
 
-def run_session(args: Arguments, config: Config) -> int:
+def run_session(args: Arguments, config: Config) -> ExitStatus:
     """Run a factoring session against state that no other instance is using.
 
     Returns:
-        int: The exit status for the session.
+        ExitStatus: The exit status for the session.
     """
     interrupts = InterruptState()
     interrupts.install()
@@ -472,7 +458,7 @@ def run_session(args: Arguments, config: Config) -> int:
         stats = FactoringStats(config.stats_path)
     except InvalidStatsError as e:
         logger.error("{}", e)
-        sys.exit(1)
+        sys.exit(ExitStatus.INVALID_INPUT)
 
     tool_failures.load(config.tool_state_path)
 
@@ -490,10 +476,10 @@ def run_session(args: Arguments, config: Config) -> int:
 
     # An interrupt may have arrived while the backend was flushing its submissions.
     if interrupts.interrupted and status in NON_ERROR_EXIT_STATUSES:
-        status = INTERRUPTED_EXIT_STATUS
+        status = ExitStatus.INTERRUPTED
 
     if session.cleanup.failed and status in NON_ERROR_EXIT_STATUSES:
-        status = CLEANUP_FAILED_EXIT_STATUS
+        status = ExitStatus.CLEANUP_FAILED
 
     return status
 
@@ -504,7 +490,7 @@ def main() -> None:
 
     if args.version:
         print(f"Factortool version: {__version__}")  # ruff: ignore[print]
-        sys.exit(0)
+        sys.exit(ExitStatus.SUCCESS)
 
     setup_logger(args.log_level)
 
@@ -524,5 +510,5 @@ def main() -> None:
     with lock_instance(config):
         status = run_session(args, config)
 
-    if status != 0:
+    if status != ExitStatus.SUCCESS:
         sys.exit(status)

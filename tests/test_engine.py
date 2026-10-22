@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 import pytest
 
 from factortool.constants import MAX_CONSECUTIVE_TOOL_FAILURES
-from factortool.engine import ExitStatus, FactorEngine, TimeLimits
+from factortool.engine import EngineStatus, FactorEngine, TimeLimits
 from factortool.interrupt import ABORT, FINISH_BATCH, POLL_INTERVAL, STOP_SOON, Interrupted, InterruptState
 from factortool.number import Number
 from factortool.stats import ECMCutoffs, FactoringStats
@@ -48,11 +48,11 @@ def run_interrupted_on(
     count: int,
     interrupt_after: int,
     level: int = STOP_SOON,
-) -> tuple[ExitStatus, int]:
+) -> tuple[EngineStatus, int]:
     """Run the engine, raising an interrupt after a given number of factorizations.
 
     Returns:
-        tuple[ExitStatus, int]: The status the engine reported and the number of completed factorizations.
+        tuple[EngineStatus, int]: The status the engine reported and the number of completed factorizations.
     """
     config = make_config().model_copy(update={"factoring_mode": mode})
     interrupts = InterruptState()
@@ -90,7 +90,7 @@ def test_interrupt_is_reported_regardless_of_when_it_arrives(
     """Test that an interrupt is reported even when it arrives during the final number."""
     status, _ = run_interrupted_on(monkeypatch, mode, count, interrupt_after)
 
-    assert status == ExitStatus.INTERRUPTED
+    assert status == EngineStatus.INTERRUPTED
 
 
 @pytest.mark.parametrize("mode", ["yafu", "standard"])
@@ -98,7 +98,7 @@ def test_uninterrupted_run_reports_success(monkeypatch: pytest.MonkeyPatch, mode
     """Test that an uninterrupted run reports success."""
     status, _ = run_interrupted_on(monkeypatch, mode, 3, 0)
 
-    assert status == ExitStatus.SUCCESS
+    assert status == EngineStatus.SUCCESS
 
 
 def test_finished_ecm_number_does_not_resume_when_statistics_change(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -134,7 +134,7 @@ def test_finished_ecm_number_does_not_resume_when_statistics_change(monkeypatch:
     monkeypatch.setattr("factortool.number.factor_ecm", factor_ecm, raising=True)
     monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
 
-    assert FactorEngine(config, InterruptState()).run([finished, continuing]) == ExitStatus.SUCCESS
+    assert FactorEngine(config, InterruptState()).run([finished, continuing]) == EngineStatus.SUCCESS
     assert ecm_calls == [(100, 2), (102, 2), (102, 3), (102, 4)]
     assert final_calls == [100, 102]
     assert finished.factored
@@ -149,7 +149,7 @@ def test_a_single_interrupt_finishes_the_batch(
     _, expected = run_interrupted_on(monkeypatch, mode, 3, 0)
     status, completed = run_interrupted_on(monkeypatch, mode, 3, 1, level=FINISH_BATCH)
 
-    assert status == ExitStatus.SUCCESS
+    assert status == EngineStatus.SUCCESS
     assert completed == expected
 
 
@@ -161,7 +161,7 @@ def test_interrupt_before_the_run_starts_no_yafu_factorization(monkeypatch: pyte
     monkeypatch.setattr("factortool.number.Number.factor_yafu_direct", factor, raising=True)
     interrupts._level = STOP_SOON
 
-    assert engine.run([make_number(n) for n in COMPOSITES]) == ExitStatus.INTERRUPTED
+    assert engine.run([make_number(n) for n in COMPOSITES]) == EngineStatus.INTERRUPTED
     factor.assert_not_called()
 
 
@@ -179,7 +179,7 @@ def test_abandoned_factorization_leaves_the_number_unfactored(
     for function in ("factor_tf", "factor_yafu_direct"):
         monkeypatch.setattr(f"factortool.number.{function}", abandon, raising=True)
 
-    assert engine.run([number]) == ExitStatus.INTERRUPTED
+    assert engine.run([number]) == EngineStatus.INTERRUPTED
     assert number.composite_factors == [COMPOSITES[0]]
     assert not number.factored
 
@@ -233,7 +233,7 @@ def test_an_abort_kills_the_running_tool(
         status = engine.run([number])
         thread.join()
 
-    assert status == ExitStatus.INTERRUPTED
+    assert status == EngineStatus.INTERRUPTED
     assert time.monotonic() - start < TOOL_STOP_TIMEOUT
     assert finished.is_set()
     assert heartbeat_stopped(heartbeat)
@@ -260,17 +260,19 @@ def test_an_abort_kills_a_tool_started_after_it(monkeypatch: pytest.MonkeyPatch,
         start = time.monotonic()
         status = engine.run([number])
 
-    assert status == ExitStatus.INTERRUPTED
+    assert status == EngineStatus.INTERRUPTED
     assert time.monotonic() - start < TOOL_STOP_TIMEOUT
     assert not heartbeat.exists() or heartbeat_stopped(heartbeat)
     assert number.composite_factors == [COMPOSITES[0]]
 
 
-def run_yafu_mode_with_15_failing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, numbers: list[Number]) -> ExitStatus:
+def run_yafu_mode_with_15_failing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, numbers: list[Number]
+) -> EngineStatus:
     """Run the engine in YAFU mode with a YAFU that exits with an error for 15 and factors 21.
 
     Returns:
-        ExitStatus: The status the engine reported.
+        EngineStatus: The status the engine reported.
     """
 
     def yafu(cmd: list[str], *_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -294,7 +296,7 @@ def test_a_tool_failure_leaves_its_number_unfactored_and_continues(
     """Test that a number a tool fails on is left unfactored while the rest of the batch is still factored."""
     failing, succeeding = make_number(15), make_number(21)
 
-    assert run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [failing, succeeding]) == ExitStatus.SUCCESS
+    assert run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [failing, succeeding]) == EngineStatus.SUCCESS
     assert failing.composite_factors == [15]
     assert sorted(succeeding.prime_factors) == [3, 7]
 
@@ -309,7 +311,7 @@ def test_direct_yafu_returning_a_composite_unsplit_is_a_failure(
     run_tool = Mock(return_value=subprocess.CompletedProcess([], 0, "***factors found***\nC2 = 15\n", ""))
     monkeypatch.setattr("factortool.tools.run_tool", run_tool, raising=True)
 
-    assert FactorEngine(config, InterruptState()).run([number]) == ExitStatus.SUCCESS
+    assert FactorEngine(config, InterruptState()).run([number]) == EngineStatus.SUCCESS
     assert number.tool_failed
     assert stats.get_yafu_stats(2, 1) == (0, None)
 
@@ -320,7 +322,7 @@ def test_a_single_tool_failure_does_not_end_the_run_with_an_error(
     """Test that a batch whose only tool run failed is not taken as evidence of a broken installation."""
     number = make_number(15)
 
-    assert run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [number]) == ExitStatus.SUCCESS
+    assert run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [number]) == EngineStatus.SUCCESS
     assert number.tool_failed
 
 
@@ -329,10 +331,8 @@ def test_tool_failures_carry_over_from_one_run_to_the_next(monkeypatch: pytest.M
     for _ in range(MAX_CONSECUTIVE_TOOL_FAILURES - 1):
         run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [make_number(15)])
 
-    with pytest.raises(YafuError, match="has failed 3 times in a row") as raised:
+    with pytest.raises(YafuError, match="has failed 3 times in a row"):
         run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [make_number(15)])
-
-    assert raised.value.exit_status == YafuError.exit_status
 
 
 def test_a_number_set_aside_is_skipped_by_the_later_stages(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -353,7 +353,7 @@ def test_a_number_set_aside_is_skipped_by_the_later_stages(monkeypatch: pytest.M
     monkeypatch.setattr("factortool.number.Number.factor_final", record("final"), raising=True)
     monkeypatch.setattr("factortool.number.Number.ecm_cutoffs", ECMCutoffs(0, 0), raising=True)
 
-    assert engine.run([failing, other]) == ExitStatus.SUCCESS
+    assert engine.run([failing, other]) == EngineStatus.SUCCESS
     assert attempted == [("pm1", other.n), ("final", other.n)]
 
 
@@ -474,11 +474,11 @@ def run_with_clock(
     *,
     wait_before_run: float = 0.0,
     seconds_per_factorization: float = 0.0,
-) -> tuple[ExitStatus, list[Number]]:
+) -> tuple[EngineStatus, list[Number]]:
     """Run the engine against a fake clock that advances before the run and during each factorization.
 
     Returns:
-        tuple[ExitStatus, list[Number]]: The status the engine reported and the numbers it was given.
+        tuple[EngineStatus, list[Number]]: The status the engine reported and the numbers it was given.
     """
     clock = FakeClock()
     monkeypatch.setattr("factortool.engine.time", clock, raising=True)
@@ -505,7 +505,7 @@ def test_time_before_the_run_does_not_count_toward_the_time_limit(
     """Test that time passing between creating the engine and running it, such as a slow fetch, is not counted."""
     status, numbers = run_with_clock(monkeypatch, mode, TimeLimits(soft=1200.0), wait_before_run=7200.0)
 
-    assert status == ExitStatus.SUCCESS
+    assert status == EngineStatus.SUCCESS
     assert all(x.factored for x in numbers)
 
 
@@ -516,7 +516,7 @@ def test_exceeding_the_time_limit_ends_the_run(
     """Test that the run stops starting factorizations once the time limit has passed."""
     status, numbers = run_with_clock(monkeypatch, mode, TimeLimits(soft=1200.0), seconds_per_factorization=1000.0)
 
-    assert status == ExitStatus.TIME_LIMIT_EXCEEDED
+    assert status == EngineStatus.TIME_LIMIT_EXCEEDED
     assert [x.factored for x in numbers] == [True, True, False]
 
 
@@ -537,7 +537,7 @@ def test_exceeding_the_time_limit_stops_queued_concurrent_work(monkeypatch: pyte
 
     monkeypatch.setattr(f"factortool.number.Number.{stage}", factor, raising=True)
 
-    assert engine.run([make_number(n) for n in COMPOSITES], TimeLimits(soft=1200.0)) == ExitStatus.TIME_LIMIT_EXCEEDED
+    assert engine.run([make_number(n) for n in COMPOSITES], TimeLimits(soft=1200.0)) == EngineStatus.TIME_LIMIT_EXCEEDED
     assert attempted == COMPOSITES[:2]
 
 
@@ -548,7 +548,7 @@ def test_a_run_without_a_time_limit_is_never_cut_short(
     """Test that a run given no time limit finishes however long it takes."""
     status, numbers = run_with_clock(monkeypatch, mode, TimeLimits(), seconds_per_factorization=1e9)
 
-    assert status == ExitStatus.SUCCESS
+    assert status == EngineStatus.SUCCESS
     assert all(x.factored for x in numbers)
 
 
@@ -565,8 +565,8 @@ def test_each_run_gets_a_fresh_time_limit(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setattr("factortool.number.Number.factor_yafu_direct", factor, raising=True)
 
-    assert engine.run([make_number(COMPOSITES[0])], TimeLimits(soft=1200.0)) == ExitStatus.SUCCESS
-    assert engine.run([make_number(COMPOSITES[1])], TimeLimits(soft=1200.0)) == ExitStatus.SUCCESS
+    assert engine.run([make_number(COMPOSITES[0])], TimeLimits(soft=1200.0)) == EngineStatus.SUCCESS
+    assert engine.run([make_number(COMPOSITES[1])], TimeLimits(soft=1200.0)) == EngineStatus.SUCCESS
 
 
 @pytest.mark.parametrize("mode", ["yafu", "standard"])
@@ -589,7 +589,7 @@ def test_numbers_whose_assignment_has_expired_are_skipped(
     for method in ("factor_yafu_direct", "factor_tf"):
         monkeypatch.setattr(f"factortool.number.Number.{method}", factor, raising=True)
 
-    assert engine.run([lapsed, assigned, unassigned]) == ExitStatus.SUCCESS
+    assert engine.run([lapsed, assigned, unassigned]) == EngineStatus.SUCCESS
     assert attempted == {assigned.n, unassigned.n}
     assert not lapsed.factored
 
@@ -633,7 +633,7 @@ def test_the_hard_time_limit_kills_the_running_tool(
     tool_failures.reset()
     start = time.monotonic()
 
-    assert engine.run(numbers, TimeLimits(hard=1.0)) == ExitStatus.TIME_LIMIT_EXCEEDED
+    assert engine.run(numbers, TimeLimits(hard=1.0)) == EngineStatus.TIME_LIMIT_EXCEEDED
     assert time.monotonic() - start < TOOL_STOP_TIMEOUT
     assert heartbeat_stopped(tmp_path / f"heartbeat-{COMPOSITES[0]}")
     assert [x.composite_factors for x in numbers] == [[n] for n in COMPOSITES[:2]]
@@ -646,7 +646,7 @@ def test_a_hard_time_limit_below_the_soft_one_still_ends_the_run(monkeypatch: py
     limits = TimeLimits(soft=1e9, hard=1200.0)
     status, numbers = run_with_clock(monkeypatch, "yafu", limits, seconds_per_factorization=1000.0)
 
-    assert status == ExitStatus.TIME_LIMIT_EXCEEDED
+    assert status == EngineStatus.TIME_LIMIT_EXCEEDED
     assert [x.factored for x in numbers] == [True, True, False]
 
 
@@ -661,7 +661,7 @@ def test_a_tool_is_killed_when_its_assignment_expires(
     engine = slow_tool_engine(monkeypatch, tmp_path, mode, frozenset({other.n}))
     start = time.monotonic()
 
-    assert engine.run([expiring, other]) == ExitStatus.SUCCESS
+    assert engine.run([expiring, other]) == EngineStatus.SUCCESS
     assert time.monotonic() - start < TOOL_STOP_TIMEOUT
     assert heartbeat_stopped(tmp_path / f"heartbeat-{expiring.n}")
     assert expiring.composite_factors == [expiring.n]
@@ -679,7 +679,7 @@ def test_tools_running_at_once_are_each_killed_at_their_own_expiry(
     later.expires_at = now + 3.0
     engine = slow_tool_engine(monkeypatch, tmp_path, "standard", frozenset(), max_threads=2)
 
-    assert engine.run([sooner, later]) == ExitStatus.SUCCESS
+    assert engine.run([sooner, later]) == EngineStatus.SUCCESS
 
     # Each helper stops writing its heartbeat when it is killed.
     stopped = {x.n: (tmp_path / f"heartbeat-{x.n}").stat().st_mtime for x in (sooner, later)}
@@ -700,10 +700,10 @@ def test_a_number_expired_in_one_run_is_not_skipped_with_a_new_assignment_in_the
     factor = Mock()
     monkeypatch.setattr("factortool.number.Number.factor_yafu_direct", factor, raising=True)
 
-    assert engine.run([lapsed]) == ExitStatus.SUCCESS
+    assert engine.run([lapsed]) == EngineStatus.SUCCESS
     factor.assert_not_called()
 
-    assert engine.run([reassigned]) == ExitStatus.SUCCESS
+    assert engine.run([reassigned]) == EngineStatus.SUCCESS
     factor.assert_called_once_with(reassigned)
 
 
@@ -724,7 +724,7 @@ def test_composites_too_small_for_nfs_are_finished_with_siqs(monkeypatch: pytest
 
     monkeypatch.setattr("factortool.tools.run_tool", yafu, raising=True)
 
-    assert FactorEngine(config, InterruptState()).run([number]) == ExitStatus.SUCCESS
+    assert FactorEngine(config, InterruptState()).run([number]) == EngineStatus.SUCCESS
     assert methods[-1] == "siqs"
     assert number.factored
     assert sorted(number.prime_factors) == C41_FACTORS

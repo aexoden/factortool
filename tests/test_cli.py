@@ -24,8 +24,6 @@ from loguru import logger
 from factortool.assignments import Assignment, AssignmentStore
 from factortool.backend import FetchCriteria
 from factortool.cli.main import (
-    ALREADY_RUNNING_EXIT_STATUS,
-    CLEANUP_FAILED_EXIT_STATUS,
     Arguments,
     Cleanup,
     acquire_numbers,
@@ -39,18 +37,16 @@ from factortool.cli.main import (
     write_results,
 )
 from factortool.constants import MAX_CONSECUTIVE_TOOL_FAILURES
-from factortool.engine import ExitStatus, FactorEngine, TimeLimits
+from factortool.engine import EngineStatus, FactorEngine, TimeLimits
+from factortool.exit_status import ExitStatus
 from factortool.http import PermanentHttpError
-from factortool.interrupt import EXIT_STATUS, Interrupted, InterruptState
+from factortool.interrupt import Interrupted, InterruptState
 from factortool.lock import lock_directories
 from factortool.number import Number, Outcome
 from factortool.stats import FactoringStats
 from factortool.tools import CadoNfsError, ToolError, ToolFailure, YafuError, tool_failures
 
 from .helpers import NO_STATS_PATH, make_config, make_number
-
-# The exit status of a run ended by a permanent HTTP error in the backend.
-PERMANENT_HTTP_ERROR_EXIT_STATUS = 6
 
 CRITERIA = FetchCriteria(count=3, min_digits=1, max_digits=100)
 
@@ -118,14 +114,14 @@ class FakeBackend:
         """Close the fake backend, doing nothing."""
 
 
-def factoring(outcome: ExitStatus | Exception = ExitStatus.SUCCESS) -> Mock:
+def factoring(outcome: EngineStatus | Exception = EngineStatus.SUCCESS) -> Mock:
     """Stand in for an engine run that trial factors every number before ending with the given outcome.
 
     Returns:
         Mock: A replacement for FactorEngine.run.
     """
 
-    def run(numbers: Collection[Number], _limits: TimeLimits) -> ExitStatus:
+    def run(numbers: Collection[Number], _limits: TimeLimits) -> EngineStatus:
         for number in numbers:
             number.factor_tf()
 
@@ -241,7 +237,7 @@ def test_no_new_work_is_rejected_by_a_backend_that_assigns_nothing() -> None:
     with pytest.raises(SystemExit) as error:
         validate_arguments(args, "factordb")
 
-    assert error.value.code == 1
+    assert error.value.code == ExitStatus.INVALID_INPUT
 
 
 @pytest.mark.parametrize(
@@ -270,7 +266,7 @@ def test_out_of_range_arguments_are_rejected(arguments: list[str]) -> None:
     with pytest.raises(SystemExit) as error:
         validate_arguments(args, "factordb")
 
-    assert error.value.code == 1
+    assert error.value.code == ExitStatus.INVALID_INPUT
 
 
 @pytest.mark.parametrize(
@@ -289,11 +285,11 @@ def test_arguments_at_the_edge_of_their_range_are_accepted(arguments: list[str])
 
 @pytest.mark.parametrize("arguments", [["--min_digits", "many"], ["--no_such_option"]])
 def test_unparseable_arguments_exit_as_a_usage_error(arguments: list[str]) -> None:
-    """Test that arguments the parser rejects don't exit with the status that means interrupted."""
+    """Test that arguments the parser rejects exit with the same status as an invalid configuration."""
     with pytest.raises(SystemExit) as error:
         Arguments().parse_args(arguments)
 
-    assert error.value.code == 1
+    assert error.value.code == ExitStatus.INVALID_INPUT
 
 
 @pytest.mark.parametrize(
@@ -319,7 +315,7 @@ def test_missing_tools_end_the_run_before_the_backend_is_started(
     with pytest.raises(SystemExit) as raised:
         main()
 
-    assert raised.value.code == 1
+    assert raised.value.code == ExitStatus.INVALID_INPUT
     create_backend.assert_not_called()
 
 
@@ -368,7 +364,7 @@ def test_an_invalid_override_ends_the_run_as_a_configuration_error(
     with pytest.raises(SystemExit) as raised:
         main()
 
-    assert raised.value.code == 1
+    assert raised.value.code == ExitStatus.INVALID_INPUT
     create_backend.assert_not_called()
 
 
@@ -394,11 +390,11 @@ def test_the_log_level_option_overrides_the_configuration(
     assert setup_logger.call_args_list == expected
 
 
-@pytest.mark.parametrize(("error", "exit_status"), [(YafuError("YAFU failed"), 5), (CadoNfsError("CADO failed"), 4)])
-def test_a_tool_failure_exits_with_the_tool_status_after_cleaning_up(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, error: ToolError, exit_status: int
+@pytest.mark.parametrize("error", [YafuError("YAFU failed"), CadoNfsError("CADO failed")])
+def test_a_tool_failure_exits_with_the_tool_failure_status_after_cleaning_up(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, error: ToolError
 ) -> None:
-    """Test that a tool failure during the run still saves state before exiting with that tool's status."""
+    """Test that a tool failure during the run still saves state before exiting with the tool failure status."""
     write_config(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["factortool", "--batch_size", "3"])
@@ -410,7 +406,7 @@ def test_a_tool_failure_exits_with_the_tool_status_after_cleaning_up(
     with pytest.raises(SystemExit) as raised:
         main()
 
-    assert raised.value.code == exit_status
+    assert raised.value.code == ExitStatus.TOOL_FAILURE
     assert (tmp_path / "state" / "stats.json").exists()
     assert len(list((tmp_path / "results").iterdir())) == 1
 
@@ -424,14 +420,14 @@ def test_a_termination_signal_still_saves_state_before_exiting_as_interrupted(
     backend.close = Mock()  # type: ignore[method-assign]
     interrupts = InterruptState()
 
-    def run(_self: FactorEngine, numbers: Collection[Number], _limits: TimeLimits) -> ExitStatus:
+    def run(_self: FactorEngine, numbers: Collection[Number], _limits: TimeLimits) -> EngineStatus:
         for number in numbers:
             number.factor_tf()
 
         signal.raise_signal(signal.SIGTERM)
         time.sleep(0.5)
 
-        return ExitStatus.SUCCESS
+        return EngineStatus.SUCCESS
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["factortool", "--batch_size", "3"])
@@ -446,7 +442,7 @@ def test_a_termination_signal_still_saves_state_before_exiting_as_interrupted(
     finally:
         interrupts.uninstall()
 
-    assert raised.value.code == EXIT_STATUS
+    assert raised.value.code == ExitStatus.INTERRUPTED
     assert (tmp_path / "state" / "stats.json").exists()
     assert len(list((tmp_path / "results").iterdir())) == 1
     backend.close.assert_called_once()
@@ -515,7 +511,7 @@ def test_the_run_is_given_the_time_limits(
 ) -> None:
     """Test that the time limits reach the engine with the run rather than when the engine is created."""
     write_config(tmp_path)
-    run = Mock(return_value=ExitStatus.SUCCESS)
+    run = Mock(return_value=EngineStatus.SUCCESS)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["factortool", *arguments])
     monkeypatch.setattr("factortool.cli.main.setup_logger", Mock(), raising=True)
@@ -594,9 +590,9 @@ def test_a_failed_cleanup_step_still_saves_the_rest_and_closes_the_backend(
     """Test that a cleanup failure leaves the later steps to run, and is reported by the exit status."""
     monkeypatch.setattr(f"factortool.cli.main.{failing}", Mock(side_effect=OSError("disk full")), raising=True)
 
-    status, close = run_main(monkeypatch, tmp_path, Mock(return_value=ExitStatus.SUCCESS))
+    status, close = run_main(monkeypatch, tmp_path, Mock(return_value=EngineStatus.SUCCESS))
 
-    assert status == CLEANUP_FAILED_EXIT_STATUS
+    assert status == ExitStatus.CLEANUP_FAILED
     assert (tmp_path / "state" / "stats.json").exists()
     close.assert_called_once_with()
 
@@ -609,7 +605,7 @@ def test_a_failure_to_save_assignments_is_reported_by_the_exit_status(
 
     status, close = run_main(monkeypatch, tmp_path, factoring(), backend=FakeBackend())
 
-    assert status == CLEANUP_FAILED_EXIT_STATUS
+    assert status == ExitStatus.CLEANUP_FAILED
     assert len(list((tmp_path / "results").iterdir())) == 1
     close.assert_called_once_with()
 
@@ -617,9 +613,9 @@ def test_a_failure_to_save_assignments_is_reported_by_the_exit_status(
 @pytest.mark.parametrize(
     ("run", "exit_status"),
     [
-        (Mock(side_effect=YafuError("YAFU failed")), 5),
-        (Mock(return_value=ExitStatus.INTERRUPTED), CLEANUP_FAILED_EXIT_STATUS),
-        (Mock(return_value=ExitStatus.TIME_LIMIT_EXCEEDED), CLEANUP_FAILED_EXIT_STATUS),
+        (Mock(side_effect=YafuError("YAFU failed")), ExitStatus.TOOL_FAILURE),
+        (Mock(return_value=EngineStatus.INTERRUPTED), ExitStatus.CLEANUP_FAILED),
+        (Mock(return_value=EngineStatus.TIME_LIMIT_EXCEEDED), ExitStatus.CLEANUP_FAILED),
     ],
 )
 def test_a_cleanup_failure_only_gives_way_to_another_error(
@@ -637,11 +633,11 @@ def test_a_cleanup_failure_only_gives_way_to_another_error(
 def test_tool_failures_are_saved_for_the_next_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Test that a tool failing once in each run is reported as broken once the runs add up."""
 
-    def run(_numbers: Collection[Number], _limits: TimeLimits) -> ExitStatus:
+    def run(_numbers: Collection[Number], _limits: TimeLimits) -> EngineStatus:
         with contextlib.suppress(ToolFailure):
             tool_failures.failed(YafuError, "ECM", "it broke")
 
-        return ExitStatus.SUCCESS
+        return EngineStatus.SUCCESS
 
     for _ in range(MAX_CONSECUTIVE_TOOL_FAILURES - 1):
         status, _ = run_main(monkeypatch, tmp_path, Mock(side_effect=run))
@@ -651,7 +647,7 @@ def test_tool_failures_are_saved_for_the_next_run(monkeypatch: pytest.MonkeyPatc
 
     status, _ = run_main(monkeypatch, tmp_path, Mock(side_effect=run))
 
-    assert status == YafuError.exit_status
+    assert status == ExitStatus.TOOL_FAILURE
 
 
 def test_a_failure_to_close_the_backend_is_reported_by_the_exit_status(
@@ -662,7 +658,7 @@ def test_a_failure_to_close_the_backend_is_reported_by_the_exit_status(
 
     status, _ = run_main(monkeypatch, tmp_path, factoring(), close=close)
 
-    assert status == CLEANUP_FAILED_EXIT_STATUS
+    assert status == ExitStatus.CLEANUP_FAILED
     assert (tmp_path / "state" / "stats.json").exists()
     assert len(list((tmp_path / "results").iterdir())) == 1
 
@@ -672,12 +668,12 @@ def test_a_directory_in_use_by_another_instance_ends_the_run_before_any_state_is
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, directory: str
 ) -> None:
     """Test that a second instance sharing the state or working directory refuses to run."""
-    run = Mock(return_value=ExitStatus.SUCCESS)
+    run = Mock(return_value=EngineStatus.SUCCESS)
 
     with lock_directories([tmp_path / directory]):
         status, close = run_main(monkeypatch, tmp_path, run)
 
-    assert status == ALREADY_RUNNING_EXIT_STATUS
+    assert status == ExitStatus.ALREADY_RUNNING
     assert not (tmp_path / "state" / "stats.json").exists()
     run.assert_not_called()
     close.assert_not_called()
@@ -686,9 +682,16 @@ def test_a_directory_in_use_by_another_instance_ends_the_run_before_any_state_is
 def test_the_directories_are_released_once_the_run_ends(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Test that a finished run does not keep the next one out."""
     for _ in range(2):
-        status, _ = run_main(monkeypatch, tmp_path, Mock(return_value=ExitStatus.SUCCESS))
+        status, _ = run_main(monkeypatch, tmp_path, Mock(return_value=EngineStatus.SUCCESS))
 
-        assert status == 0
+        assert status == ExitStatus.SUCCESS
+
+
+def test_a_run_ended_by_its_time_limit_succeeds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that reaching the time limit is not reported as a failure, so a wrapper script starts the next run."""
+    status, _ = run_main(monkeypatch, tmp_path, Mock(return_value=EngineStatus.TIME_LIMIT_EXCEEDED))
+
+    assert status == ExitStatus.SUCCESS
 
 
 def summarize(numbers: list[Number]) -> list[str]:
@@ -814,7 +817,7 @@ def test_a_permanent_fetch_error_closes_the_backend(monkeypatch: pytest.MonkeyPa
 
     status, close = run_main(monkeypatch, tmp_path, run, backend=backend)
 
-    assert status == PERMANENT_HTTP_ERROR_EXIT_STATUS
+    assert status == ExitStatus.PERMANENT_HTTP_ERROR
     run.assert_not_called()
     close.assert_called_once_with()
 
@@ -822,10 +825,10 @@ def test_a_permanent_fetch_error_closes_the_backend(monkeypatch: pytest.MonkeyPa
 @pytest.mark.parametrize(
     ("run", "close_error", "exit_status"),
     [
-        (Mock(return_value=ExitStatus.SUCCESS), None, EXIT_STATUS),
-        (Mock(return_value=ExitStatus.TIME_LIMIT_EXCEEDED), None, EXIT_STATUS),
-        (Mock(side_effect=YafuError("YAFU failed")), None, 5),
-        (Mock(return_value=ExitStatus.SUCCESS), RuntimeError("bug"), CLEANUP_FAILED_EXIT_STATUS),
+        (Mock(return_value=EngineStatus.SUCCESS), None, ExitStatus.INTERRUPTED),
+        (Mock(return_value=EngineStatus.TIME_LIMIT_EXCEEDED), None, ExitStatus.INTERRUPTED),
+        (Mock(side_effect=YafuError("YAFU failed")), None, ExitStatus.TOOL_FAILURE),
+        (Mock(return_value=EngineStatus.SUCCESS), RuntimeError("bug"), ExitStatus.CLEANUP_FAILED),
     ],
 )
 def test_an_interrupt_while_closing_the_backend_is_reported_by_the_exit_status(
@@ -846,7 +849,10 @@ def test_an_interrupt_while_closing_the_backend_is_reported_by_the_exit_status(
 
 @pytest.mark.parametrize(
     ("error", "exit_status"),
-    [(Interrupted("interrupted"), EXIT_STATUS), (PermanentHttpError("forbidden"), PERMANENT_HTTP_ERROR_EXIT_STATUS)],
+    [
+        (Interrupted("interrupted"), ExitStatus.INTERRUPTED),
+        (PermanentHttpError("forbidden"), ExitStatus.PERMANENT_HTTP_ERROR),
+    ],
     ids=["interrupted", "permanent-error"],
 )
 def test_a_backend_that_cannot_start_ends_the_run(

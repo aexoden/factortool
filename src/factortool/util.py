@@ -12,7 +12,7 @@ import tempfile
 
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, NoReturn, get_args
+from typing import TYPE_CHECKING, Literal, get_args
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
@@ -46,20 +46,8 @@ LogLevel = Literal["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRI
 
 DEFAULT_LOG_LEVEL: LogLevel = "INFO"
 
-# The exit status of a run that was given an invalid configuration or invalid arguments.
-INVALID_USAGE_EXIT_STATUS = 1
 
-
-class ArgumentParser(Tap):
-    """An argument parser that reports invalid arguments with the same exit status as an invalid configuration."""
-
-    def error(self, message: str) -> NoReturn:
-        """Report invalid arguments and exit, without argparse's exit status of 2."""
-        self.print_usage(sys.stderr)
-        self.exit(INVALID_USAGE_EXIT_STATUS, f"{self.prog}: error: {message}\n")
-
-
-class ConfigArguments(ArgumentParser):
+class ConfigArguments(Tap):
     """An argument parser for a utility that reads the configuration file, with options that override its settings."""
 
     config_path: Path = Path("config.json")  # Path to the configuration file

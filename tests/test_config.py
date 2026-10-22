@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 import sys
 
 from pathlib import Path
@@ -15,6 +17,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from factortool.config import Config, load_config, read_config
+from factortool.exit_status import ExitStatus
 
 from .helpers import make_config
 
@@ -69,7 +72,7 @@ def read_invalid_config(path: Path) -> list[str]:
     finally:
         logger.remove(sink)
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == ExitStatus.INVALID_INPUT
     return messages
 
 
@@ -388,7 +391,7 @@ def load_invalid_config(path: Path, **overrides: object) -> list[str]:
     finally:
         logger.remove(sink)
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == ExitStatus.INVALID_INPUT
     return messages
 
 
@@ -403,7 +406,25 @@ def test_load_config_applies_the_overrides(tmp_path: Path) -> None:
 
 def test_load_config_reports_a_missing_file(tmp_path: Path) -> None:
     """Test that a missing configuration file is a configuration error."""
-    assert load_invalid_config(tmp_path / "missing.json") == ["Configuration file not found\n"]
+    path = tmp_path / "missing.json"
+
+    assert load_invalid_config(path) == [f"Unable to read configuration file {path}: {os.strerror(errno.ENOENT)}\n"]
+
+
+def test_load_config_reports_a_file_that_cannot_be_read(tmp_path: Path) -> None:
+    """Test that a configuration path that can't be read is a configuration error, rather than an internal error."""
+    # The reason given varies by platform.
+    [message] = load_invalid_config(tmp_path)
+
+    assert message.startswith(f"Unable to read configuration file {tmp_path}: ")
+
+
+def test_load_config_reports_a_file_that_is_not_utf8(tmp_path: Path) -> None:
+    """Test that a configuration file that isn't valid UTF-8 is a configuration error, rather than an internal error."""
+    path = tmp_path / "config.json"
+    path.write_bytes(b"\xff\xfe{}")
+
+    assert any("Invalid JSON" in message for message in load_invalid_config(path))
 
 
 @pytest.mark.parametrize("max_threads", [0, -3])

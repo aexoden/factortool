@@ -15,8 +15,9 @@ if TYPE_CHECKING:
 
 import pytest
 
-from factortool.analyzer.main import main
+from factortool.analyzer.main import NO_DATA_EXIT_STATUS, main
 from factortool.constants import ECM_MIN_LEVEL
+from factortool.exit_status import ExitStatus
 from factortool.stats import FactoringStats
 
 DIGITS = 50
@@ -67,7 +68,7 @@ def test_an_unusable_digit_count_is_rejected(monkeypatch: pytest.MonkeyPatch, di
     with pytest.raises(SystemExit) as raised:
         main()
 
-    assert raised.value.code == 1
+    assert raised.value.code == ExitStatus.INVALID_INPUT
 
 
 @pytest.mark.parametrize(
@@ -93,9 +94,10 @@ def test_the_log_level_option_overrides_the_configuration(
     monkeypatch.setattr("factortool.analyzer.main.setup_logger", setup_logger, raising=True)
 
     # Without any statistics, the analyzer exits once the configuration has been read.
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as raised:
         main()
 
+    assert raised.value.code == NO_DATA_EXIT_STATUS
     assert setup_logger.call_args_list == expected
 
 
@@ -182,5 +184,5 @@ def test_an_unusable_thread_count_is_rejected(
     with pytest.raises(SystemExit) as raised:
         main()
 
-    assert raised.value.code == 1
+    assert raised.value.code == ExitStatus.INVALID_INPUT
     factoring_stats.assert_not_called()

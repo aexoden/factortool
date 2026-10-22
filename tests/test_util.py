@@ -17,6 +17,7 @@ import pytest
 
 from loguru import logger
 
+from factortool.exit_status import ExitStatus
 from factortool.util import (
     NUMBER_DISPLAY_WIDTH,
     ConfigArguments,
@@ -176,7 +177,7 @@ def test_config_arguments_reject_an_unknown_log_level(capsys: pytest.CaptureFixt
     with pytest.raises(SystemExit) as raised:
         ConfigArguments().parse_args(["--log_level", "verbose"])
 
-    assert raised.value.code == 1
+    assert raised.value.code == ExitStatus.INVALID_INPUT
     assert "invalid choice" in capsys.readouterr().err
 
 

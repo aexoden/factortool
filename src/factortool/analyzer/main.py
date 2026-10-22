@@ -21,8 +21,12 @@ from factortool.constants import (
     NFS_CADO_MIN_DIGITS,
     NFS_YAFU_MIN_DIGITS,
 )
+from factortool.exit_status import ExitStatus
 from factortool.stats import ECMCutoffs, FactoringStats, InvalidStatsError
 from factortool.util import ConfigArguments, setup_logger
+
+# Like grep finding no match, there being no data to analyze is reported apart from an error.
+NO_DATA_EXIT_STATUS = 1
 
 
 class Arguments(ConfigArguments):
@@ -122,7 +126,7 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
 
     if args.digits < 1:
         logger.error("--digits ({}) must be at least 1", args.digits)
-        sys.exit(1)
+        sys.exit(ExitStatus.INVALID_INPUT)
 
     config = load_config(args.config_path, log_level=args.log_level, max_threads=args.max_threads)
 
@@ -132,7 +136,7 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
         stats = FactoringStats(config.stats_path, read_only=True)
     except InvalidStatsError as e:
         logger.error("{}", e)
-        sys.exit(1)
+        sys.exit(ExitStatus.INVALID_INPUT)
 
     tf_count, tf_time, tf_p_factor = stats.get_probability_stats(args.digits, "tf", 1)
 
@@ -175,7 +179,7 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
 
     if yafu_count == 0 and all(count == 0 for count, _ in final_stats.values()):
         logger.error("No YAFU, SIQS or NFS data present for this digit count.")
-        sys.exit(2)
+        sys.exit(NO_DATA_EXIT_STATUS)
 
     print(f"ECM Crossover Analysis for {args.digits} digits:")
     print()

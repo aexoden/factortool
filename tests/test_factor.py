@@ -394,10 +394,8 @@ def test_tool_failing_repeatedly_raises_its_tool_error(tmp_path: Path, tool: str
         with pytest.raises(ToolFailure):
             call()
 
-    with pytest.raises(error_type, match="broken installation") as raised:
+    with pytest.raises(error_type, match="broken installation"):
         call()
-
-    assert raised.value.exit_status == {YafuError: 5, CadoNfsError: 4}[error_type]
 
 
 def test_tool_start_failure_names_the_tool_when_the_platform_does_not(

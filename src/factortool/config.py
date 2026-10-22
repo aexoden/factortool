@@ -24,6 +24,7 @@ from pydantic import (
 )
 
 from factortool.constants import FINAL_METHOD_NAMES, NFS_CADO_MIN_DIGITS, NFS_YAFU_MIN_DIGITS
+from factortool.exit_status import ExitStatus
 from factortool.util import DEFAULT_LOG_LEVEL, LogLevel
 
 
@@ -287,8 +288,8 @@ def read_config(path: Path) -> Config:
         Config: The configuration object.
     """
     try:
-        with path.open("r", encoding="utf-8") as f:
-            config = Config.model_validate_json(f.read())
+        # Reading bytes leaves pydantic to report invalid UTF-8 as invalid JSON.
+        config = Config.model_validate_json(path.read_bytes())
     except ValidationError as e:
         settings: dict[str, list[str]] = {"missing": [], "extra_forbidden": []}
 
@@ -307,7 +308,7 @@ def read_config(path: Path) -> Config:
         if len(missing) + len(unrecognized) < e.error_count():
             logger.error(f"Error while processing configuration file: {e}")
 
-        sys.exit(1)
+        sys.exit(ExitStatus.INVALID_INPUT)
 
     return config
 
@@ -322,9 +323,9 @@ def load_config(path: Path, **overrides: object) -> Config:
     """
     try:
         config = read_config(path)
-    except FileNotFoundError:
-        logger.error("Configuration file not found")
-        sys.exit(1)
+    except OSError as e:
+        logger.error("Unable to read configuration file {}: {}", path, e.strerror or e)
+        sys.exit(ExitStatus.INVALID_INPUT)
 
     try:
         return config.override(**overrides)
@@ -337,4 +338,4 @@ def load_config(path: Path, **overrides: object) -> Config:
                 reason = error.get("ctx", {}).get("error", error["msg"])
                 logger.error("Configuration error with the given options: {}", reason)
 
-        sys.exit(1)
+        sys.exit(ExitStatus.INVALID_INPUT)

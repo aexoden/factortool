@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
+from factortool.exit_status import ExitStatus
+
 # How often an interruptible wait checks for an interrupt signal.
 POLL_INTERVAL = 0.25
 
@@ -33,9 +35,6 @@ STOP_SOON = 2
 
 # A third abandons the current factorization and any remaining work.
 ABORT = 3
-
-# The exit status of a run that is interrupted by signals.
-EXIT_STATUS = 2
 
 # How long an immediate exit waits for its message to be logged.
 EXIT_GRACE = 0.5
@@ -193,7 +192,7 @@ class InterruptState:
         self._announcements.put(announce)
         announced.wait(EXIT_GRACE)
 
-        os._exit(EXIT_STATUS)
+        os._exit(ExitStatus.INTERRUPTED)
 
     def _respond(self) -> None:
         """Log what each signal is going to do, and abandon the abortable work when requested."""

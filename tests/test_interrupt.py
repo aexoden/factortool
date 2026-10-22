@@ -18,11 +18,11 @@ import requests
 
 from loguru import logger
 
+from factortool.exit_status import ExitStatus
 from factortool.http import HttpClient
 from factortool.interrupt import (
     ABORT,
     EXIT_GRACE,
-    EXIT_STATUS,
     POLL_INTERVAL,
     STOP_SOON,
     TERMINATION_SIGNALS,
@@ -165,7 +165,7 @@ def test_another_signal_after_an_abort_exits_immediately(
         hard_exit.assert_not_called()
         raise_at_level(interrupts, ABORT, signal.SIGINT)
 
-    hard_exit.assert_called_once_with(EXIT_STATUS)
+    hard_exit.assert_called_once_with(ExitStatus.INTERRUPTED)
 
 
 @pytest.mark.skipif(not hasattr(signal, "SIGHUP"), reason="SIGHUP does not exist on this platform")
@@ -193,7 +193,7 @@ def test_a_failure_to_abandon_work_does_not_stop_signals_being_handled(monkeypat
         raise_at_level(interrupts, 0, signal.SIGTERM)
         raise_at_level(interrupts, ABORT, signal.SIGINT)
 
-    hard_exit.assert_called_once_with(EXIT_STATUS)
+    hard_exit.assert_called_once_with(ExitStatus.INTERRUPTED)
 
 
 def test_an_immediate_exit_does_not_wait_for_work_that_is_slow_to_abandon(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -207,7 +207,7 @@ def test_an_immediate_exit_does_not_wait_for_work_that_is_slow_to_abandon(monkey
             raise_at_level(interrupts, 0, signal.SIGTERM)
             signal.raise_signal(signal.SIGINT)
             time.sleep(EXIT_GRACE + TINY_WAIT)
-            hard_exit.assert_called_once_with(EXIT_STATUS)
+            hard_exit.assert_called_once_with(ExitStatus.INTERRUPTED)
             release.set()
     finally:
         release.set()
@@ -226,7 +226,7 @@ def test_an_immediate_exit_does_not_wait_for_a_log_that_cannot_be_written(monkey
             assert interrupts.level == ABORT
             signal.raise_signal(signal.SIGINT)
             time.sleep(EXIT_GRACE + TINY_WAIT)
-            hard_exit.assert_called_once_with(EXIT_STATUS)
+            hard_exit.assert_called_once_with(ExitStatus.INTERRUPTED)
             release.set()
     finally:
         release.set()

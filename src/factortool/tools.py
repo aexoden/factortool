@@ -45,21 +45,18 @@ class ToolDeadlineExceeded(Exception):  # ruff: ignore[error-suffix-on-exception
 class ToolError(Exception):
     """Exception raised when an external tool fails repeatedly."""
 
-    exit_status: int
     tool_name: str
 
 
 class YafuError(ToolError):
     """Exception raised when YAFU continues to fail."""
 
-    exit_status = 5
     tool_name = "YAFU"
 
 
 class CadoNfsError(ToolError):
     """Exception raised when CADO-NFS continues to fail."""
 
-    exit_status = 4
     tool_name = "CADO-NFS"
 
 

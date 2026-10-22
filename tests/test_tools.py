@@ -107,10 +107,8 @@ def test_a_run_of_failures_continues_from_one_run_to_the_next(tmp_path: Path) ->
     failures = ToolFailures()
     failures.load(state_path)
 
-    with pytest.raises(CadoNfsError, match="CADO-NFS has failed 3 times in a row") as raised:
+    with pytest.raises(CadoNfsError, match="CADO-NFS has failed 3 times in a row"):
         failures.failed(CadoNfsError, "CADO-NFS", "it broke")
-
-    assert raised.value.exit_status == CadoNfsError.exit_status
 
 
 def test_a_broken_tool_is_reported_again_on_its_next_failure(tmp_path: Path) -> None:
