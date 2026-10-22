@@ -75,6 +75,12 @@ RENAMED_SETTINGS = {
     "mersenne_ca_cooldown_period": "mersenne_ca_request_interval",
 }
 
+# The backends that can be selected.
+BackendName = Literal["factordb", "mersenne_ca"]
+
+# The factoring modes that can be selected.
+FactoringMode = Literal["standard", "yafu"]
+
 RequestInterval = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 # Log levels are case-insensitive.
@@ -98,7 +104,7 @@ class Config(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Required settings
-    backend: Literal["factordb", "mersenne_ca"]
+    backend: BackendName
     max_threads: PositiveInt
     yafu_path: Path
 
@@ -106,7 +112,7 @@ class Config(BaseModel):
     cado_nfs_path: Path | None = None
     factordb_api_token: str = ""
     factordb_request_interval: RequestInterval = 1.0
-    factoring_mode: Literal["standard", "yafu"] = "standard"
+    factoring_mode: FactoringMode = "standard"
     gimps_login: str = ""
     log_level: CaseInsensitiveLogLevel = DEFAULT_LOG_LEVEL
     max_siqs_digits: PositiveInt = 100
@@ -304,3 +310,31 @@ def read_config(path: Path) -> Config:
         sys.exit(1)
 
     return config
+
+
+def load_config(path: Path, **overrides: object) -> Config:
+    """Read configuration from a JSON file and override settings with command-line options.
+
+    An override given as None leaves the setting unchanged.
+
+    Returns:
+        Config: The configuration object, with the overrides applied.
+    """
+    try:
+        config = read_config(path)
+    except FileNotFoundError:
+        logger.error("Configuration file not found")
+        sys.exit(1)
+
+    try:
+        return config.override(**overrides)
+    except ValidationError as e:
+        for error in e.errors():
+            # A model validator reports the problem without specifying which override caused it.
+            if error["loc"]:
+                logger.error("--{} ({}) is invalid: {}", error["loc"][0], error["input"], error["msg"])
+            else:
+                reason = error.get("ctx", {}).get("error", error["msg"])
+                logger.error("Configuration error with the given options: {}", reason)
+
+        sys.exit(1)

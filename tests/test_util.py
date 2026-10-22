@@ -178,3 +178,9 @@ def test_config_arguments_reject_an_unknown_log_level(capsys: pytest.CaptureFixt
 
     assert raised.value.code == 1
     assert "invalid choice" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("argument", "expected"), [([], None), (["--max_threads", "8"], 8)])
+def test_config_arguments_accept_a_thread_count(argument: list[str], expected: int | None) -> None:
+    """Test that the thread count option is optional, leaving the configured setting unchanged by default."""
+    assert ConfigArguments().parse_args(argument).max_threads == expected

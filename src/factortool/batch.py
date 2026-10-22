@@ -25,6 +25,8 @@ class BatchKey(BaseModel):
     """The work selection a measured throughput applies to."""
 
     backend: str = "factordb"
+    factoring_mode: str
+    max_threads: int
     min_digits: int
     max_digits: int | None = None
     skip_count: int = 0
@@ -69,7 +71,8 @@ class BatchController:
         try:
             self._state = BatchState.model_validate_json(self._state_path.read_text(encoding="utf-8"))
         except ValidationError:
-            # A state file written before the key was introduced carries no usable throughput for this selection.
+            # A state file written before the key or one of its fields was introduced carries no usable throughput for
+            # this selection.
             logger.info("Discarding batch state written in an older format")
 
     def _save_state(self) -> None:

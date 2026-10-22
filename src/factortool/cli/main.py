@@ -25,7 +25,7 @@ from factortool.__about__ import __version__
 from factortool.assignments import Assignment, AssignmentStore, assignment_expired
 from factortool.backend import Backend, FetchCriteria, create_backend
 from factortool.batch import BatchController, BatchKey
-from factortool.config import read_config
+from factortool.config import BackendName, FactoringMode, load_config
 from factortool.engine import ExitStatus, FactorEngine, TimeLimits
 from factortool.http import PermanentHttpError
 from factortool.interrupt import EXIT_STATUS as INTERRUPTED_EXIT_STATUS
@@ -62,6 +62,8 @@ class Arguments(ConfigArguments):
     """Utility for factoring numbers using various methods."""
 
     version: bool = False  # Show the version of the utility and exit
+    backend: BackendName | None = None  # Backend to fetch numbers from and submit results to (overrides config backend)
+    factoring_mode: FactoringMode | None = None  # Factoring mode to use (overrides config factoring_mode)
     min_digits: int = 1  # Minimum number of digits fetched composite numbers should have
     max_digits: int = 0  # Maximum number of digits fetched composite numbers should have (required by mersenne.ca)
     batch_size: int = 0  # Number of composite numbers to work on at a time (0 for automatic)
@@ -378,7 +380,14 @@ def run_batch(args: Arguments, session: Session) -> int:
     max_digits = args.max_digits if args.max_digits > 0 else None
     batch_controller = BatchController(
         args.target_duration,
-        BatchKey(backend=config.backend, min_digits=args.min_digits, max_digits=max_digits, skip_count=args.skip_count),
+        BatchKey(
+            backend=config.backend,
+            factoring_mode=config.factoring_mode,
+            max_threads=config.max_threads,
+            min_digits=args.min_digits,
+            max_digits=max_digits,
+            skip_count=args.skip_count,
+        ),
         config.batch_state_path,
     )
     batch_size = args.batch_size if args.batch_size > 0 else batch_controller.batch_size
@@ -471,6 +480,7 @@ def run_session(args: Arguments, config: Config) -> int:
 
     logger.info("Using backend: {}", config.backend)
     logger.info("Using factoring mode: {}", config.factoring_mode)
+    logger.info("Using up to {} thread{}", config.max_threads, "s" if config.max_threads != 1 else "")
 
     # The backend is closed last, as flushing its pending submissions can take some time.
     try:
@@ -498,11 +508,13 @@ def main() -> None:
 
     setup_logger(args.log_level)
 
-    try:
-        config = read_config(args.config_path).override(log_level=args.log_level)
-    except FileNotFoundError:
-        logger.error("Configuration file not found")
-        sys.exit(1)
+    config = load_config(
+        args.config_path,
+        backend=args.backend,
+        factoring_mode=args.factoring_mode,
+        log_level=args.log_level,
+        max_threads=args.max_threads,
+    )
 
     setup_logger(config.log_level)
 

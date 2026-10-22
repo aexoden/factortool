@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 from loguru import logger
 
-from factortool.config import Config, read_config
+from factortool.config import Config, load_config
 from factortool.constants import (
     ECM_MIN_LEVEL,
     FINAL_METHOD_NAMES,
@@ -29,6 +29,7 @@ class Arguments(ConfigArguments):
     """Utility for analyzing statistics gathered by factortool."""
 
     digits: int  # Digits to analyze
+    max_threads: int | None = None  # Analyze statistics gathered with this many threads (overrides config max_threads)
 
 
 def _ineligible_reason(method: str, config: Config) -> str:
@@ -123,11 +124,7 @@ def main() -> None:  # ruff:ignore[complex-structure, too-many-branches, too-man
         logger.error("--digits ({}) must be at least 1", args.digits)
         sys.exit(1)
 
-    try:
-        config = read_config(args.config_path).override(log_level=args.log_level)
-    except FileNotFoundError:
-        logger.error("Configuration file not found")
-        sys.exit(1)
+    config = load_config(args.config_path, log_level=args.log_level, max_threads=args.max_threads)
 
     setup_logger(config.log_level)
 

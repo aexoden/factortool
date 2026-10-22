@@ -14,7 +14,7 @@ import pytest
 from loguru import logger
 from pydantic import ValidationError
 
-from factortool.config import Config, read_config
+from factortool.config import Config, load_config, read_config
 
 from .helpers import make_config
 
@@ -371,3 +371,51 @@ def test_override_validates_the_overrides() -> None:
     """Test that an override is held to the same validation as the configuration file."""
     with pytest.raises(ValidationError, match="max_threads"):
         make_config().override(max_threads=0)
+
+
+def load_invalid_config(path: Path, **overrides: object) -> list[str]:
+    """Load a configuration that should be rejected, capturing the log messages.
+
+    Returns:
+        list[str]: The log messages.
+    """
+    messages: list[str] = []
+    sink = logger.add(messages.append, format="{message}")
+
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            load_config(path, **overrides)
+    finally:
+        logger.remove(sink)
+
+    assert exc_info.value.code == 1
+    return messages
+
+
+def test_load_config_applies_the_overrides(tmp_path: Path) -> None:
+    """Test that the options given override the configuration file, and those given as None leave it unchanged."""
+    path = write_config(tmp_path, {**REQUIRED_SETTINGS, "factoring_mode": "yafu", "log_level": "warning"})
+
+    config = load_config(path, factoring_mode=None, log_level="DEBUG", max_threads=8)
+
+    assert (config.factoring_mode, config.log_level, config.max_threads) == ("yafu", "DEBUG", 8)
+
+
+def test_load_config_reports_a_missing_file(tmp_path: Path) -> None:
+    """Test that a missing configuration file is a configuration error."""
+    assert load_invalid_config(tmp_path / "missing.json") == ["Configuration file not found\n"]
+
+
+@pytest.mark.parametrize("max_threads", [0, -3])
+def test_load_config_names_an_invalid_override(tmp_path: Path, max_threads: int) -> None:
+    """Test that an invalid override is reported as the option it came from, rather than raised."""
+    messages = load_invalid_config(write_config(tmp_path, REQUIRED_SETTINGS), max_threads=max_threads)
+
+    assert messages == [f"--max_threads ({max_threads}) is invalid: Input should be greater than 0\n"]
+
+
+def test_load_config_reports_an_override_the_rest_of_the_configuration_rejects(tmp_path: Path) -> None:
+    """Test that an override that is valid on its own, but not with the other settings, is reported."""
+    messages = load_invalid_config(write_config(tmp_path, REQUIRED_SETTINGS), backend="mersenne_ca")
+
+    assert messages == ["Configuration error with the given options: the mersenne_ca backend requires gimps_login\n"]

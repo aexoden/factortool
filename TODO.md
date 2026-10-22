@@ -7,10 +7,6 @@ later ones.
 
 ## Minor Features
 
-- Allow temporarily setting max_threads via a command-line parameter. Along with
-  backend, it's probably the option people are most likely to want to change
-  between runs. `--log_level` already does this for `log_level`, via
-  `ConfigArguments` and `Config.override`.
 - Change the README's shell loop to stop on any exit status other than 0 and 3.
   It currently only stops on 2, 6 and 8, so a configuration error, invalid
   argument, tool failure or cleanup failure (7) retries every second.
@@ -117,7 +113,9 @@ later ones.
   in the past, but it's still worth looking at once more. One cause: after a
   reset, the first measurement is weighted by the time since the last update,
   which is close to nothing for a fast batch. Seeding directly from the first
-  measurement when there's no prior rate would help.
+  measurement when there's no prior rate would help. Resets can also be more
+  common, as the batch key includes `max_threads` and `factoring_mode`, which
+  can be changed for a single run.
 - Remove the unused `flask` dependency.
 - Consider `gmpy2.is_strong_bpsw_prp` for `is_prime` above the range where the
   fixed Miller-Rabin bases are deterministic.

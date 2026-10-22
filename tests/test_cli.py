@@ -325,6 +325,55 @@ def test_missing_tools_end_the_run_before_the_backend_is_started(
 
 @pytest.mark.parametrize(
     ("argv", "expected"),
+    [
+        ([], ("factordb", "standard", 1)),
+        (
+            ["--backend", "mersenne_ca", "--factoring_mode", "yafu", "--max_threads", "8", "--max_digits", "80"],
+            ("mersenne_ca", "yafu", 8),
+        ),
+    ],
+    ids=["configured", "overridden"],
+)
+def test_the_options_override_the_configuration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, argv: list[str], expected: tuple[str, str, int]
+) -> None:
+    """Test that the backend, factoring mode and thread count options override the configured settings."""
+    write_config(tmp_path, gimps_login="user")
+    validate_tools = Mock(side_effect=SystemExit(1))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["factortool", *argv])
+    monkeypatch.setattr("factortool.cli.main.setup_logger", Mock(), raising=True)
+    monkeypatch.setattr("factortool.cli.main.validate_tools", validate_tools, raising=True)
+
+    with pytest.raises(SystemExit):
+        main()
+
+    (config,) = validate_tools.call_args.args
+
+    assert (config.backend, config.factoring_mode, config.max_threads) == expected
+
+
+@pytest.mark.parametrize("argv", [["--max_threads", "0"], ["--backend", "mersenne_ca", "--max_digits", "80"]])
+def test_an_invalid_override_ends_the_run_as_a_configuration_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, argv: list[str]
+) -> None:
+    """Test that an override the configuration rejects ends the run before the backend is started."""
+    write_config(tmp_path)
+    create_backend = Mock()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["factortool", *argv])
+    monkeypatch.setattr("factortool.cli.main.setup_logger", Mock(), raising=True)
+    monkeypatch.setattr("factortool.cli.main.create_backend", create_backend)
+
+    with pytest.raises(SystemExit) as raised:
+        main()
+
+    assert raised.value.code == 1
+    create_backend.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
     [([], [call(None), call("WARNING")]), (["--log_level", "debug"], [call("DEBUG"), call("DEBUG")])],
     ids=["configured", "overridden"],
 )

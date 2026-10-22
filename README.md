@@ -8,7 +8,7 @@ FactorDB and mersenne.ca.
 ## Features
 
 - Uses multiple factoring methods, including trial factoring, rho, P-1, ECM,
-  SIQS and NFS (via CADO-NFS or YAFU's built-in NFS).a
+  SIQS and NFS (via CADO-NFS or YAFU's built-in NFS).
 - Automatically measures duration and success rate to determine the optimal ECM
   crossover threshold and the final choice of SIQS, YAFU NFS or CADO-NFS.
 - As an alternative to the built-in breadth-first factoring, can also simply
@@ -43,9 +43,15 @@ exist if it is set.
 You may then run the program. It accepts the following options:
 
 - `--config_path`: To specify a configuration file other than config.json.
+- `--backend`: The backend to use, overriding the `backend` setting for this
+  run. One of `factordb` or `mersenne_ca`.
+- `--factoring_mode`: The factoring mode to use, overriding the `factoring_mode`
+  setting for this run. One of `standard` or `yafu`.
 - `--log_level`: The minimum level of log messages to show, overriding the
   `log_level` setting for this run. One of `TRACE`, `DEBUG`, `INFO`, `SUCCESS`,
   `WARNING`, `ERROR` or `CRITICAL`, in any case.
+- `--max_threads`: The maximum number of threads to use, overriding the
+  `max_threads` setting for this run. Must be at least 1.
 - `--min_digits`: The minimium number of digits fetched composite numbers should
   have. Must be at least 1.
 - `--max_digits`: The maximum number of digits fetched composite numbers should
@@ -69,6 +75,11 @@ You may then run the program. It accepts the following options:
   backend (which assigns distinct work to each user).
 - `--no_new_work`: Work only any retained assignments from a previous run, and
   don't fetch any more. Only supported by the mersenne.ca backend.
+
+An overridden setting is validated as if it were in the configuration file. The
+automatic batch size is measured separately for each backend, factoring mode and
+thread count (as well as for each digit range and skip count), so changing any
+of them starts the measurement over.
 
 Log messages are written to standard error. The `log_level` setting (`INFO` by
 default) chooses the least severe messages that are shown. `INFO` shows each

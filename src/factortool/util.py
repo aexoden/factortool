@@ -62,8 +62,9 @@ class ArgumentParser(Tap):
 class ConfigArguments(ArgumentParser):
     """An argument parser for a utility that reads the configuration file, with options that override its settings."""
 
-    config_path: Path = Path("config.json")
-    log_level: LogLevel | None = None
+    config_path: Path = Path("config.json")  # Path to the configuration file
+    log_level: LogLevel | None = None  # Minimum level of log messages to show (overrides log_level in config)
+    max_threads: int | None = None  # Maximum number of threads to use (overrides max_threads in config)
 
     def configure(self) -> None:
         """Accept log levels in any case, as the configuration file does."""

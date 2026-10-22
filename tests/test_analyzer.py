@@ -23,9 +23,13 @@ DIGITS = 50
 
 
 def run_analyzer(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path, stats: FactoringStats
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    stats: FactoringStats,
+    *arguments: str,
 ) -> list[str]:
-    """Run the analyzer for DIGITS against the given statistics.
+    """Run the analyzer for DIGITS against the given statistics, with any extra arguments.
 
     Returns:
         list[str]: The lines of the ECM table, without their leading and trailing whitespace.
@@ -36,7 +40,9 @@ def run_analyzer(
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(config), encoding="utf-8")
 
-    monkeypatch.setattr(sys, "argv", ["analyzer", "--config_path", str(config_path), "--digits", str(DIGITS)])
+    monkeypatch.setattr(
+        sys, "argv", ["analyzer", "--config_path", str(config_path), "--digits", str(DIGITS), *arguments]
+    )
     monkeypatch.setattr("factortool.analyzer.main.setup_logger", Mock(), raising=True)
 
     main()
@@ -46,10 +52,10 @@ def run_analyzer(
     return lines[lines.index("Stopping ECM after doing the given level averages:") + 2 :]
 
 
-def add_ecm_runs(stats: FactoringStats, level: int, runs: int = 1024) -> None:
+def add_ecm_runs(stats: FactoringStats, level: int, runs: int = 1024, threads: int = 1) -> None:
     """Record ECM runs at a level that take one second and find a factor half of the time."""
     for run in range(runs):
-        stats.update_ecm(DIGITS, level, 1, 1.0, success=run % 2 == 0)
+        stats.update_ecm(DIGITS, level, threads, 1.0, success=run % 2 == 0)
 
 
 @pytest.mark.parametrize("digits", ["0", "-5", "many"])
@@ -138,3 +144,43 @@ def test_ecm_levels_are_shown_without_data_for_the_first_levels(
     assert "There is no ECM data below level 20. The From ECM times assume the levels before it are done." in lines
     assert "The Overall times can't be estimated without data for those levels." in lines
     assert "Optimal ECM cutoff: 21" in lines
+
+
+def test_the_thread_count_option_selects_the_statistics_analyzed(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """Test that the statistics gathered with the given thread count are analyzed, rather than the configured one."""
+    stats = FactoringStats(tmp_path / "stats.json")
+    stats.update_final("siqs", DIGITS, 4, 10.0)
+    add_ecm_runs(stats, ECM_MIN_LEVEL, threads=4)
+
+    rows = [line.split() for line in run_analyzer(monkeypatch, capsys, tmp_path, stats, "--max_threads", "4")]
+
+    assert rows[:2] == [
+        ["none", "-", "-", "-", "10.000s", "N/A"],
+        ["2", "1024", "1.000s", "50.000%", "6.000s", "N/A", "<-", "optimal"],
+    ]
+
+
+@pytest.mark.parametrize("max_threads", ["0", "-3", "many"])
+def test_an_unusable_thread_count_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, max_threads: str
+) -> None:
+    """Test that a thread count the configuration rejects is refused before the statistics are opened."""
+    config = {"backend": "factordb", "max_threads": 1, "state_path": str(tmp_path), "yafu_path": "yafu"}
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    factoring_stats = Mock()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["analyzer", "--config_path", str(config_path), "--digits", str(DIGITS), "--max_threads", max_threads],
+    )
+    monkeypatch.setattr("factortool.analyzer.main.setup_logger", Mock(), raising=True)
+    monkeypatch.setattr("factortool.analyzer.main.FactoringStats", factoring_stats, raising=True)
+
+    with pytest.raises(SystemExit) as raised:
+        main()
+
+    assert raised.value.code == 1
+    factoring_stats.assert_not_called()
