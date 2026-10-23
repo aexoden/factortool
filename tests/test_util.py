@@ -35,6 +35,7 @@ from factortool.util import (
     is_prime,
     remove_stale_work_dirs,
     rewrite_yafu_ini,
+    safe_write,
     setup_logger,
     small_primes,
 )
@@ -273,6 +274,35 @@ def test_stale_work_dirs_tolerate_a_missing_base(tmp_path: Path) -> None:
     remove_stale_work_dirs(tmp_path / "work")
 
     assert not (tmp_path / "work").exists()
+
+
+def test_safe_write_replaces_the_file(tmp_path: Path) -> None:
+    """Tests that a safe write replaces any existing file, leaving nothing else behind."""
+    path = tmp_path / "state.json"
+    path.write_bytes(b"old")
+
+    safe_write(path, b"new")
+
+    assert path.read_bytes() == b"new"
+    assert list(tmp_path.iterdir()) == [path]
+
+
+@pytest.mark.parametrize("failing", ["fsync", "replace"])
+def test_a_failed_safe_write_leaves_the_file_alone_and_removes_the_temporary_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    """Tests that a safe write that fails while writing or renaming leaves the original file and nothing else."""
+    path = tmp_path / "state.json"
+    path.write_bytes(b"old")
+
+    target = "factortool.util.os.fsync" if failing == "fsync" else "factortool.util.Path.replace"
+    monkeypatch.setattr(target, Mock(side_effect=OSError("disk full")))
+
+    with pytest.raises(OSError, match="disk full"):
+        safe_write(path, b"new")
+
+    assert path.read_bytes() == b"old"
+    assert list(tmp_path.iterdir()) == [path]
 
 
 def test_rewrite_yafu_ini_makes_relative_paths_absolute(tmp_path: Path) -> None:

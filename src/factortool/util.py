@@ -219,14 +219,15 @@ def remove_stale_work_dirs(base_path: Path) -> None:
 
 
 def safe_write(path: Path, data: bytes) -> None:
-    """Safely write data to a file by using a temporary file and renaming it."""
-    target_path = path.parent
+    """Safely write data to a file by using a temporary file and renaming it.
 
-    with tempfile.NamedTemporaryFile(mode="wb", delete=False, dir=target_path, suffix=".tmp") as f:
+    The temporary file is removed if the write or the rename fails.
+    """
+    with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent, suffix=".tmp", delete_on_close=False) as f:
         f.write(data)
-
-        temp_path = Path(f.name)
         f.flush()
         os.fsync(f.fileno())
 
-    temp_path.replace(path)
+        # Windows can't rename a file that is still open.
+        f.close()
+        Path(f.name).replace(path)
