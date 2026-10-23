@@ -18,12 +18,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Collection, Mapping, Sequence
+    from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 
 import requests
 
 from loguru import logger
 
+from factortool.assignments import Assignment, AssignmentStore
 from factortool.constants import MIN_FACTORABLE
 from factortool.http import MAX_DELAY, RETRY_DELAY, HttpClient, PermanentHttpError, build_user_agent
 from factortool.interrupt import ABORT, POLL_INTERVAL, Interrupted, InterruptState
@@ -126,6 +127,10 @@ class Backend(Protocol):
         """Whether the service accepts factorizations that include composite factors."""
         ...
 
+    def resume(self) -> set[Number]:
+        """Resume the numbers whose assignments a previous run left unfinished, with the factors it found."""
+        ...
+
     def fetch(self, criteria: FetchCriteria) -> set[Number]:
         """Fetch up to criteria.count matching composites, possibly returning an empty set.
 
@@ -136,7 +141,11 @@ class Backend(Protocol):
         ...
 
     def submit(self, numbers: Collection[Number]) -> None:
-        """Queue factored numbers for submission."""
+        """Queue factored numbers for submission, releasing their assignments."""
+        ...
+
+    def checkpoint(self, number: Number) -> None:
+        """Record the progress made on an assigned number, so a later run can resume it."""
         ...
 
     def get_successful_submission_count(self) -> int:
@@ -144,8 +153,20 @@ class Backend(Protocol):
         ...
 
     def close(self) -> None:
-        """Flush any pending submissions and release resources, retaining unsent for the next run."""
+        """Flush pending submissions and release resources, retaining unsent and unfinished work for the next run."""
         ...
+
+
+def snapshot_assignment(number: Number) -> Assignment | None:
+    """Capture a number's assignment with the factors found so far.
+
+    Returns:
+        Assignment | None: The assignment, or None if the number is not assigned.
+    """
+    if number.expires_at is None:
+        return None
+
+    return Assignment(n=number.n, expires_at=number.expires_at, factors=tuple(number.known_factors))
 
 
 def parse_composites(text: str) -> list[int]:
@@ -209,7 +230,21 @@ class BaseBackend(ABC):
         self._journal = SubmissionJournal(config.pending_submissions_path, config.backend)
         self._submit_queue: queue.Queue[QueuedSubmission] = queue.Queue()
 
+        self._assignments = AssignmentStore(config.assignment_state_path, config.backend) if self.assigns_work else None
+        self._assigned: dict[int, Number] = {}
+        self._assigned_lock = threading.Lock()
+
+        # Composites whose results are queued but the journal failed to record.
+        self._unjournaled: set[int] = set()
+
         carried_over = self._journal.load()
+        self._resubmitting = {x.n for x in carried_over}
+
+        self._carried_assignments: list[Assignment] = []
+
+        if self._assignments is not None:
+            self._carried_assignments = [x for x in self._assignments.load() if x.n not in self._resubmitting]
+            self._assignments.release(self._resubmitting)
 
         for submission in carried_over:
             self._submit_queue.put_nowait(QueuedSubmission(submission))
@@ -309,7 +344,7 @@ class BaseBackend(ABC):
 
                 if numbers:
                     logger.info("Fetched {} numbers from {}", len(numbers), self.name)
-                    return numbers
+                    return self._assign(numbers)
 
                 logger.info(
                     "No work available from {} between {} and {} digits. Retrying in {} seconds...",
@@ -332,6 +367,88 @@ class BaseBackend(ABC):
         logger.warning("Abandoning fetch from {} due to an interrupt", self.name)
         return set()
 
+    def resume(self) -> set[Number]:
+        """Resume the numbers whose assignments a previous run left unfinished, with the factors it found.
+
+        A number whose result is already waiting to be resubmitted is not resumed, as the previous run must have been
+        stopped between submitting it and releasing its assignment. A number that is already fully factored, because the
+        previous run could not record its result in the journal, is queued for submission instead of being resumed.
+
+        Returns:
+            set[Number]: The resumed numbers, which is empty if the service does not assign work.
+        """
+        if self._assignments is None:
+            return set()
+
+        resumed: list[Number] = []
+
+        for assignment in self._carried_assignments:
+            number = Number(assignment.n, self._config, self._stats, self, assignment.factors)
+            number.expires_at = assignment.expires_at
+            resumed.append(number)
+
+        self._carried_assignments = []
+
+        with self._assigned_lock:
+            self._assigned.update((x.n, x) for x in resumed)
+
+        self._record_assignments(resumed)
+
+        if finished := [x for x in resumed if x.factored]:
+            logger.info(
+                "Resubmitting {} result{} a previous run could not record",
+                len(finished),
+                "" if len(finished) == 1 else "s",
+            )
+            self.submit(finished)
+
+        unfinished = {x for x in resumed if not x.factored}
+
+        if unfinished:
+            logger.info(
+                "Resuming {} composite{} from a previous run", len(unfinished), "" if len(unfinished) == 1 else "s"
+            )
+
+        return unfinished
+
+    def _assign(self, numbers: set[Number]) -> set[Number]:
+        """Take on the assignments of freshly fetched numbers, recording them before any work is done.
+
+        Returns:
+            set[Number]: The assigned numbers.
+        """
+        if self._assignments is None:
+            return numbers
+
+        expires_at = time.time() + self.assignment_lifetime
+        assigned: set[Number] = set()
+
+        with self._assigned_lock:
+            for fetched in numbers:
+                number = self._assigned.setdefault(fetched.n, fetched)
+                number.expires_at = expires_at
+                assigned.add(number)
+
+        self._record_assignments(assigned)
+
+        return assigned
+
+    def _record_assignments(self, numbers: Iterable[Number]) -> None:
+        """Record the assignments of the given numbers along with their progress."""
+        if self._assignments is not None:
+            self._assignments.record(x for x in map(snapshot_assignment, numbers) if x is not None)
+
+    def checkpoint(self, number: Number) -> None:
+        """Record the progress made on a number, if it is held under an assignment."""
+        if self._assignments is None or (assignment := snapshot_assignment(number)) is None:
+            return
+
+        with self._assigned_lock:
+            if self._assigned.get(number.n) is not number:
+                return
+
+            self._assignments.record([assignment])
+
     def submit(self, numbers: Collection[Number]) -> None:
         """Add factored numbers to the submission queue.
 
@@ -339,6 +456,7 @@ class BaseBackend(ABC):
         least that long ago. A submission is never held within SUBMIT_MAX_HOLD of its expiration.
         """
         now = time.time()
+        submitted = [number for number in numbers if len(number.prime_factors) > 0]
         submissions = [
             Submission(
                 n=number.n,
@@ -346,14 +464,27 @@ class BaseBackend(ABC):
                 composite_factors=tuple(number.composite_factors),
                 expires_at=number.expires_at if number.expires_at is not None else now + self.submission_lifetime,
             )
-            for number in numbers
-            if len(number.prime_factors) > 0
+            for number in submitted
         ]
 
         if not submissions:
             return
 
-        self._journal.add(submissions)
+        journaled = self._journal.add(submissions)
+
+        if self._assignments is not None:
+            with self._assigned_lock:
+                if journaled:
+                    # The journal now keeps each result, so the assignment no longer needs to be retained.
+                    for submission in submissions:
+                        self._assigned.pop(submission.n, None)
+
+                    self._assignments.release(x.n for x in submissions)
+                else:
+                    # Otherwise, the assignment keeps the result so a later run can submit it.
+                    held = [x for x in submitted if self._assigned.get(x.n) is x]
+                    self._unjournaled.update(x.n for x in held)
+                    self._assignments.record(x for x in map(snapshot_assignment, held) if x is not None)
 
         with self._submission_lock:
             queued_at = time.monotonic()
@@ -375,20 +506,25 @@ class BaseBackend(ABC):
             return self._successful_submissions
 
     def close(self) -> None:
-        """Flush any pending submissions and stop the submission worker.
+        """Flush any pending submissions, stop the submission worker and retain any unfinished assignments.
 
         The worker is given until its submissions stop resolving for FLUSH_TIMEOUT, not counting any wait for a rate
         limit. An interrupt received in the meantime stops it at once.
 
         Raises:
-            OSError: If the pending submissions cannot be written.
+            OSError: If the pending submissions or the unfinished assignments cannot be written.
         """
         if self._submitting:
             self._closing_since = time.monotonic()
             self._closing.set()
             self._await_worker()
 
-        self._journal.compact()
+        try:
+            self._journal.compact()
+            self._release_unjournaled()
+        finally:
+            if self._assignments is not None:
+                self._assignments.compact()
 
         if self._successful_submissions > 0:
             logger.info("Successfully submitted {} factorizations to {}", self._successful_submissions, self.name)
@@ -400,6 +536,24 @@ class BaseBackend(ABC):
                 "" if pending == 1 else "s",
                 self.name,
             )
+
+    def _release_unjournaled(self, composites: Iterable[int] | None = None) -> None:
+        """Release the assignments retained for results the journal failed to record."""
+        if self._assignments is None:
+            return
+
+        with self._assigned_lock:
+            released = self._unjournaled.copy() if composites is None else self._unjournaled.intersection(composites)
+
+            if not released:
+                return
+
+            self._unjournaled -= released
+
+            for n in released:
+                self._assigned.pop(n, None)
+
+            self._assignments.release(released)
 
     def _await_worker(self) -> None:
         """Wait for the submission worker to stop, telling it to give up if an interrupt arrives."""
@@ -587,6 +741,7 @@ class BaseBackend(ABC):
             )
 
         self._journal.resolve(submissions)
+        self._release_unjournaled(x.n for x in submissions)
 
     def _submit_batch(self, batch: Sequence[QueuedSubmission]) -> bool:
         """Make an attempt at a batch of submissions.
@@ -623,6 +778,7 @@ class BaseBackend(ABC):
                 )
 
         self._journal.resolve(resolved)
+        self._release_unjournaled(x.n for x in resolved)
         self._discard_expired(expired)
 
         if resolved:

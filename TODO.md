@@ -7,8 +7,6 @@ later ones.
 
 ## Minor Features
 
-- Write the assignment state when work is assigned rather than only at exit, so
-  a hard kill doesn't forget reserved work.
 - Log when a FactorDB fetch is capped at 1000 numbers.
 - When a backend refuses a submission request outright (a permanent HTTP error),
   the results in it are kept for the next run, but each later batch still sends
@@ -17,6 +15,8 @@ later ones.
 
 ## Code/Architectural Improvements
 
+- Backend state should be adjusted so assignment state from one backend doesn't
+  interfere with another backend's state.
 - Thoroughly check for any opportunities to replace hand-rolled code with a
   third-party library. Avoid libraries that are not currently maintained.
 - Track ECM progress for each composite factor rather than for the number as a

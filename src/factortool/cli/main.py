@@ -22,7 +22,6 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from factortool.__about__ import __version__
-from factortool.assignments import Assignment, AssignmentStore, assignment_expired
 from factortool.backend import Backend, FetchCriteria, create_backend
 from factortool.batch import BatchController, BatchKey
 from factortool.config import BackendName, FactoringMode, load_config
@@ -221,15 +220,7 @@ def write_results(numbers: Collection[Number], output_path: Path) -> None:
             return
 
 
-def acquire_numbers(  # ruff: ignore[too-many-arguments]
-    backend: Backend,
-    assignments: AssignmentStore,
-    config: Config,
-    stats: FactoringStats,
-    criteria: FetchCriteria,
-    *,
-    fetch: bool = True,
-) -> set[Number]:
+def acquire_numbers(backend: Backend, config: Config, criteria: FetchCriteria, *, fetch: bool = True) -> set[Number]:
     """Collect a batch of numbers to work on by resuming retained assignments and optionally fetching new work.
 
     Returns:
@@ -238,29 +229,12 @@ def acquire_numbers(  # ruff: ignore[too-many-arguments]
     Raises:
         PermanentHttpError: If the backend reports a permanent error while fetching.
     """
-    numbers: set[Number] = set()
-
-    if backend.assigns_work:
-        for assignment in assignments.load():
-            number = Number(assignment.n, config, stats, backend, assignment.factors)
-            number.expires_at = assignment.expires_at
-            numbers.add(number)
-
+    numbers = backend.resume()
     remaining = criteria.count - len(numbers)
 
     if fetch and remaining > 0:
         logger.info("Fetching {} composite numbers from {}", remaining, config.backend)
-        fetched = backend.fetch(replace(criteria, count=remaining))
-
-        assigned = {x.n for x in fetched}
-        numbers |= fetched
-
-        if backend.assigns_work:
-            expires_at = time.time() + backend.assignment_lifetime
-
-            for number in numbers:
-                if number.n in assigned:
-                    number.expires_at = expires_at
+        numbers |= backend.fetch(replace(criteria, count=remaining))
 
     return numbers
 
@@ -328,32 +302,22 @@ def warn_if_assignments_may_expire(backend: Backend, args: Arguments) -> None:
         )
 
 
-def preserve_unfinished(backend: Backend, assignments: AssignmentStore, numbers: Collection[Number]) -> None:
-    """Retain or report unfinished numbers.
+def report_unfinished(backend: Backend, numbers: Collection[Number]) -> None:
+    """Report the partial factorizations that cannot be resumed if the backend accepts them, and discard them otherwise.
 
-    A number whose assignment is still held is retained for the next run, along with the factors found so far. Any
-    other partial factorization is reported if the backend accepts them, and discarded otherwise.
+    A number whose assignment is still held is left alone, as the backend retains it for the next run.
     """
-    retained: list[Assignment] = []
-
     for number in numbers:
-        if number.factored:
+        if not number.partially_factored or (number.expires_at is not None and not number.assignment_expired):
             continue
 
-        if number.expires_at is not None and not assignment_expired(number.expires_at):
-            retained.append(Assignment(n=number.n, expires_at=number.expires_at, factors=number.known_factors))
-        elif not number.partially_factored:
-            continue
-        elif backend.accepts_partial_results:
+        if backend.accepts_partial_results:
             number.report_partial()
         else:
             logger.warning(
                 "Discarding the partial factorization of {}, as it was not completed before its assignment expired",
                 format_number(number.n, truncate=False),
             )
-
-    if backend.assigns_work:
-        assignments.save(retained)
 
 
 def run_batch(args: Arguments, session: Session) -> ExitStatus:
@@ -385,14 +349,10 @@ def run_batch(args: Arguments, session: Session) -> ExitStatus:
 
     warn_if_assignments_may_expire(backend, args)
 
-    assignments = AssignmentStore(config.assignment_state_path, config.backend)
-
     try:
         numbers = acquire_numbers(
             backend,
-            assignments,
             config,
-            stats,
             FetchCriteria(
                 count=batch_size, min_digits=args.min_digits, max_digits=max_digits, skip_count=args.skip_count
             ),
@@ -429,7 +389,7 @@ def run_batch(args: Arguments, session: Session) -> ExitStatus:
         if not args.no_new_work:
             cleanup.run("record the batch", batch_controller.record_batch, factored_count, duration)
 
-        cleanup.run("preserve unfinished work", preserve_unfinished, backend, assignments, numbers)
+        cleanup.run("report unfinished work", report_unfinished, backend, numbers)
         cleanup.run("report summary", report_summary, numbers)
         cleanup.run("write results", write_results, numbers, config.result_output_path)
         cleanup.run("save statistics", stats.save_data)

@@ -43,7 +43,7 @@ class SubmissionJournal:
     """An append-only journal of submissions queued for each backend.
 
     Submissions are recorded as they are queued. The journal is rewritten without resolved submissions when it is
-    loaded and when it is compacted.
+    loaded and when it is compacted, and in place of the next append after a failed write.
     """
 
     def __init__(self, path: Path, backend_name: str) -> None:
@@ -54,6 +54,9 @@ class SubmissionJournal:
         self._pending: dict[tuple[str, int], Submission] = {}
         self._rate_limited_until: dict[str, float] = {}
         self._append_failed = False
+
+        # Whether the journal on disk may not match the pending submissions.
+        self._needs_rewrite = False
 
     @property
     def pending_count(self) -> int:
@@ -100,12 +103,17 @@ class SubmissionJournal:
                 self._rewrite()
             except OSError as e:
                 logger.warning("Failed to compact pending submissions at {}: {}", self._path, e)
+                self._needs_rewrite = True
 
             return [x for (backend, _), x in self._pending.items() if backend == self._backend_name]
 
-    def add(self, submissions: Iterable[Submission]) -> None:
-        """Record submissions that have been queued."""
-        self._record(JournalRecord(backend=self._backend_name, submission=x) for x in submissions)
+    def add(self, submissions: Iterable[Submission]) -> bool:
+        """Record submissions that have been queued.
+
+        Returns:
+            bool: True if the submissions were written to the journal, rather than only tracked until compacted.
+        """
+        return self._record(JournalRecord(backend=self._backend_name, submission=x) for x in submissions)
 
     def resolve(self, submissions: Iterable[Submission]) -> None:
         """Record that the given submissions are resolved."""
@@ -136,8 +144,14 @@ class SubmissionJournal:
         if record.rate_limited_until is not None:
             self._rate_limited_until[record.backend] = record.rate_limited_until
 
-    def _record(self, records: Iterable[JournalRecord]) -> None:
-        """Apply records and append them to the journal, logging a failure to write instead of raising an exception."""
+    def _record(self, records: Iterable[JournalRecord]) -> bool:
+        """Apply records and append them to the journal, logging a failure to write instead of raising an exception.
+
+        If a previous write failed, the whole journal is rewritten instead.
+
+        Returns:
+            bool: True if the records were written to the journal.
+        """
         with self._lock:
             lines: list[str] = []
 
@@ -146,16 +160,25 @@ class SubmissionJournal:
                 lines.append(record.model_dump_json(exclude_none=True) + "\n")
 
             if not lines:
-                return
+                return True
 
             try:
-                with self._path.open("a", encoding="utf-8") as f:
-                    f.writelines(lines)
+                if self._needs_rewrite:
+                    self._rewrite()
+                else:
+                    with self._path.open("a", encoding="utf-8") as f:
+                        f.writelines(lines)
             except OSError as e:
-                # The current run continues without the journal, but the next compaction will attempt to rewrite it.
+                # The current run continues without the journal, but the next write will attempt to rewrite it.
+                self._needs_rewrite = True
+
                 if not self._append_failed:
                     logger.error("Failed to record pending submissions at {}: {}", self._path, e)
                     self._append_failed = True
+
+                return False
+
+            return True
 
     def _rewrite(self) -> None:
         """Replace the journal with its live records, removing it if there are none."""
@@ -167,9 +190,10 @@ class SubmissionJournal:
             if rate_limited_until > now
         )
 
-        if not records:
+        if records:
+            data = "".join(record.model_dump_json(exclude_none=True) + "\n" for record in records)
+            safe_write(self._path, data.encode("utf-8"))
+        else:
             self._path.unlink(missing_ok=True)
-            return
 
-        data = "".join(record.model_dump_json(exclude_none=True) + "\n" for record in records)
-        safe_write(self._path, data.encode("utf-8"))
+        self._needs_rewrite = False

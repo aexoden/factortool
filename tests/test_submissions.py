@@ -6,14 +6,17 @@ from __future__ import annotations
 
 import time
 
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import IO, TYPE_CHECKING, Any, Self
+from unittest.mock import Mock
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Iterable
 
 import pytest
 
 from factortool.submissions import Submission, SubmissionJournal
+from factortool.util import safe_write
 
 FIFTEEN = Submission(n=15, prime_factors=(3, 5), composite_factors=(), expires_at=1.0)
 PARTIAL = Submission(n=15015, prime_factors=(3, 5), composite_factors=(1001,), expires_at=2.0)
@@ -152,11 +155,111 @@ def test_a_failure_to_record_does_not_lose_the_submission(path: Path) -> None:
     path.mkdir()
     journal = SubmissionJournal(path, "factordb")
 
-    journal.add([FIFTEEN])
-
+    assert not journal.add([FIFTEEN])
     assert journal.pending_count == 1
 
     path.rmdir()
     journal.compact()
 
     assert SubmissionJournal(path, "factordb").load() == [FIFTEEN]
+
+
+def test_adding_reports_that_the_submission_was_recorded(path: Path) -> None:
+    """Test that a submission appended to the journal is reported as recorded."""
+    journal = SubmissionJournal(path, "factordb")
+
+    assert journal.add([FIFTEEN])
+    assert SubmissionJournal(path, "factordb").load() == [FIFTEEN]
+
+
+class PartiallyFailingFile:
+    """A journal opened for appending that writes only part of its first line before failing."""
+
+    def __init__(self, f: IO[str]) -> None:
+        """Wrap the opened journal."""
+        self._f = f
+
+    def __enter__(self) -> Self:
+        """Enter the context of the opened journal.
+
+        Returns:
+            Self: The journal.
+        """
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        """Close the journal."""
+        self._f.close()
+
+    def writelines(self, lines: Iterable[str]) -> None:
+        """Write part of the first line, then fail.
+
+        Raises:
+            OSError: Always, as if the disk filled up partway through.
+        """
+        self._f.write(next(iter(lines))[:10])
+        self._f.flush()
+
+        message = "disk full"
+        raise OSError(message)
+
+
+def fail_appends_partway(monkeypatch: pytest.MonkeyPatch, path: Path, count: int = 1) -> None:
+    """Make the next appends to the journal write only part of their first line before failing."""
+    remaining = [count]
+    real_open = Path.open
+
+    def open_failing_partway(self: Path, mode: str = "r", *args: Any, **kwargs: Any) -> IO[Any] | PartiallyFailingFile:  # ruff: ignore[any-type] (Mirrors Path.open)
+        f = real_open(self, mode, *args, **kwargs)
+
+        if self == path and mode == "a" and remaining[0] > 0:
+            remaining[0] -= 1
+            return PartiallyFailingFile(f)
+
+        return f
+
+    monkeypatch.setattr(Path, "open", open_failing_partway)
+
+
+def test_a_partially_written_append_is_repaired_by_the_next_write(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
+    """Test that a write after a partially written append rewrites the journal rather than appending to the fragment."""
+    journal = SubmissionJournal(path, "factordb")
+    fail_appends_partway(monkeypatch, path)
+
+    assert not journal.add([FIFTEEN])
+    assert journal.add([PARTIAL])
+    assert SubmissionJournal(path, "factordb").load() == [FIFTEEN, PARTIAL]
+
+
+def test_writes_are_not_reported_as_recorded_until_the_journal_is_repaired(
+    monkeypatch: pytest.MonkeyPatch, path: Path
+) -> None:
+    """Test that every write fails while the journal cannot be rewritten after a partially written append."""
+    journal = SubmissionJournal(path, "factordb")
+    fail_appends_partway(monkeypatch, path)
+    monkeypatch.setattr("factortool.submissions.safe_write", Mock(side_effect=OSError("disk full")))
+
+    assert not journal.add([FIFTEEN])
+    assert not journal.add([PARTIAL])
+
+    monkeypatch.setattr("factortool.submissions.safe_write", safe_write)
+
+    assert journal.add([LARGE])
+    assert SubmissionJournal(path, "factordb").load() == [FIFTEEN, PARTIAL, LARGE]
+
+
+def test_a_partial_line_left_by_a_killed_run_is_repaired_by_the_next_write(
+    monkeypatch: pytest.MonkeyPatch, path: Path
+) -> None:
+    """Test that a partially written line that loading could not compact away is never appended to."""
+    line = FIFTEEN.model_dump_json()
+    path.write_text(f'{{"backend":"factordb","submission":{line}}}\n{{"backend":"fa', encoding="utf-8")
+    journal = SubmissionJournal(path, "factordb")
+    monkeypatch.setattr("factortool.submissions.safe_write", Mock(side_effect=OSError("disk full")))
+
+    assert journal.load() == [FIFTEEN]
+
+    monkeypatch.setattr("factortool.submissions.safe_write", safe_write)
+
+    assert journal.add([PARTIAL])
+    assert SubmissionJournal(path, "factordb").load() == [FIFTEEN, PARTIAL]

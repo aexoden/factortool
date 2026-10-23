@@ -173,11 +173,10 @@ where factors are submitted.
 For `factordb`, partial factorizations are submitted if a run ends after finding
 one or more factors.
 
-For `mersenne_ca`, only complete factorizations are submitted. Unfinished
-assignments are saved in the state directory, along with any factors already
-found, and resumed on the next run. Work continues on an assignment until it
-expires, an hour after it was fetched. Once it has expired, it is dropped, and
-any factors found for it are recorded only in the results file.
+For `mersenne_ca`, only complete factorizations are submitted. Assignments are
+saved in the state directory. Work continues on an assignment until it expires,
+an hour after it was fetched. Once it has expired, it is dropped, and any
+factors found for it are recorded only in the results file.
 
 ## Results Files
 

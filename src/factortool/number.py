@@ -438,6 +438,8 @@ class Number:
     def _replace_composite(self, n: int, method: str, factors: list[int]) -> list[int]:
         """Replace a composite factor with the factors a method found for it.
 
+        Progress on a number that remains unfinished is checkpointed at once.
+
         Returns:
             list[int]: The factors that are themselves composite.
         """
@@ -453,6 +455,9 @@ class Number:
             else:
                 self.composite_factors.append(factor)
                 composites.append(factor)
+
+        if len(factors) > 1 and not self.factored and self._backend is not None:
+            self._backend.checkpoint(self)
 
         return composites
 

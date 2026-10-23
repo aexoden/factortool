@@ -21,7 +21,6 @@ import pytest
 
 from loguru import logger
 
-from factortool.assignments import Assignment, AssignmentStore
 from factortool.backend import FetchCriteria
 from factortool.cli.main import (
     Arguments,
@@ -29,8 +28,8 @@ from factortool.cli.main import (
     acquire_numbers,
     get_time_limits,
     main,
-    preserve_unfinished,
     report_summary,
+    report_unfinished,
     start_backend,
     validate_arguments,
     warn_if_assignments_may_expire,
@@ -56,19 +55,6 @@ CARRIED_OVER = [100, 102]
 FETCHED = [104, 106, 108]
 
 
-def carry_over(state_path: Path, lifetime: float = 1800.0) -> AssignmentStore:
-    """Retain CARRIED_OVER as unfinished assignments from a previous run.
-
-    Returns:
-        AssignmentStore: A store that will resume them.
-    """
-    expires_at = time.time() + lifetime
-    store = AssignmentStore(state_path, "mersenne_ca")
-    store.save(Assignment(n=n, expires_at=expires_at) for n in CARRIED_OVER)
-
-    return store
-
-
 def write_config(tmp_path: Path, **overrides: object) -> None:
     """Write a configuration file whose tools are present, with any executable standing in for YAFU."""
     config = {"backend": "factordb", "max_threads": 1, "yafu_path": sys.executable, **overrides}
@@ -80,12 +66,23 @@ class FakeBackend:
 
     assignment_lifetime = 3600.0
 
-    def __init__(self, *, assigns_work: bool = True, accepts_partial_results: bool = True) -> None:
-        """Initialize the fake backend."""
+    def __init__(
+        self, *, assigns_work: bool = True, accepts_partial_results: bool = True, resumed: Collection[int] = ()
+    ) -> None:
+        """Initialize the fake backend, which resumes the given composites."""
         self.assigns_work = assigns_work
         self.accepts_partial_results = accepts_partial_results
+        self.resumed = resumed
         self.requested: list[int] = []
         self.submitted: list[int] = []
+
+    def resume(self) -> set[Number]:
+        """Hand back the composites this backend resumes.
+
+        Returns:
+            set[Number]: The resumed composites.
+        """
+        return {make_number(n) for n in self.resumed}
 
     def fetch(self, criteria: FetchCriteria) -> set[Number]:
         """Record the request and hand back the canned composites.
@@ -102,6 +99,9 @@ class FakeBackend:
     def submit(self, numbers: Collection[Number]) -> None:
         """Record a factorization instead of reporting it anywhere."""
         self.submitted.extend(x.n for x in numbers)
+
+    def checkpoint(self, number: Number) -> None:
+        """Ignore the progress made on a number."""
 
     def get_successful_submission_count(self) -> int:
         """Report how many factorizations were handed over.
@@ -134,81 +134,31 @@ def factoring(outcome: EngineStatus | Exception = EngineStatus.SUCCESS) -> Mock:
     return Mock(side_effect=run)
 
 
-def test_a_normal_run_tops_the_batch_back_up(tmp_path: Path) -> None:
+def test_a_normal_run_tops_the_batch_back_up() -> None:
     """Test that retained work counts toward the batch and the rest is fetched."""
-    backend = FakeBackend()
-    store = carry_over(tmp_path / "assignments.json")
+    backend = FakeBackend(resumed=CARRIED_OVER)
 
-    numbers = acquire_numbers(backend, store, make_config(), FactoringStats(tmp_path / "stats.json"), CRITERIA)
+    numbers = acquire_numbers(backend, make_config(), CRITERIA)
 
     assert backend.requested == [1]
     assert sorted(x.n for x in numbers) == sorted([*CARRIED_OVER, FETCHED[0]])
 
 
-def test_acquired_numbers_carry_their_assignment_expiry(tmp_path: Path) -> None:
-    """Test that retained numbers keep their original expiry, and fetched ones are given the backend's lifetime."""
-    backend = FakeBackend()
-    store = carry_over(tmp_path / "assignments.json", lifetime=1800.0)
-    start = time.time()
-
-    numbers = acquire_numbers(backend, store, make_config(), FactoringStats(tmp_path / "stats.json"), CRITERIA)
-
-    remaining = {x.n: x.expires_at - start for x in numbers if x.expires_at is not None}
-
-    assert remaining == {
-        **dict.fromkeys(CARRIED_OVER, pytest.approx(1800.0, abs=5.0)),
-        FETCHED[0]: pytest.approx(backend.assignment_lifetime, abs=5.0),
-    }
-
-
-def test_a_retained_number_resumes_from_the_factors_already_found(tmp_path: Path) -> None:
-    """Test that a number retained with factors is rebuilt with them, rather than started from scratch."""
-    backend = FakeBackend()
-    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca")
-    store.save([Assignment(n=15015, expires_at=time.time() + 1800.0, factors=[3, 5, 1001])])
-
-    (number,) = acquire_numbers(
-        backend, store, make_config(), FactoringStats(tmp_path / "stats.json"), CRITERIA, fetch=False
-    )
-
-    assert (number.prime_factors, number.composite_factors) == ([3, 5], [1001])
-
-
-def test_a_retained_number_assigned_again_keeps_its_factors_and_takes_the_new_expiry(tmp_path: Path) -> None:
-    """Test that a retained composite the backend hands out again is neither restarted nor left to expire early."""
-    backend = FakeBackend()
-    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca")
-    store.save([Assignment(n=FETCHED[0], expires_at=time.time() + 60.0, factors=[2, FETCHED[0] // 2])])
-    start = time.time()
-
-    numbers = acquire_numbers(backend, store, make_config(), FactoringStats(tmp_path / "stats.json"), CRITERIA)
-    again = next(x for x in numbers if x.n == FETCHED[0])
-
-    assert again.prime_factors == [2]
-    assert again.expires_at == pytest.approx(start + backend.assignment_lifetime, abs=5.0)
-
-
-def test_no_new_work_works_only_what_is_already_assigned(tmp_path: Path) -> None:
+def test_no_new_work_works_only_what_is_already_assigned() -> None:
     """Test that the no new work option only uses already assigned work."""
-    backend = FakeBackend()
-    store = carry_over(tmp_path / "assignments.json")
+    backend = FakeBackend(resumed=CARRIED_OVER)
 
-    numbers = acquire_numbers(
-        backend, store, make_config(), FactoringStats(tmp_path / "stats.json"), CRITERIA, fetch=False
-    )
+    numbers = acquire_numbers(backend, make_config(), CRITERIA, fetch=False)
 
     assert backend.requested == []
     assert sorted(x.n for x in numbers) == CARRIED_OVER
 
 
-def test_no_new_work_with_nothing_carried_over_finds_no_work(tmp_path: Path) -> None:
+def test_no_new_work_with_nothing_carried_over_finds_no_work() -> None:
     """Test that the no new work option finds no work when nothing is retained."""
     backend = FakeBackend()
-    store = AssignmentStore(tmp_path / "assignments.json", "mersenne_ca")
 
-    numbers = acquire_numbers(
-        backend, store, make_config(), FactoringStats(tmp_path / "stats.json"), CRITERIA, fetch=False
-    )
+    numbers = acquire_numbers(backend, make_config(), CRITERIA, fetch=False)
 
     assert backend.requested == []
     assert numbers == set()
@@ -217,7 +167,6 @@ def test_no_new_work_with_nothing_carried_over_finds_no_work(tmp_path: Path) -> 
 def test_an_early_exit_reports_partial_progress_without_an_assignment(tmp_path: Path) -> None:
     """Test that an early exit reports partial progress for a backend that does not assign work."""
     backend = FakeBackend(assigns_work=False)
-    store = AssignmentStore(tmp_path / "assignments.json", "factordb")
     stats = FactoringStats(tmp_path / "stats.json", read_only=True)
 
     partially_factored = Number(200, make_config(), stats, backend)
@@ -225,10 +174,72 @@ def test_an_early_exit_reports_partial_progress_without_an_assignment(tmp_path: 
     partially_factored.composite_factors = [50]
     untouched = Number(300, make_config(), stats, backend)
 
-    preserve_unfinished(backend, store, [partially_factored, untouched])
+    report_unfinished(backend, [partially_factored, untouched])
 
     assert backend.submitted == [200]
-    assert not (tmp_path / "assignments.json").exists()
+
+
+def make_unfinished(expires_at: float | None) -> tuple[list[Number], Number]:
+    """Build a finished, a partially factored and an untouched number sharing an assignment expiry.
+
+    Returns:
+        tuple[list[Number], Number]: All three numbers, and the partially factored one by itself.
+    """
+    done = make_number(100)
+    done.prime_factors = [2, 2, 5, 5]
+    done.composite_factors = []
+
+    # A method can return a composite cofactor without the engine reporting anything other than success.
+    partially_factored = make_number(200)
+    partially_factored.prime_factors = [2]
+    partially_factored.composite_factors = [100]
+    partially_factored.report_partial = Mock()  # type: ignore[method-assign]
+
+    numbers = [done, partially_factored, make_number(300)]
+
+    for number in numbers:
+        number.expires_at = expires_at
+
+    return numbers, partially_factored
+
+
+@pytest.mark.parametrize("accepts_partial_results", [True, False])
+def test_unfinished_work_whose_assignment_is_held_is_left_to_the_backend(
+    monkeypatch: pytest.MonkeyPatch, *, accepts_partial_results: bool
+) -> None:
+    """Test that a partial factorization is neither reported nor discarded while its assignment is held."""
+    warning = Mock()
+    monkeypatch.setattr("factortool.cli.main.logger.warning", warning, raising=True)
+    backend = FakeBackend(accepts_partial_results=accepts_partial_results)
+    numbers, partially_factored = make_unfinished(time.time() + 3600.0)
+
+    report_unfinished(backend, numbers)
+
+    partially_factored.report_partial.assert_not_called()  # type: ignore[attr-defined]
+    warning.assert_not_called()
+
+
+def test_a_partial_result_the_backend_does_not_want_is_discarded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a partial factorization is not reported once its assignment has expired, if the backend refuses it."""
+    warning = Mock()
+    monkeypatch.setattr("factortool.cli.main.logger.warning", warning, raising=True)
+    backend = FakeBackend(accepts_partial_results=False)
+    numbers, partially_factored = make_unfinished(time.time() - 1.0)
+
+    report_unfinished(backend, numbers)
+
+    partially_factored.report_partial.assert_not_called()  # type: ignore[attr-defined]
+    assert [call.args[1] for call in warning.call_args_list] == ["200 <3>"]
+
+
+def test_a_partial_result_whose_assignment_expired_is_reported() -> None:
+    """Test that a backend accepting partial factorizations is sent one that can no longer be completed."""
+    backend = FakeBackend(accepts_partial_results=True)
+    numbers, partially_factored = make_unfinished(time.time() - 1.0)
+
+    report_unfinished(backend, numbers)
+
+    partially_factored.report_partial.assert_called_once_with()  # type: ignore[attr-defined]
 
 
 def test_no_new_work_is_rejected_by_a_backend_that_assigns_nothing() -> None:
@@ -595,19 +606,6 @@ def test_a_failed_cleanup_step_still_saves_the_rest_and_closes_the_backend(
 
     assert status == ExitStatus.CLEANUP_FAILED
     assert (tmp_path / "state" / "stats.json").exists()
-    close.assert_called_once_with()
-
-
-def test_a_failure_to_save_assignments_is_reported_by_the_exit_status(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Test that losing track of unfinished assignments counts as a cleanup failure, without skipping later steps."""
-    monkeypatch.setattr("factortool.cli.main.AssignmentStore.save", Mock(side_effect=OSError("disk full")))
-
-    status, close = run_main(monkeypatch, tmp_path, factoring(), backend=FakeBackend())
-
-    assert status == ExitStatus.CLEANUP_FAILED
-    assert len(list((tmp_path / "results").iterdir())) == 1
     close.assert_called_once_with()
 
 

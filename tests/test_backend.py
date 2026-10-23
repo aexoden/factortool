@@ -20,6 +20,7 @@ import requests
 
 from loguru import logger
 
+from factortool.assignments import Assignment, AssignmentState, AssignmentStore
 from factortool.backend import (
     NO_WORK_DELAY,
     SUBMIT_ATTEMPTS,
@@ -1390,3 +1391,374 @@ def test_base_close_does_not_count_request_spacing_as_a_stall(config: Config, mo
 
     assert backend.submitted == [15, 21]
     assert not config.pending_submissions_path.exists()
+
+
+class AssigningBackend(FakeBackend):
+    """A fake backend whose service reserves the composites it hands out."""
+
+    assigns_work = True
+    assignment_lifetime = 3600.0
+
+
+# Products of two primes too large for trial factoring to find.
+HARD_COMPOSITES = (1000003 * 1000033, 1000037 * 1000039)
+
+
+def make_assigning_backend(config: Config, responses: Iterable[str | Exception] = ()) -> AssigningBackend:
+    """Create a fake backend that assigns work. Callers are responsible for closing it.
+
+    Returns:
+        AssigningBackend: The fake backend.
+    """
+    return AssigningBackend(config, FactoringStats(config.stats_path, read_only=True), responses)
+
+
+def retained(config: Config) -> list[Assignment]:
+    """Read the assignments in the state file as they stand, without discarding any that have expired.
+
+    Returns:
+        list[Assignment]: The assignments, smallest composite first.
+    """
+    return AssignmentState.model_validate_json(config.assignment_state_path.read_text(encoding="utf-8")).assignments
+
+
+def retain(config: Config, *assignments: Assignment) -> None:
+    """Leave assignments in the state file, as a previous run would have."""
+    store = AssignmentStore(config.assignment_state_path, config.backend)
+    store.record(assignments)
+
+
+def test_assigned_work_is_recorded_as_soon_as_it_is_fetched(config: Config) -> None:
+    """Test that fetched composites are recorded with their expiry before any work is done on them."""
+    backend = make_assigning_backend(config, ["15\n21\n"])
+    start = time.time()
+
+    try:
+        numbers = backend.fetch(FetchCriteria(count=2, min_digits=1))
+
+        assert {x.n for x in numbers} == {15, 21}
+        assert [(x.n, x.factors) for x in retained(config)] == [(15, (15,)), (21, (21,))]
+        assert all(x.expires_at == pytest.approx(start + backend.assignment_lifetime, abs=5.0) for x in numbers)
+        assert all(x.expires_at == y.expires_at for x, y in zip(sorted(numbers), retained(config), strict=True))
+    finally:
+        backend.close()
+
+
+def test_work_that_is_not_assigned_is_not_recorded(config: Config) -> None:
+    """Test that a backend that does not assign work leaves no assignment state, and resumes nothing."""
+    backend = make_fake_backend(config, ["15\n"])
+
+    try:
+        (number,) = backend.fetch(FetchCriteria(count=1, min_digits=1))
+        number.factor_tf()
+
+        assert number.expires_at is None
+        assert backend.resume() == set()
+    finally:
+        backend.close()
+
+    assert not config.assignment_state_path.exists()
+
+
+def test_progress_on_an_assigned_number_is_recorded_as_it_is_made(config: Config) -> None:
+    """Test that factors found for an assigned number are recorded at once, before the run ends."""
+    backend = make_assigning_backend(config, [f"{2 * HARD_COMPOSITES[0]}\n"])
+
+    try:
+        (number,) = backend.fetch(FetchCriteria(count=1, min_digits=1))
+        number.factor_tf()
+
+        assert [x.factors for x in retained(config)] == [(2, HARD_COMPOSITES[0])]
+    finally:
+        backend.close()
+
+
+def test_a_finished_number_is_released_once_its_result_is_journaled(
+    monkeypatch: pytest.MonkeyPatch, config: Config
+) -> None:
+    """Test that a factored number leaves the assignment state only after its result has entered the journal."""
+    backend = make_assigning_backend(config, ["15\n21\n"])
+    journaled_at_release: list[list[int]] = []
+    release = AssignmentStore.release
+
+    def recording_release(store: AssignmentStore, composites: Iterable[int]) -> None:
+        journaled_at_release.append(journaled(config))
+        release(store, composites)
+
+    monkeypatch.setattr(AssignmentStore, "release", recording_release)
+
+    try:
+        numbers = sorted(backend.fetch(FetchCriteria(count=2, min_digits=1)))
+        numbers[0].factor_tf()
+
+        assert [x.n for x in retained(config)] == [21]
+    finally:
+        backend.close()
+
+    assert journaled_at_release == [[15]]
+    assert backend.submitted == [15]
+
+
+def test_a_composite_assigned_again_keeps_its_progress_and_takes_the_new_expiry(config: Config) -> None:
+    """Test that a held composite handed out again is returned as the same number, with the later expiry."""
+    n = 2 * HARD_COMPOSITES[0]
+    retain(config, Assignment(n=n, expires_at=time.time() + 60.0, factors=(2, HARD_COMPOSITES[0])))
+    backend = make_assigning_backend(config, [f"{n}\n"])
+    start = time.time()
+
+    try:
+        (resumed,) = backend.resume()
+        (fetched,) = backend.fetch(FetchCriteria(count=1, min_digits=1))
+
+        assert fetched is resumed
+        assert fetched.prime_factors == [2]
+        assert fetched.expires_at == pytest.approx(start + backend.assignment_lifetime, abs=5.0)
+        assert [(x.factors, x.expires_at) for x in retained(config)] == [((2, HARD_COMPOSITES[0]), fetched.expires_at)]
+    finally:
+        backend.close()
+
+
+def test_resumed_work_continues_from_the_factors_already_found(config: Config) -> None:
+    """Test that a retained number is rebuilt with its factors and its original expiry."""
+    expires_at = time.time() + 1800.0
+    retain(config, Assignment(n=15015, expires_at=expires_at, factors=(3, 5, 1001)))
+    backend = make_assigning_backend(config)
+
+    try:
+        (number,) = backend.resume()
+
+        assert (number.prime_factors, number.composite_factors) == ([3, 5], [1001])
+        assert number.expires_at == expires_at
+    finally:
+        backend.close()
+
+
+def test_resumed_work_with_inconsistent_factors_is_recorded_as_rebuilt(config: Config) -> None:
+    """Test that factors rejected when a retained number is rebuilt are dropped from the state as well."""
+    retain(config, Assignment(n=15015, expires_at=time.time() + 1800.0, factors=(3, 5, 7)))
+    backend = make_assigning_backend(config)
+
+    try:
+        backend.resume()
+
+        assert [x.factors for x in retained(config)] == [(15015,)]
+    finally:
+        backend.close()
+
+
+def test_work_whose_result_is_awaiting_resubmission_is_not_resumed(config: Config) -> None:
+    """Test that a run killed between journaling a result and releasing its assignment doesn't factor it again."""
+    expires_at = time.time() + 1800.0
+    retain(config, Assignment(n=15, expires_at=expires_at), Assignment(n=21, expires_at=expires_at))
+    SubmissionJournal(config.pending_submissions_path, config.backend).add([make_submission(3, 5)])
+    backend = make_assigning_backend(config)
+
+    try:
+        assert [x.n for x in backend.resume()] == [21]
+        assert [x.n for x in retained(config)] == [21]
+    finally:
+        backend.close()
+
+    assert backend.submitted == [15]
+
+
+def test_closing_retains_unfinished_work_and_drops_what_has_expired(config: Config) -> None:
+    """Test that the state left for the next run holds only the unfinished assignments that are still held."""
+    backend = make_assigning_backend(config, ["15\n21\n"])
+
+    try:
+        held, expiring = sorted(backend.fetch(FetchCriteria(count=2, min_digits=1)))
+        expiring.expires_at = time.time() - 1.0
+        backend.checkpoint(expiring)
+    finally:
+        backend.close()
+
+    assert [x.n for x in retained(config)] == [held.n]
+
+
+def test_progress_is_not_recorded_for_a_number_the_backend_does_not_hold(config: Config) -> None:
+    """Test that a number that was never assigned, or has been released, is not added back to the state."""
+    backend = make_assigning_backend(config)
+    number = Number(15, config, FactoringStats(config.stats_path, read_only=True), backend)
+    number.expires_at = time.time() + 600.0
+
+    try:
+        backend.checkpoint(number)
+    finally:
+        backend.close()
+
+    assert retained(config) == []
+
+
+def test_closing_reports_a_failure_to_retain_unfinished_work(monkeypatch: pytest.MonkeyPatch, config: Config) -> None:
+    """Test that losing track of unfinished assignments is raised by close, after the journal is compacted."""
+    backend = make_assigning_backend(config)
+    compact = Mock()
+    monkeypatch.setattr(backend._journal, "compact", compact)
+    monkeypatch.setattr(AssignmentStore, "compact", Mock(side_effect=OSError("disk full")))
+
+    with pytest.raises(OSError, match="disk full"):
+        backend.close()
+
+    compact.assert_called_once_with()
+
+
+def test_factors_found_before_a_method_is_abandoned_are_recorded(
+    monkeypatch: pytest.MonkeyPatch, config: Config
+) -> None:
+    """Test that an abort partway through a method still records the factors it had already found."""
+    n = math.prod(HARD_COMPOSITES)
+    retain(config, Assignment(n=n, expires_at=time.time() + 1800.0, factors=HARD_COMPOSITES))
+    backend = make_assigning_backend(config)
+    factor_yafu = Mock(side_effect=[[1000003, 1000033], Interrupted()])
+    monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
+
+    try:
+        (number,) = backend.resume()
+
+        with pytest.raises(Interrupted):
+            number.factor_rho()
+
+        assert [sorted(x.factors) for x in retained(config)] == [[1000003, 1000033, HARD_COMPOSITES[1]]]
+    finally:
+        backend.close()
+
+
+class UnreachableAssigningBackend(UnreachableBackend):
+    """A fake backend that assigns work and whose service never answers a submission."""
+
+    assigns_work = True
+    assignment_lifetime = 3600.0
+
+
+def close_abandoning_submissions(backend: BaseBackend) -> None:
+    """Close a backend, interrupting it shortly after it starts flushing its submissions."""
+    timer = threading.Timer(0.2, setattr, (backend._interrupts, "_level", 1))
+    timer.start()
+
+    try:
+        backend.close()
+    finally:
+        timer.cancel()
+
+
+def test_a_result_the_journal_fails_to_record_keeps_its_assignment(config: Config) -> None:
+    """Test that a result that never reaches the journal is retained with its assignment, and submitted when resumed."""
+    config.pending_submissions_path.mkdir()
+    backend = UnreachableAssigningBackend(config, FactoringStats(config.stats_path, read_only=True), ["15\n"])
+
+    try:
+        (number,) = backend.fetch(FetchCriteria(count=1, min_digits=1))
+        number.factor_tf()
+
+        assert [(x.n, x.factors) for x in retained(config)] == [(15, (3, 5))]
+    finally:
+        with pytest.raises((IsADirectoryError, PermissionError)):
+            close_abandoning_submissions(backend)
+
+    assert [(x.n, x.factors) for x in retained(config)] == [(15, (3, 5))]
+
+    config.pending_submissions_path.rmdir()
+    resuming = make_assigning_backend(config)
+
+    try:
+        assert resuming.resume() == set()
+    finally:
+        resuming.close()
+
+    assert resuming.submitted == [15]
+    assert retained(config) == []
+
+
+def test_a_result_the_journal_fails_to_record_is_released_once_submitted(config: Config) -> None:
+    """Test that the assignment retained for an unjournaled result is released once the result is resolved."""
+    config.pending_submissions_path.mkdir()
+    backend = make_assigning_backend(config, ["15\n"])
+
+    try:
+        (number,) = backend.fetch(FetchCriteria(count=1, min_digits=1))
+        number.factor_tf()
+    finally:
+        with pytest.raises((IsADirectoryError, PermissionError)):
+            backend.close()
+
+    assert backend.submitted == [15]
+    assert retained(config) == []
+
+
+def test_a_result_the_journal_fails_to_record_is_released_once_the_journal_is_compacted(config: Config) -> None:
+    """Test that the assignment retained for an unjournaled result is released once compaction writes the journal."""
+    config.pending_submissions_path.mkdir()
+    backend = UnreachableAssigningBackend(config, FactoringStats(config.stats_path, read_only=True), ["15\n"])
+
+    try:
+        (number,) = backend.fetch(FetchCriteria(count=1, min_digits=1))
+        number.factor_tf()
+        config.pending_submissions_path.rmdir()
+    finally:
+        close_abandoning_submissions(backend)
+
+    assert journaled(config) == [15]
+    assert retained(config) == []
+
+
+def test_closing_before_resuming_keeps_the_saved_assignments(config: Config) -> None:
+    """Test that a run that ends before resuming its saved work leaves that work for the next run."""
+    expires_at = time.time() + 1800.0
+    retain(config, Assignment(n=15015, expires_at=expires_at, factors=(3, 5, 1001)))
+
+    backend = make_assigning_backend(config)
+    backend.close()
+
+    assert [(x.n, x.factors) for x in retained(config)] == [(15015, (3, 5, 1001))]
+
+
+def test_progress_is_recorded_before_the_next_cofactor_is_factored(
+    monkeypatch: pytest.MonkeyPatch, config: Config
+) -> None:
+    """Test that a split is recorded before the method moves on to the next composite factor."""
+    n = math.prod(HARD_COMPOSITES)
+    retain(config, Assignment(n=n, expires_at=time.time() + 1800.0, factors=HARD_COMPOSITES))
+    backend = make_assigning_backend(config)
+    seen: list[list[int]] = []
+
+    def factor(composite: int, *_args: object) -> list[int]:
+        seen.append(sorted(x for assignment in retained(config) for x in assignment.factors))
+        return [1000003, 1000033] if composite == HARD_COMPOSITES[0] else [composite]
+
+    monkeypatch.setattr("factortool.number.factor_yafu", factor, raising=True)
+
+    try:
+        (number,) = backend.resume()
+        number.factor_rho()
+    finally:
+        backend.close()
+
+    assert seen == [sorted(HARD_COMPOSITES), [1000003, 1000033, HARD_COMPOSITES[1]]]
+
+
+def test_progress_is_recorded_before_a_composite_factor_is_factored_further(
+    monkeypatch: pytest.MonkeyPatch, config: Config
+) -> None:
+    """Test that a final method's split is recorded before its composite factors are factored in turn."""
+    n = math.prod(HARD_COMPOSITES)
+    retain(config, Assignment(n=n, expires_at=time.time() + 1800.0))
+    backend = make_assigning_backend(config)
+    seen: list[list[int]] = []
+
+    splits = {n: list(HARD_COMPOSITES), HARD_COMPOSITES[0]: [1000003, 1000033], HARD_COMPOSITES[1]: [1000037, 1000039]}
+
+    def run_final(_number: Number, composite: int, _method: str) -> list[int]:
+        seen.append(sorted(x for assignment in retained(config) for x in assignment.factors))
+        return splits[composite]
+
+    monkeypatch.setattr(Number, "_run_final", run_final)
+
+    try:
+        (number,) = backend.resume()
+        number.factor_final()
+    finally:
+        backend.close()
+
+    assert seen == [[n], sorted(HARD_COMPOSITES), [1000003, 1000033, HARD_COMPOSITES[1]]]
+    assert backend.submitted == [n]
