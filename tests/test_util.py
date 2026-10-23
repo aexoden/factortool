@@ -32,9 +32,11 @@ from factortool.util import (
     LogLevel,
     format_number,
     get_work_dir,
+    is_prime,
     remove_stale_work_dirs,
     rewrite_yafu_ini,
     setup_logger,
+    small_primes,
 )
 
 from .helpers import HEARTBEAT_QUIET, wait_for_heartbeat
@@ -71,6 +73,41 @@ def test_format_number_without_truncation() -> None:
     n = int("1234567890" * 10)
 
     assert format_number(n, truncate=False) == f"{n} <100>"
+
+
+# The number of primes below one million, and the largest of them.
+PRIMES_BELOW_ONE_MILLION = 78_498
+LARGEST_PRIME_BELOW_ONE_MILLION = 999_983
+
+
+def test_small_primes_are_the_primes_below_one_million() -> None:
+    """Test that the trial factoring primes are exactly the primes below one million, in order."""
+    primes = small_primes()
+
+    assert primes[:10] == (2, 3, 5, 7, 11, 13, 17, 19, 23, 29)
+    assert primes[-1] == LARGEST_PRIME_BELOW_ONE_MILLION
+    assert len(primes) == PRIMES_BELOW_ONE_MILLION
+
+
+@pytest.mark.parametrize(
+    ("n", "expected"),
+    [
+        (0, False),
+        (1, False),
+        (2, True),
+        (4, False),
+        (999_983, True),
+        (1_000_003, True),
+        # Strong pseudoprimes to the first several prime bases.
+        (3_215_031_751, False),
+        (3_317_044_064_679_887_385_961_981, False),
+        (2**127 - 1, True),
+        ((2**61 - 1) * (2**89 - 1), False),
+    ],
+)
+def test_is_prime(n: int, *, expected: bool) -> None:
+    """Test that primes are recognized, including strong pseudoprimes to small bases, which are not."""
+    assert is_prime(n) is expected
 
 
 def test_work_dir_is_isolated_and_removed(tmp_path: Path) -> None:

@@ -26,7 +26,7 @@ from factortool.constants import (
     NFS_YAFU_MIN_DIGITS,
 )
 from factortool.tools import ToolFailure, run_cado_nfs, run_yafu
-from factortool.util import SMALL_PRIMES, format_number, is_prime, log_factor_result
+from factortool.util import format_number, is_prime, log_factor_result, small_primes
 
 if TYPE_CHECKING:
     from factortool.backend import Backend
@@ -205,9 +205,11 @@ def factor_tf(n: int, stats: FactoringStats) -> list[int]:
     original_n = n
     factors: list[int] = []
 
+    # The primes are generated on first use, so do that before beginning timing.
+    primes = small_primes()
     start_time = time.perf_counter_ns()
 
-    for p in SMALL_PRIMES:
+    for p in primes:
         while n % p == 0:
             factors.append(p)
             n //= p

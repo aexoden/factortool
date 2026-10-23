@@ -23,24 +23,26 @@ import gmpy2
 from loguru import logger
 from tap import Tap
 
+# Trial factoring divides by every prime below this.
+SMALL_PRIME_LIMIT = 10**6
 
-def generate_primes(limit: int = 10**6) -> list[int]:
-    """Generate a list of prime numbers up to the specified limit.
+
+@cache
+def small_primes() -> tuple[int, ...]:
+    """List the prime numbers below SMALL_PRIME_LIMIT, generating them on first use.
 
     Returns:
-        list[int]: List of prime numbers less than the limit.
+        tuple[int, ...]: Tuple of prime numbers below SMALL_PRIME_LIMIT, in ascending order.
     """
-    prime_flags = [True for _ in range(limit)]
+    primes: list[int] = []
+    p = gmpy2.mpz(2)
 
-    for i in range(2, limit):
-        if prime_flags[i]:
-            for j in range(2 * i, limit, i):
-                prime_flags[j] = False
+    while p < SMALL_PRIME_LIMIT:
+        primes.append(int(p))
+        p = gmpy2.next_prime(p)
 
-    return [i for i in range(2, limit) if prime_flags[i]]
+    return tuple(primes)
 
-
-SMALL_PRIMES: list[int] = generate_primes()
 
 # The log levels that can be selected, from the most to the least verbose.
 LogLevel = Literal["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"]
@@ -89,53 +91,16 @@ def format_number(n: int, *, truncate: bool = True) -> str:
 
 @cache
 def is_prime(n: int) -> bool:
-    """Check if a number is prime using trial division and Miller-Rabin tests.
+    """Check if a number is prime using GMP's trial division, Baillie-PSW and Miller-Rabin tests.
 
-    This function is deterministic for numbers less than 3,317,044,064,679,887,385,961,981. Beyond that, it may be
-    probabilistic.
+    The result is certain for numbers below 2**64. Above that, there is no known composite counterexample.
+
+    Only GMP versions of 6.2.0 and above include the BPSW portion of the test.
 
     Returns:
         bool: True if n is a probable prime, False otherwise.
     """
-    # Return False for n = 1
-    if n < 2:  # ruff:ignore[magic-value-comparison]
-        return False
-
-    # Check for small prime factors.
-    for p in SMALL_PRIMES:
-        if n == p:
-            return True
-        if n % p == 0:
-            return False
-
-    # Do a series of Miller-Rabin tests, based on bases reported by https://www.wikiwand.com/en/articles/Miller-Rabin
-    test_thresholds: dict[int, list[int]] = {
-        2_047: [2],
-        1_373_653: [2, 3],
-        25_326_001: [2, 3, 5],
-        3_215_031_751: [2, 3, 5, 7],
-        2_152_302_898_747: [2, 3, 5, 7, 11],
-        3_474_749_660_383: [2, 3, 5, 7, 11, 13],
-        341_550_071_728_321: [2, 3, 5, 7, 11, 13, 17],
-        3_825_123_056_546_413_051: [2, 3, 5, 7, 11, 13, 17, 19, 23],
-        318_665_857_834_031_151_167_461: [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37],
-        3_317_044_064_679_887_385_961_981: [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41],
-    }
-
-    test_bases = []
-
-    for threshold, bases in test_thresholds.items():
-        if n < threshold:
-            test_bases = bases
-            break
-
-    # If the number is larger, just do a few extra bases. If we accidentally label a composite number prime, it doesn't
-    # matter that much, as FactorDB will ultimately catch the composite factor. Searching for alternate lists of
-    # required bases might be useful.
-    if not test_bases:
-        test_bases = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53]
-
-    return all(gmpy2.is_strong_prp(n, base) for base in test_bases)
+    return gmpy2.is_prime(n)
 
 
 def log_factor_result(methods: Iterable[str], n: int, factors: list[int]) -> None:

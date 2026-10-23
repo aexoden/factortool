@@ -7,8 +7,6 @@ later ones.
 
 ## Code/Architectural Improvements
 
-- Backend state should be adjusted so assignment state from one backend doesn't
-  interfere with another backend's state.
 - Thoroughly check for any opportunities to replace hand-rolled code with a
   third-party library. Avoid libraries that are not currently maintained.
 - Track ECM progress for each composite factor rather than for the number as a
@@ -99,9 +97,6 @@ later ones.
   measurement when there's no prior rate would help. Resets can also be more
   common, as the batch key includes `max_threads` and `factoring_mode`, which
   can be changed for a single run.
-- Remove the unused `flask` dependency.
-- Consider `gmpy2.is_strong_bpsw_prp` for `is_prime` above the range where the
-  fixed Miller-Rabin bases are deterministic.
 - Documentation: add an Unreleased section to the changelog (mersenne.ca, YAFU
   NFS and the JSON-RPC migration have all landed since 0.1.0), document
   `--version` and the configuration settings in the README, and reconcile the

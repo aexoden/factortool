@@ -56,6 +56,24 @@ def test_tf() -> None:
     assert factor_tf(n, stats) == [2, 3, 5, 7, 11, 13, 17, 31]
 
 
+def test_tf_time_excludes_generating_the_primes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that generating the trial factoring primes on first use doesn't count towards the time taken."""
+    clock = 0
+
+    def small_primes() -> tuple[int, ...]:
+        nonlocal clock
+        clock += 1_000_000_000
+        return (2, 3, 5)
+
+    monkeypatch.setattr("factortool.number.small_primes", small_primes)
+    monkeypatch.setattr("factortool.number.time.perf_counter_ns", lambda: clock)
+    stats = Mock()
+
+    assert factor_tf(2 * 3 * 5 * 7 * 11, stats) == [2, 3, 5, 77]
+
+    stats.update_probability.assert_called_once_with(4, "tf", 1, 0.0, success=True)
+
+
 def resumed_number(n: int, factors: list[int]) -> Number:
     """Build a Number resuming from factors found by a previous run.
 
