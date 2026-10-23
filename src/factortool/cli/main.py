@@ -432,6 +432,10 @@ def run_session(args: Arguments, config: Config) -> ExitStatus:
     finally:
         session.cleanup.run("close the backend", session.backend.close)
 
+    # The refused results are kept for the next run, but whatever caused the refusal needs attention first.
+    if session.backend.submissions_refused and status in NON_ERROR_EXIT_STATUSES:
+        status = ExitStatus.PERMANENT_HTTP_ERROR
+
     # An interrupt may have arrived while the backend was flushing its submissions.
     if interrupts.interrupted and status in NON_ERROR_EXIT_STATUSES:
         status = ExitStatus.INTERRUPTED

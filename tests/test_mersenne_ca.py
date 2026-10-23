@@ -179,5 +179,5 @@ def test_fetch_maps_criteria(mersenne_ca: MersenneCA, monkeypatch: pytest.Monkey
         json=None,
         timeout=30.0,
         max_attempts=None,
-        wait=mersenne_ca._interrupts.wait,
+        wait=mersenne_ca._fetch_wait,
     )

@@ -108,7 +108,7 @@ class MersenneCA(BaseBackend):
         }
 
         return parse_composites(
-            self._service_request("GET", API_URL, params=params, timeout=30.0, wait=self._interrupts.wait).text
+            self._service_request("GET", API_URL, params=params, timeout=30.0, wait=self._fetch_wait).text
         )
 
     def _submit_number(self, submission: Submission) -> SubmitOutcome:

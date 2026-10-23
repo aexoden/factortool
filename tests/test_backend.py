@@ -83,6 +83,15 @@ class FakeBackend(BaseBackend):
         return outcomes.pop(0) if outcomes else SubmitOutcome.ACCEPTED
 
 
+class RefusingBackend(FakeBackend):
+    """A fake backend whose service refuses every submission request outright."""
+
+    @override
+    def _submit_number(self, submission: Submission) -> SubmitOutcome:
+        self.submitted.append(submission.n)
+        return SubmitOutcome.DEFERRED
+
+
 class UnreachableBackend(FakeBackend):
     """A fake backend whose service never answers a submission."""
 
@@ -122,13 +131,16 @@ def retry_wait(monkeypatch: pytest.MonkeyPatch) -> Mock:
 
 @pytest.fixture
 def wait(monkeypatch: pytest.MonkeyPatch) -> Mock:
-    """Record interruptible waits instead of waiting, reporting that no interrupt arrived.
+    """Record interruptible waits, including those before another attempt at a fetch, instead of waiting.
+
+    No wait reports that an interrupt arrived or a submission request was refused.
 
     Returns:
         Mock: The recording wait mock.
     """
     wait = Mock(return_value=False)
     monkeypatch.setattr(InterruptState, "wait", wait)
+    monkeypatch.setattr(BaseBackend, "_fetch_wait", wait)
     return wait
 
 
@@ -503,19 +515,114 @@ def test_base_discards_a_new_result_whose_assignment_has_expired(config: Config,
     assert not config.pending_submissions_path.exists()
 
 
-def test_base_leaves_a_deferred_submission_for_the_next_run(config: Config, sleep: Mock, retry_wait: Mock) -> None:
-    """Test that a deferred result is neither retried during the run nor removed from the journal."""
+def test_base_stops_submitting_once_a_request_is_refused(config: Config, sleep: Mock, retry_wait: Mock) -> None:
+    """Test that a refused request leaves it and everything after it unsent for the next run, without any retries."""
     backend = make_fake_backend(config)
     backend.outcomes[15] = [SubmitOutcome.DEFERRED]
 
     backend.submit(make_factored(config, backend, [3, 5], [3, 7]))
+    backend._submit_thread.join(timeout=5.0)
+    assert not backend._submit_thread.is_alive()
+    backend.submit(make_factored(config, backend, [5, 7]))
     backend.close()
 
-    assert backend.submitted == [15, 21]
-    assert backend.get_successful_submission_count() == 1
+    assert backend.submitted == [15]
+    assert backend.submissions_refused
+    assert backend.get_successful_submission_count() == 0
     retry_wait.assert_not_called()
+    assert journaled(config) == [15, 21, 35]
+    sleep.assert_not_called()
+
+
+def test_base_refuses_to_fetch_once_a_submission_request_is_refused(config: Config, sleep: Mock) -> None:
+    """Test that no work is fetched once the service has refused to accept the results of earlier work."""
+    SubmissionJournal(config.pending_submissions_path, config.backend).add([make_submission(3, 5)])
+
+    backend = RefusingBackend(config, FactoringStats(config.stats_path, read_only=True), ["21\n"])
+    backend._submit_thread.join(timeout=5.0)
+    assert backend.submissions_refused
+
+    try:
+        with pytest.raises(PermanentHttpError, match="refused a submission request"):
+            backend.fetch(FetchCriteria(count=1, min_digits=1))
+    finally:
+        backend.close()
+
+    assert backend.requested == []
     assert journaled(config) == [15]
     sleep.assert_not_called()
+
+
+def test_base_fetch_stops_retrying_once_a_submission_request_is_refused(
+    config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that a refusal arriving while a fetch waits to try again abandons the fetch rather than retrying it."""
+    monkeypatch.setattr("factortool.backend.RETRY_DELAY", 60.0)
+
+    class OverlappingBackend(RefusingBackend):
+        @override
+        def _request_composites(self, criteria: FetchCriteria) -> list[int]:
+            # The refusal arrives from the submission worker while the fetch waits before its next attempt.
+            if not self.requested:
+                self.submit(make_factored(config, self, [3, 5]))
+
+            return super()._request_composites(criteria)
+
+    backend = OverlappingBackend(
+        config, FactoringStats(config.stats_path, read_only=True), [requests.RequestException("503"), "21\n"]
+    )
+    start = time.monotonic()
+
+    try:
+        with pytest.raises(PermanentHttpError, match="refused a submission request"):
+            backend.fetch(FetchCriteria(count=1, min_digits=1))
+    finally:
+        backend.close()
+
+    assert time.monotonic() - start < 10.0  # ruff: ignore[magic-value-comparison]
+    assert backend.requested == [1]
+    assert journaled(config) == [15]
+
+
+def test_base_keeps_the_assignments_fetched_as_a_submission_request_is_refused(config: Config) -> None:
+    """Test that work returned by a fetch already sent when a submission request is refused is kept for the next run."""
+
+    class InFlightBackend(AssigningBackend):
+        @override
+        def _request_composites(self, criteria: FetchCriteria) -> list[int]:
+            self.submit(make_factored(config, self, [3, 5]))
+            self._submit_thread.join(timeout=5.0)
+            return super()._request_composites(criteria)
+
+        @override
+        def _submit_number(self, submission: Submission) -> SubmitOutcome:
+            self.submitted.append(submission.n)
+            return SubmitOutcome.DEFERRED
+
+    backend = InFlightBackend(config, FactoringStats(config.stats_path, read_only=True), ["21\n"])
+
+    try:
+        with pytest.raises(PermanentHttpError, match="refused a submission request"):
+            backend.fetch(FetchCriteria(count=1, min_digits=1))
+    finally:
+        backend.close()
+
+    assert [x.n for x in retained(config)] == [21]
+    assert journaled(config) == [15]
+
+
+def test_base_defers_the_rest_of_a_batch_after_a_refused_request(config: Config) -> None:
+    """Test that the default batch submission sends nothing further once a request has been refused."""
+    backend = make_fake_backend(config)
+    backend.outcomes[21] = [SubmitOutcome.DEFERRED]
+
+    try:
+        outcomes = backend._submit_numbers([make_submission(3, 5), make_submission(3, 7), make_submission(5, 7)])
+    finally:
+        backend.close()
+
+    assert outcomes == [SubmitOutcome.ACCEPTED, SubmitOutcome.DEFERRED, SubmitOutcome.DEFERRED]
+    assert backend.submitted == [15, 21]
 
 
 def test_base_honors_a_rate_limit_from_a_previous_run(config: Config) -> None:
@@ -1069,7 +1176,7 @@ def test_fetch_maps_criteria(factordb: FactorDB, http_request: Mock) -> None:
         ],
         timeout=10.0,
         max_attempts=None,
-        wait=factordb._interrupts.wait,
+        wait=factordb._fetch_wait,
     )
 
 

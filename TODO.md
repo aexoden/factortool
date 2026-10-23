@@ -5,13 +5,6 @@ intended order of implementation. There is no guarantee that an item on this lis
 will ever actually be implemented. Some of the earlier ones may be obsoleted by
 later ones.
 
-## Minor Features
-
-- When a backend refuses a submission request outright (a permanent HTTP error),
-  the results in it are kept for the next run, but each later batch still sends
-  one more request. Consider not submitting anything further for the rest of the
-  run, as the cause is most likely a ban or a bad token.
-
 ## Code/Architectural Improvements
 
 - Backend state should be adjusted so assignment state from one backend doesn't
@@ -138,8 +131,9 @@ later ones.
   and starting the next run is going to make contacting the service more
   successful. In continuous mode, we'd just want contact attempts to continue
   anyway. The standard backoff capped at an hour is probably sufficient.
-  Submissions deferred after a backend refused the request are currently left
-  for "the next run", which will need a retry-later policy of its own.
+  Once a backend refuses a submission request, nothing further is submitted or
+  fetched for the rest of the run, and the results are left for "the next run",
+  which will need a retry-later policy of its own.
 - Add an alternate buffer dashboard for more convenient viewing of the work. This
   makes the most sense with a continuous mode.
 - As an alternative to the existing breadth-first standard mode, allow for a

@@ -127,6 +127,11 @@ class Backend(Protocol):
         """Whether the service accepts factorizations that include composite factors."""
         ...
 
+    @property
+    def submissions_refused(self) -> bool:
+        """Whether the service refused a submission request outright during the run."""
+        ...
+
     def resume(self) -> set[Number]:
         """Resume the numbers whose assignments a previous run left unfinished, with the factors it found."""
         ...
@@ -137,7 +142,8 @@ class Backend(Protocol):
         A service that limits how many composites a single request returns is asked for no more than that limit.
 
         Raises:
-            PermanentHttpError: If a permanent client error is encountered and should not be retried.
+            PermanentHttpError: If a permanent client error is encountered and should not be retried, or if the service
+                refused a submission request earlier in the run.
             ValueError: If criteria are invalid or contain unsupported constraints.
         """
         ...
@@ -274,6 +280,9 @@ class BaseBackend(ABC):
         # Set to make the worker stop prematurely, even if the queue is not empty.
         self._give_up = threading.Event()
 
+        # Set once the service refuses a submission request outright, after which nothing further is sent this run.
+        self._refused = threading.Event()
+
         self._last_progress = time.monotonic()
         self._last_queued = time.monotonic()
         self._successful_submissions = 0
@@ -283,6 +292,11 @@ class BaseBackend(ABC):
             target=self._submit_worker, name=f"{type(self).__name__}-Submission-Worker", daemon=True
         )
         self._submitting = False
+
+    @property
+    def submissions_refused(self) -> bool:
+        """Whether the service refused a submission request outright during the run."""
+        return self._refused.is_set()
 
     def _start_submitting(self) -> None:
         """Start the submission worker."""
@@ -320,13 +334,16 @@ class BaseBackend(ABC):
             set[Number]: A set of composite numbers matching the criteria.
 
         Raises:
-            PermanentHttpError: If a permanent client error is encountered and should not be retried.
+            PermanentHttpError: If a permanent client error is encountered and should not be retried, or if the service
+                refused a submission request earlier in the run.
             ValueError: If the service does not support the requested criteria.
         """
         self._validate_criteria(criteria)
 
         if criteria.count == 0:
             return set()
+
+        self._raise_if_refused()
 
         if self.max_fetch_count is not None and criteria.count > self.max_fetch_count:
             logger.info(
@@ -344,6 +361,8 @@ class BaseBackend(ABC):
         delay = RETRY_DELAY
 
         while not self._interrupts.stop_fetching:
+            self._raise_if_refused()
+
             try:
                 composites = self._request_composites(criteria)
             except PermanentHttpError:
@@ -362,8 +381,12 @@ class BaseBackend(ABC):
                 }
 
                 if numbers:
+                    # A request already sent when a submission request was refused can still return work.
+                    assigned = self._assign(numbers)
+                    self._raise_if_refused()
+
                     logger.info("Fetched {} numbers from {}", len(numbers), self.name)
-                    return self._assign(numbers)
+                    return assigned
 
                 logger.info(
                     "No work available from {} between {} and {} digits. Retrying in {} seconds...",
@@ -373,18 +396,31 @@ class BaseBackend(ABC):
                     NO_WORK_DELAY,
                 )
 
-                if self._interrupts.wait(NO_WORK_DELAY):
+                if self._fetch_wait(NO_WORK_DELAY):
                     break
 
                 continue
 
-            if self._interrupts.wait(delay):
+            if self._fetch_wait(delay):
                 break
 
             delay = min(MAX_DELAY, delay * 2)
 
+        # The fetch may have been abandoned due to a refused submission request.
+        self._raise_if_refused()
+
         logger.warning("Abandoning fetch from {} due to an interrupt", self.name)
         return set()
+
+    def _raise_if_refused(self) -> None:
+        """Raise an exception if a submission request was previously refused.
+
+        Raises:
+            PermanentHttpError: If the service refused a submission request earlier in the run.
+        """
+        if self._refused.is_set():
+            msg = f"{self.name} refused a submission request earlier in the run"
+            raise PermanentHttpError(msg)
 
     def resume(self) -> set[Number]:
         """Resume the numbers whose assignments a previous run left unfinished, with the factors it found.
@@ -630,13 +666,23 @@ class BaseBackend(ABC):
     def _submit_numbers(self, submissions: Sequence[Submission]) -> list[SubmitOutcome]:
         """Make a single attempt to submit a batch of factorizations. By default, each is submitted individually.
 
+        Once a request is refused outright, the rest of the batch is deferred without being sent.
+
         Returns:
             list[SubmitOutcome]: The outcomes of the submission attempts.
 
         Raises:
             Interrupted: If the submission was interrupted before completion.
         """
-        return [self._submit_number(submission) for submission in submissions]
+        outcomes: list[SubmitOutcome] = []
+
+        for submission in submissions:
+            if SubmitOutcome.DEFERRED in outcomes:
+                outcomes.append(SubmitOutcome.DEFERRED)
+            else:
+                outcomes.append(self._submit_number(submission))
+
+        return outcomes
 
     def _service_request(  # ruff: ignore[too-many-arguments] (Mirrors HttpClient.request)
         self,
@@ -666,6 +712,14 @@ class BaseBackend(ABC):
             max_attempts=None,
             wait=wait,
         )
+
+    def _fetch_wait(self, delay: float) -> bool:
+        """Wait before another attempt at a fetch, ending early if an interrupt arrives or a submission is refused.
+
+        Returns:
+            bool: True if the fetch should be abandoned, False otherwise.
+        """
+        return self._interrupts.wait(delay, until=self._refused)
 
     def _submission_wait(self, delay: float) -> bool:
         """Wait before another attempt at a submission, for as long as the attempt should continue.
@@ -765,6 +819,9 @@ class BaseBackend(ABC):
     def _submit_batch(self, batch: Sequence[QueuedSubmission]) -> bool:
         """Make an attempt at a batch of submissions.
 
+        If the service refuses the request outright, the worker is told to stop, leaving everything unsent for the next
+        run.
+
         Returns:
             bool: True if any submission was queued for another attempt.
         """
@@ -806,6 +863,13 @@ class BaseBackend(ABC):
 
         with self._submission_lock:
             self._successful_submissions += outcomes.count(SubmitOutcome.ACCEPTED)
+
+        if SubmitOutcome.DEFERRED in outcomes:
+            logger.error(
+                "Not submitting anything further to {} during this run due to a refused submission request", self.name
+            )
+            self._refused.set()
+            self._give_up.set()
 
         return retrying
 

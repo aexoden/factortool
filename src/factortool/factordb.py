@@ -337,7 +337,7 @@ class FactorDB(BaseBackend):
         if criteria.max_digits is not None:
             params["max_digits"] = criteria.max_digits
 
-        (result,) = self._rpc([("list_by_type", params)], timeout=10.0, wait=self._interrupts.wait)
+        (result,) = self._rpc([("list_by_type", params)], timeout=10.0, wait=self._fetch_wait)
         rows = ListResult.model_validate(result).rows
 
         # Larger numbers are only previewed.
@@ -346,7 +346,7 @@ class FactorDB(BaseBackend):
 
         if truncated:
             calls = [("get_number", {"target": {"id": row.fid}, "decimal": True}) for row in truncated]
-            results = self._rpc(calls, timeout=30.0, wait=self._interrupts.wait)
+            results = self._rpc(calls, timeout=30.0, wait=self._fetch_wait)
             decimals = {
                 row.fid: NumberRecord.model_validate(result).decimal
                 for row, result in zip(truncated, results, strict=True)

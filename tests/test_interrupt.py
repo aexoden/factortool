@@ -67,6 +67,23 @@ def test_wait_returns_immediately_once_interrupted() -> None:
     assert time.monotonic() - start < PROMPT
 
 
+def test_wait_wakes_promptly_once_its_event_is_set() -> None:
+    """Test that a wait ends early once the event it was given is set, without any interrupt."""
+    interrupts = InterruptState()
+    until = threading.Event()
+    timer = threading.Timer(0.2, until.set)
+    timer.start()
+    start = time.monotonic()
+
+    try:
+        assert interrupts.wait(LONG_WAIT, until=until)
+    finally:
+        timer.cancel()
+
+    assert time.monotonic() - start < PROMPT
+    assert not interrupts.interrupted
+
+
 def test_wait_wakes_promptly_on_a_real_signal() -> None:
     """Test that a wait wakes promptly when a real SIGINT arrives."""
     with installed_interrupts() as interrupts:

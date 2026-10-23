@@ -135,21 +135,24 @@ class InterruptState:
         finally:
             self._abandon = None
 
-    def wait(self, timeout: float) -> bool:
-        """Sleep for up to timeout seconds, returning early if an interrupt arrives.
+    def wait(self, timeout: float, *, until: threading.Event | None = None) -> bool:
+        """Sleep for up to timeout seconds, returning early if an interrupt arrives or the until event is set.
 
         Returns:
-            bool: True if the wait ended early due to an interrupt signal. False otherwise.
+            bool: True if the wait ended early due to an interrupt signal or the until event. False otherwise.
         """
         deadline = time.monotonic() + timeout
 
-        while not self.interrupted:
+        while not self.interrupted and (until is None or not until.is_set()):
             remaining = deadline - time.monotonic()
 
             if remaining <= 0:
                 return False
 
-            time.sleep(min(remaining, POLL_INTERVAL))
+            if until is None:
+                time.sleep(min(remaining, POLL_INTERVAL))
+            else:
+                until.wait(min(remaining, POLL_INTERVAL))
 
         return True
 

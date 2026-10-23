@@ -191,11 +191,16 @@ factors is always the number itself.
 Every result is recorded in the state directory as soon as it is ready to
 submit, and removed once the backend has accepted or rejected it. Whatever is
 left when `factortool` exits is submitted at the start of the next run with the
-same backend. Unsent results do not change the exit status.
+same backend. Unsent results do not change the exit status, unless the backend
+refused them as described below.
 
 If the backend refuses a submission request outright (for example, with HTTP
 403), the results in it are kept for the next run rather than treated as
-rejected.
+rejected. As the cause, most likely a ban or a bad token, would affect every
+later request as well, nothing further is submitted or fetched during the run,
+and `factortool` exits with status 5 once the current batch ends. Work returned
+by a fetch that was already under way is not factored, but any assignments it
+took are kept for the next run.
 
 A result that still has not been submitted is eventually discarded: after 30
 days for `factordb`, or when its assignment expires for `mersenne_ca`. Rate

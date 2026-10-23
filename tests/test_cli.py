@@ -75,6 +75,7 @@ class FakeBackend:
         self.resumed = resumed
         self.requested: list[int] = []
         self.submitted: list[int] = []
+        self.submissions_refused = False
 
     def resume(self) -> set[Number]:
         """Hand back the composites this backend resumes.
@@ -838,6 +839,21 @@ def test_a_permanent_fetch_error_closes_the_backend(monkeypatch: pytest.MonkeyPa
 
     assert status == ExitStatus.PERMANENT_HTTP_ERROR
     run.assert_not_called()
+    close.assert_called_once_with()
+
+
+@pytest.mark.parametrize("interrupted", [False, True], ids=["finished", "interrupted"])
+def test_a_refused_submission_request_ends_the_run_with_a_permanent_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, interrupted: bool
+) -> None:
+    """Test that a run whose results the backend refused to accept stops the loop, even if it was also interrupted."""
+    backend = FakeBackend(assigns_work=False)
+    backend.submissions_refused = True
+    monkeypatch.setattr(InterruptState, "interrupted", interrupted)
+
+    status, close = run_main(monkeypatch, tmp_path, factoring(), backend=backend)
+
+    assert status == ExitStatus.PERMANENT_HTTP_ERROR
     close.assert_called_once_with()
 
 
