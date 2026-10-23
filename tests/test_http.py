@@ -28,6 +28,7 @@ from factortool.http import (
     PermanentHttpError,
     build_user_agent,
     get_too_many_requests_delay,
+    parse_http_date,
 )
 from factortool.interrupt import Interrupted
 
@@ -228,9 +229,20 @@ def test_rate_limit_does_not_advance_backoff(monkeypatch: pytest.MonkeyPatch) ->
         ("0", MIN_RATE_LIMIT_DELAY),
         ("-5", MIN_RATE_LIMIT_DELAY),
         ("Thu, 01 Jan 1970 00:00:00 GMT", MIN_RATE_LIMIT_DELAY),
+        ("Thu Jan  1 00:00:00 1970", MIN_RATE_LIMIT_DELAY),
         ("864000", 864000.0),
     ],
-    ids=["missing", "empty", "unparseable", "seconds", "zero", "negative", "past-date", "ten-days"],
+    ids=[
+        "missing",
+        "empty",
+        "unparseable",
+        "seconds",
+        "zero",
+        "negative",
+        "past-date",
+        "past-date-asctime",
+        "ten-days",
+    ],
 )
 def test_rate_limit_delay_follows_retry_after(retry_after: str | None, delay: float) -> None:
     """Tests that the wait is whatever Retry-After asks for, however long, with a minimum and a default without one."""
@@ -305,6 +317,54 @@ def test_an_abandoned_wait_abandons_the_request(monkeypatch: pytest.MonkeyPatch)
     assert sleeps == []
 
 
+# A fixed time for interpreting RFC 850 dates, at which "76" is exactly 50 years ahead.
+RFC_850_NOW = dt.datetime(2026, 10, 23, 12, tzinfo=dt.UTC)
+
+
+@pytest.mark.parametrize(
+    ("now", "value", "year"),
+    [
+        (RFC_850_NOW, "Friday, 23-Oct-26 12:00:00 GMT", 2026),
+        (RFC_850_NOW, "Wednesday, 01-Jan-70 00:00:00 GMT", 2070),
+        (RFC_850_NOW, "Friday, 23-Oct-76 12:00:00 GMT", 2076),
+        (RFC_850_NOW, "Friday, 23-Oct-76 12:00:01 GMT", 1976),
+        (RFC_850_NOW, "Saturday, 24-Oct-76 00:00:00 GMT", 1976),
+        (RFC_850_NOW, "Friday, 01-Jan-99 00:00:00 GMT", 1999),
+        (RFC_850_NOW, "Saturday, 01-Jan-00 00:00:00 GMT", 2000),
+        # The same day 50 years after a leap day doesn't exist, so the comparison must not construct it.
+        (dt.datetime(2024, 2, 29, tzinfo=dt.UTC), "Wednesday, 28-Feb-74 23:59:59 GMT", 2074),
+        (dt.datetime(2024, 2, 29, tzinfo=dt.UTC), "Thursday, 01-Mar-74 00:00:00 GMT", 1974),
+        # The rule applies across a century boundary, from the current century.
+        (dt.datetime(2099, 12, 31, tzinfo=dt.UTC), "Sunday, 01-Jan-50 00:00:00 GMT", 2050),
+        (dt.datetime(2099, 12, 31, tzinfo=dt.UTC), "Friday, 01-Jan-49 00:00:00 GMT", 2049),
+        (dt.datetime(2100, 1, 1, tzinfo=dt.UTC), "Sunday, 01-Jan-51 00:00:00 GMT", 2051),
+        (dt.datetime(2100, 1, 1, tzinfo=dt.UTC), "Thursday, 01-Jan-50 00:00:00 GMT", 2150),
+    ],
+)
+def test_rfc_850_years_are_at_most_50_years_ahead(now: dt.datetime, value: str, year: int) -> None:
+    """Tests that a two-digit year is in the current century, unless that puts it more than 50 years ahead."""
+    date = parse_http_date(value, now)
+
+    assert date.year == year
+    assert date.tzinfo == dt.UTC
+
+
+@pytest.mark.parametrize(
+    ("value", "year"),
+    [
+        ("Wed, 01 Jan 2070 00:00:00 GMT", 2070),
+        ("Wed Jan  1 00:00:00 2070", 2070),
+        # Not an HTTP-date, but accepted with the year email.utils gives it.
+        ("Thu, 01 Jan 70 00:00:00 GMT", 1970),
+    ],
+    ids=["imf-fixdate", "asctime", "obsolete-rfc-822"],
+)
+def test_only_rfc_850_years_depend_on_the_current_time(value: str, year: int) -> None:
+    """Tests that the other formats keep the year they were parsed with, whenever they are parsed."""
+    for now in (RFC_850_NOW, dt.datetime(2200, 1, 1, tzinfo=dt.UTC)):
+        assert parse_http_date(value, now).year == year
+
+
 @pytest.mark.skipif(not hasattr(time, "tzset"), reason="Changing the local time zone requires time.tzset()")
 def test_retry_after_date_is_gmt(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests that an HTTP-date Retry-After header is correctly interpreted as GMT."""
@@ -314,6 +374,28 @@ def test_retry_after_date_is_gmt(monkeypatch: pytest.MonkeyPatch) -> None:
 
     retry_date = dt.datetime.now(tz=dt.UTC) + dt.timedelta(minutes=2)
     response = make_response(429, {"Retry-After": retry_date.strftime("%a, %d %b %Y %H:%M:%S GMT")})
+
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    time.tzset()
+
+    try:
+        delay = get_too_many_requests_delay(response)
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+
+    assert delay == pytest.approx(120, abs=5)
+
+
+@pytest.mark.skipif(not hasattr(time, "tzset"), reason="Changing the local time zone requires time.tzset()")
+def test_retry_after_asctime_date_is_gmt(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests that an HTTP-date Retry-After header in the asctime format, which names no zone, is interpreted as GMT."""
+    # Work around mypy not understanding that this test only runs if time.tzset() is available.
+    if sys.platform == "win32":
+        return
+
+    retry_date = dt.datetime.now(tz=dt.UTC) + dt.timedelta(minutes=2)
+    response = make_response(429, {"Retry-After": retry_date.strftime("%a %b %d %H:%M:%S %Y")})
 
     monkeypatch.setenv("TZ", "America/Los_Angeles")
     time.tzset()

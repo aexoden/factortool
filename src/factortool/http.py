@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 import threading
 import time
 
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
@@ -38,6 +40,12 @@ TRANSIENT_STATUS_CODES = frozenset({502, 503, 504})
 CLIENT_ERROR_STATUS_CODES = range(400, 500)
 RETRYABLE_CLIENT_STATUS_CODES = frozenset({408, 429})
 
+# The two-digit year of an obsolete RFC 850 date, such as "Sunday, 06-Nov-94 08:49:37 GMT".
+RFC_850_YEAR_PATTERN = re.compile(r"\d{1,2}-[A-Za-z]{3}-(?P<year>\d{2})\s")
+
+# How far in the future an RFC 850 date may appear to be before its year is taken to be in the previous century.
+RFC_850_MAX_YEARS_AHEAD = 50
+
 
 def build_user_agent(identity: str = "", override: str = "") -> str:
     """Compose the User-Agent to identify this client to a remote service.
@@ -57,6 +65,39 @@ def build_user_agent(identity: str = "", override: str = "") -> str:
     return f"factortool/{__version__} ({detail})"
 
 
+def parse_http_date(value: str, now: dt.datetime) -> dt.datetime:
+    """Parse a date in any of the HTTP-date formats that HTTP/1.1 recipients must accept.
+
+    As RFC 9110 requires, the two-digit year of an RFC 850 date is taken to be in the current century, unless that makes
+    the date appear more than 50 years after now, in which case it is in the previous century.
+
+    Returns:
+        dt.datetime: The date, in UTC.
+
+    Raises:
+        ValueError: If the value is not a valid date.
+    """
+    date = parsedate_to_datetime(value)
+
+    # HTTP dates are always in GMT, even in the obsolete formats that don't say so.
+    date = date.replace(tzinfo=dt.UTC) if date.tzinfo is None else date.astimezone(dt.UTC)
+
+    if (match := RFC_850_YEAR_PATTERN.search(value)) is not None:
+        now = now.astimezone(dt.UTC)
+        year = now.year - now.year % 100 + int(match["year"])
+
+        # The fields are compared one by one, as the same day 50 years after now may not exist.
+        date_fields = (date.month, date.day, date.hour, date.minute, date.second)
+        now_fields = (now.month, now.day, now.hour, now.minute, now.second)
+
+        if (year - RFC_850_MAX_YEARS_AHEAD, *date_fields) > (now.year, *now_fields):
+            year -= 100
+
+        date = date.replace(year=year)
+
+    return date
+
+
 def get_too_many_requests_delay(response: requests.Response, default_delay: float = DEFAULT_RATE_LIMIT_DELAY) -> float:
     """Get the delay time from a 429 Too Many Requests response.
 
@@ -71,13 +112,15 @@ def get_too_many_requests_delay(response: requests.Response, default_delay: floa
     try:
         delay = float(int(retry_after))
     except ValueError:
+        now = dt.datetime.now(tz=dt.UTC)
+
         try:
-            retry_date = dt.datetime.strptime(retry_after, "%a, %d %b %Y %H:%M:%S GMT").replace(tzinfo=dt.UTC)
+            retry_date = parse_http_date(retry_after, now)
         except ValueError:
             logger.warning("Failed to parse Retry-After header: {}", retry_after)
             return default_delay
 
-        delay = (retry_date - dt.datetime.now(tz=dt.UTC)).total_seconds()
+        delay = (retry_date - now).total_seconds()
 
     return max(MIN_RATE_LIMIT_DELAY, delay)
 
