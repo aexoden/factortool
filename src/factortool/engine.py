@@ -165,10 +165,11 @@ class FactorEngine:
         """Apply a factoring method to each unfactored number using a pool of worker threads.
 
         An exception in any worker ends the stage. The numbers still queued are not started, the tools already running
-        are left to finish, and the exception is then raised here as if it had happened in the calling thread.
+        are left to finish, and the exception is then raised here as if it had happened in the calling thread. If the
+        work is abandoned meanwhile, a tool failure is still raised in preference to Interrupted.
 
         Raises:
-            Interrupted: If a worker's tool is killed because the work is being abandoned.
+            Interrupted: If a worker's tool is killed because the work is being abandoned, and no other worker failed.
         """
         failed = threading.Event()
 
@@ -188,14 +189,16 @@ class FactorEngine:
                 raise
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self._config.max_threads) as executor:
-            done, _ = concurrent.futures.wait(
-                [executor.submit(run, number) for number in numbers if number.active],
-                return_when=concurrent.futures.FIRST_EXCEPTION,
-            )
-            error = next((e for future in done if (e := future.exception()) is not None), None)
+            futures = [executor.submit(run, number) for number in numbers if number.active]
+            done, _ = concurrent.futures.wait(futures, return_when=concurrent.futures.FIRST_EXCEPTION)
 
-            if error is not None:
+            if any(future.exception() is not None for future in done):
                 executor.shutdown(cancel_futures=True)
+
+                # Every worker has now finished, so collect all their errors. A tool failure is preferred over the
+                # Interrupted of a tool killed by an abort, however the two happened to be ordered.
+                errors = [e for future in futures if not future.cancelled() and (e := future.exception()) is not None]
+                error = next((e for e in errors if not isinstance(e, Interrupted)), errors[0])
                 raise error
 
     #

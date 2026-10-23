@@ -417,7 +417,7 @@ def test_an_abort_kills_a_worker_outlasting_a_failed_one(monkeypatch: pytest.Mon
     def factor_yafu(n: int, *_args: object) -> list[int]:
         if n == failing.n:
             # Fail only once the other worker's tool is running, so the stage has something to wait for. The abort
-            # follows the failure, arriving while the stage is waiting.
+            # is requested alongside the failure, and may arrive just before or after it.
             wait_for_heartbeat(heartbeat)
             threads.append(abort_once_started(heartbeat, signal.SIGTERM))
             message = "YAFU failed"
@@ -437,7 +437,7 @@ def test_an_abort_kills_a_worker_outlasting_a_failed_one(monkeypatch: pytest.Mon
         engine = FactorEngine(make_config(max_threads=2), interrupts)
         start = time.monotonic()
 
-        # The failure came first, so it is still what the run reports.
+        # Whichever arrived first, the failure is what the run reports.
         with pytest.raises(YafuError):
             engine.run([failing, outlasting])
 
