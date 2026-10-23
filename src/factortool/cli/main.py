@@ -34,7 +34,7 @@ from factortool.lock import DirectoryInUseError, lock_directories
 from factortool.number import Number, Outcome, format_results
 from factortool.stats import FactoringStats, InvalidStatsError
 from factortool.tools import ToolError, tool_failures
-from factortool.util import ConfigArguments, format_number, setup_logger
+from factortool.util import ConfigArguments, format_number, remove_stale_work_dirs, setup_logger
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -508,6 +508,7 @@ def main() -> None:
     validate_tools(config)
 
     with lock_instance(config):
+        remove_stale_work_dirs(config.work_path)
         status = run_session(args, config)
 
     if status != ExitStatus.SUCCESS:

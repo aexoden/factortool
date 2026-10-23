@@ -214,14 +214,21 @@ factortool/0.1.0 (Username; +https://github.com/aexoden/factortool)
 Set `user_agent` in config.json to replace the value entirely if you would
 rather send something else.
 
-## YAFU Working Directories
+## Working Directories
 
-`factortool` runs each YAFU invocation in a separate temporary directory under
-`work_path`, preventing YAFU's working files from interfering with other runs.
+`factortool` runs each YAFU and CADO-NFS invocation in a separate temporary
+directory under `work_path`, preventing their working files from interfering
+with other runs. CADO-NFS is pointed at its directory with `--workdir` instead
+of allowing it to create its own under the system temporary directory. A
+directory is removed once its run ends, and any left behind by a run that was
+killed outright are removed when the next run starts.
 
-A `yafu.ini` is copied into each working directory and relative tool paths are
-adjusted automatically. By default, factortool uses the `yafu.ini` next to the
-YAFU binary; set `yafu_ini_path` to use a different file.
+`work_path` belongs to factortool, and nothing else should be kept in it, though
+`factortool` will only remove directories it created itself.
+
+For YAFU, a `yafu.ini` is copied into each working directory and relative tool
+paths are adjusted automatically. By default, factortool uses the `yafu.ini`
+next to the YAFU binary; set `yafu_ini_path` to use a different file.
 
 ## Notes
 

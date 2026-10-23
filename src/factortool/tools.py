@@ -28,7 +28,7 @@ from pydantic import BaseModel, NonNegativeInt, ValidationError
 
 from factortool.constants import MAX_CONSECUTIVE_TOOL_FAILURES
 from factortool.interrupt import Interrupted
-from factortool.util import format_number, get_work_dir, safe_write
+from factortool.util import CADO_NFS_WORK_DIR_PREFIX, YAFU_WORK_DIR_PREFIX, format_number, get_work_dir, safe_write
 
 if TYPE_CHECKING:
     from factortool.config import YafuPaths
@@ -369,7 +369,7 @@ def run_tool(
             cmd,
             cwd=cwd,
             env=_tool_environment(threads),
-            stdin=subprocess.PIPE if stdin is not None else None,
+            stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -479,7 +479,7 @@ def run_yafu(  # ruff: ignore[too-many-arguments]
     start_time = time.perf_counter_ns()
 
     try:
-        with get_work_dir(yafu.work, yafu.ini, "yafu-") as work_dir:
+        with get_work_dir(yafu.work, yafu.ini, YAFU_WORK_DIR_PREFIX) as work_dir:
             # YAFU ignores the expression on the command line whenever standard input isn't a terminal, except on
             # Windows, where it doesn't recognize a pipe. Providing both covers either case.
             description = f"{method} on {format_number(n)}"
@@ -510,12 +510,13 @@ def run_cado_nfs(method: str, n: int, threads: int, cado_nfs_path: Path, work_pa
         ToolFailure: If CADO-NFS cannot be started, exits with an error or doesn't return a usable factorization.
         CadoNfsError: If CADO-NFS has now failed too many times in a row.
     """
-    cmd = [str(cado_nfs_path.absolute()), str(n), "-t", str(threads)]
     start_time = time.perf_counter_ns()
 
     try:
-        with get_work_dir(work_path, None, "cado-nfs-") as work_dir:
-            result = run_tool(cmd, work_dir, threads, stdin=str(n), description=f"{method} on {format_number(n)}")
+        with get_work_dir(work_path, None, CADO_NFS_WORK_DIR_PREFIX) as work_dir:
+            # CADO-NFS requires an absolute path to its working directory.
+            cmd = [str(cado_nfs_path.absolute()), str(n), "-t", str(threads), "--workdir", str(work_dir.absolute())]
+            result = run_tool(cmd, work_dir, threads, description=f"{method} on {format_number(n)}")
     except (OSError, subprocess.CalledProcessError) as e:
         tool_failures.failed(
             CadoNfsError, method, f"CADO-NFS failed for {format_number(n, truncate=False)}: {_describe_tool_failure(e)}"

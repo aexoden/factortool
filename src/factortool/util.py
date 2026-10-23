@@ -7,6 +7,7 @@ from __future__ import annotations
 import contextlib
 import math
 import os
+import shutil
 import sys
 import tempfile
 
@@ -200,6 +201,14 @@ def _place_yafu_ini(ini_path: Path, work_dir: Path) -> None:
         logger.warning("Failed to write yafu.ini in {}: {}. YAFU will use its built-in defaults", work_dir, e)
 
 
+# The prefixes of the working directories each tool is given under work_path.
+YAFU_WORK_DIR_PREFIX = "yafu-"
+CADO_NFS_WORK_DIR_PREFIX = "cado-nfs-"
+
+# Marks a working directory as one factortool created.
+WORK_DIR_MARKER = ".factortool-work"
+
+
 @contextlib.contextmanager
 def get_work_dir(base_path: Path, ini_path: Path | None, prefix: str) -> Generator[Path]:
     """Provide an isolated working directory for a single YAFU or CADO-NFS invocation.
@@ -208,20 +217,40 @@ def get_work_dir(base_path: Path, ini_path: Path | None, prefix: str) -> Generat
     directory. Giving every invocation its own directory keeps those out of the YAFU installation and, because
     factortool can run several YAFU processes concurrently, prevents them from clobbering each other's files.
 
-    CADO-NFS also writes artifacts into its working directory, but it doesn't need yafu.ini.
+    CADO-NFS is pointed at the directory with --workdir, as it otherwise creates its own under the system temporary
+    directory and leaves it behind whenever it fails or is killed. It doesn't need yafu.ini.
 
     Yields:
         Path: The working directory, removed once the context exits.
+
+    Raises:
+        OSError: If the directory cannot be created or marked as factortool's.
     """
     base_path.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(dir=base_path, prefix=prefix) as name:
         work_dir = Path(name)
+        (work_dir / WORK_DIR_MARKER).touch()
 
         if ini_path is not None and ini_path.is_file():
             _place_yafu_ini(ini_path, work_dir)
 
         yield work_dir
+
+
+def remove_stale_work_dirs(base_path: Path) -> None:
+    """Remove the working directories left behind by previous runs."""
+    for prefix in (YAFU_WORK_DIR_PREFIX, CADO_NFS_WORK_DIR_PREFIX):
+        for path in base_path.glob(f"{prefix}*"):
+            if path.is_symlink() or path.is_junction() or not (path / WORK_DIR_MARKER).is_file():
+                continue
+
+            try:
+                shutil.rmtree(path)
+            except OSError as e:
+                logger.warning("Failed to remove stale working directory {}: {}", path, e)
+            else:
+                logger.info("Removed stale working directory {}", path)
 
 
 def safe_write(path: Path, data: bytes) -> None:

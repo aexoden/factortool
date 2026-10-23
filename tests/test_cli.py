@@ -45,6 +45,7 @@ from factortool.lock import lock_directories
 from factortool.number import Number, Outcome
 from factortool.stats import FactoringStats
 from factortool.tools import CadoNfsError, ToolError, ToolFailure, YafuError, tool_failures
+from factortool.util import WORK_DIR_MARKER
 
 from .helpers import NO_STATS_PATH, make_config, make_number
 
@@ -685,6 +686,26 @@ def test_the_directories_are_released_once_the_run_ends(monkeypatch: pytest.Monk
         status, _ = run_main(monkeypatch, tmp_path, Mock(return_value=EngineStatus.SUCCESS))
 
         assert status == ExitStatus.SUCCESS
+
+
+def test_a_run_removes_the_working_directories_left_by_a_killed_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that the tools' working directories left behind by a hard kill are removed once the lock is held."""
+    stale = tmp_path / "work" / "cado-nfs-abc"
+    stale.mkdir(parents=True)
+    (stale / WORK_DIR_MARKER).touch()
+
+    with lock_directories([tmp_path / "work"]):
+        status, _ = run_main(monkeypatch, tmp_path, Mock(return_value=EngineStatus.SUCCESS))
+
+    assert status == ExitStatus.ALREADY_RUNNING
+    assert stale.is_dir()
+
+    status, _ = run_main(monkeypatch, tmp_path, Mock(return_value=EngineStatus.SUCCESS))
+
+    assert status == ExitStatus.SUCCESS
+    assert not stale.exists()
 
 
 def test_a_run_ended_by_its_time_limit_succeeds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -7,11 +7,6 @@ later ones.
 
 ## Minor Features
 
-- Verify whether `cado-nfs.py` uses its own directory under `/tmp` unless given
-  `--workdir`. If so, pass the managed working directory so an aborted run
-  doesn't leave it behind. The `stdin` passed to it also looks unnecessary.
-- Remove stale `yafu-*` and `cado-nfs-*` working directories at startup, as a
-  hard kill leaves them behind. The lock on `work_path` makes this safe.
 - Write the assignment state when work is assigned rather than only at exit, so
   a hard kill doesn't forget reserved work.
 - Log when a FactorDB fetch is capped at 1000 numbers.

@@ -8,11 +8,8 @@ import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 import time
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 from unittest.mock import Mock
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 import pytest
 
@@ -25,6 +22,7 @@ from factortool.tools import (
     ToolState,
     YafuError,
     parse_yafu_factors,
+    run_cado_nfs,
     run_tool,
     run_yafu,
     tool_deadline,
@@ -63,6 +61,38 @@ def test_yafu_is_given_its_expression_on_standard_input(monkeypatch: pytest.Monk
     assert factors == [3, 5]
     assert run_tool.call_args.args[0][1] == "rho(15)"
     assert run_tool.call_args.kwargs["stdin"] == "rho(15)\n"
+
+
+def test_cado_nfs_works_in_the_managed_working_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that CADO-NFS is told to use its working directory, as it otherwise creates one of its own elsewhere.
+
+    CADO-NFS refuses a relative path, so the directory is given as an absolute one even when work_path is relative.
+    """
+    run_tool = Mock(return_value=subprocess.CompletedProcess([], 0, "3 5\n", ""))
+    monkeypatch.setattr("factortool.tools.run_tool", run_tool, raising=True)
+    monkeypatch.chdir(tmp_path)
+
+    factors, _ = run_cado_nfs("CADO-NFS", 15, 2, Path("cado-nfs.py"), Path("work"))
+
+    cmd = run_tool.call_args.args[0]
+    work_dir = Path(cmd[cmd.index("--workdir") + 1])
+
+    assert factors == [3, 5]
+    assert work_dir.is_absolute()
+    assert work_dir == run_tool.call_args.args[1].absolute()
+    assert work_dir.parent == tmp_path / "work"
+    assert "stdin" not in run_tool.call_args.kwargs
+
+
+def test_a_tool_given_no_input_reads_from_the_null_device(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Test that a tool given no input doesn't inherit the terminal, which it would be stopped for reading."""
+    popen = Mock(wraps=subprocess.Popen)
+    monkeypatch.setattr("factortool.tools.subprocess.Popen", popen, raising=True)
+
+    result = run_tool([sys.executable, "-c", "import sys; print(repr(sys.stdin.read()))"], tmp_path, 1)
+
+    assert popen.call_args.kwargs["stdin"] == subprocess.DEVNULL
+    assert result.stdout.strip() == "''"
 
 
 def fail(failures: ToolFailures, method: str, tool: type[YafuError | CadoNfsError] = YafuError) -> None:

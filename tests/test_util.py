@@ -4,10 +4,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
+import shutil
+import signal
+import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
+import time
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -18,15 +24,20 @@ import pytest
 from loguru import logger
 
 from factortool.exit_status import ExitStatus
+from factortool.lock import LOCK_FILE_NAME, lock_directories
 from factortool.util import (
     NUMBER_DISPLAY_WIDTH,
+    WORK_DIR_MARKER,
     ConfigArguments,
     LogLevel,
     format_number,
     get_work_dir,
+    remove_stale_work_dirs,
     rewrite_yafu_ini,
     setup_logger,
 )
+
+from .helpers import HEARTBEAT_QUIET, wait_for_heartbeat
 
 
 @pytest.mark.parametrize(
@@ -69,6 +80,7 @@ def test_work_dir_is_isolated_and_removed(tmp_path: Path) -> None:
     with get_work_dir(base, None, "test-") as work_dir:
         assert work_dir.is_dir()
         assert work_dir.parent == base
+        assert (work_dir / WORK_DIR_MARKER).is_file()
         (work_dir / "siqs.dat").write_text("scratch", encoding="utf-8")
 
     assert not work_dir.exists()
@@ -90,6 +102,140 @@ def test_work_dir_places_ini(tmp_path: Path) -> None:
 
     with get_work_dir(tmp_path / "work", ini, "yafu-") as work_dir:
         assert (work_dir / "yafu.ini").read_text(encoding="utf-8") == "ggnfs_dir=/opt/ggnfs/\n"
+
+
+def make_marked_dir(path: Path) -> None:
+    """Create a directory carrying the marker of a factortool working directory."""
+    path.mkdir(parents=True)
+    (path / WORK_DIR_MARKER).touch()
+
+
+def test_stale_work_dirs_are_removed_and_everything_else_is_kept(tmp_path: Path) -> None:
+    """Test that only the tools' leftover working directories are removed, along with their contents.
+
+    A directory is only taken to be a leftover if it has the marker, so a similarly named one kept under work_path,
+    such as a tool's installation, is left alone.
+    """
+    base = tmp_path / "work"
+    outside = tmp_path / "outside"
+    make_marked_dir(outside)
+    make_marked_dir(base / "yafu-abc")
+    (base / "yafu-abc" / "nested").mkdir()
+    (base / "yafu-abc" / "nested" / "siqs.dat").write_text("scratch", encoding="utf-8")
+    make_marked_dir(base / "cado-nfs-def")
+    (base / "cado-nfs-def" / "c60.db").write_text("scratch", encoding="utf-8")
+    (base / "cado-nfs-2.3.0").mkdir()
+    (base / "cado-nfs-2.3.0" / "cado-nfs.py").write_text("kept", encoding="utf-8")
+    make_marked_dir(base / "other")
+    (base / "yafu-file").write_text("kept", encoding="utf-8")
+    (base / "factortool.lock").write_text("", encoding="utf-8")
+    kept = ["cado-nfs-2.3.0", "factortool.lock", "other", "yafu-file"]
+
+    # Creating a symbolic link may need extra privileges on Windows.
+    with contextlib.suppress(OSError):
+        (base / "yafu-link").symlink_to(outside, target_is_directory=True)
+        kept.append("yafu-link")
+
+    remove_stale_work_dirs(base)
+
+    assert sorted(path.name for path in base.iterdir()) == kept
+    assert (base / "cado-nfs-2.3.0" / "cado-nfs.py").is_file()
+    assert outside.is_dir()
+
+
+def test_a_stale_work_dir_that_cannot_be_removed_is_warned_about(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Test that a failure to remove one stale directory is not fatal and doesn't keep the others."""
+    base = tmp_path / "work"
+    make_marked_dir(base / "yafu-abc")
+    make_marked_dir(base / "cado-nfs-def")
+    rmtree = shutil.rmtree
+    warning = Mock()
+    monkeypatch.setattr("factortool.util.logger.warning", warning, raising=True)
+
+    def fail_on_yafu(path: Path) -> None:
+        if path.name.startswith("yafu-"):
+            raise PermissionError(path)
+
+        rmtree(path)
+
+    monkeypatch.setattr("factortool.util.shutil.rmtree", fail_on_yafu, raising=True)
+
+    remove_stale_work_dirs(base)
+
+    assert [path.name for path in base.iterdir()] == ["yafu-abc"]
+    assert warning.call_args.args[1] == base / "yafu-abc"
+
+
+# An instance that is killed outright, leaving its tool running in the working directory it was given.
+_DYING_INSTANCE = """
+import sys
+from pathlib import Path
+from factortool.lock import lock_directories
+from factortool.tools import run_tool
+from factortool.util import YAFU_WORK_DIR_PREFIX, get_work_dir
+
+base = Path(sys.argv[1])
+
+with lock_directories([base]), get_work_dir(base, None, YAFU_WORK_DIR_PREFIX) as work_dir:
+    run_tool([sys.executable, "-c", sys.argv[2], sys.argv[3]], work_dir, 1)
+"""
+
+# Records its process ID beside its heartbeat, then beats until it is killed or half a minute has passed.
+_ORPHANED_TOOL = """
+import os, sys, time
+from pathlib import Path
+
+heartbeat = Path(sys.argv[1])
+heartbeat.with_suffix(".pid").write_text(str(os.getpid()))
+
+for _ in range(600):
+    with heartbeat.open("a") as f:
+        f.write(".")
+    time.sleep(0.05)
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows cannot remove a directory a running process is in")
+def test_a_killed_instance_has_its_directories_removed_while_its_tools_still_run(tmp_path: Path) -> None:
+    """Test that the next run removes a killed instance's working directory even though its tool is still running.
+
+    A tool in its own process group outlives an instance that is killed outright, and the lock does not, but nothing
+    remains to collect the tool's results, so its directory is of no further use.
+    """
+    # Work around mypy not understanding that this test is skipped on Windows.
+    if sys.platform == "win32":
+        return
+
+    base = tmp_path / "work"
+    heartbeat = tmp_path / "heartbeat"
+    command = [sys.executable, "-c", _DYING_INSTANCE, str(base), _ORPHANED_TOOL, str(heartbeat)]
+
+    try:
+        with subprocess.Popen(command) as instance:  # ruff: ignore[subprocess-without-shell-equals-true]
+            wait_for_heartbeat(heartbeat)
+            instance.kill()
+
+        size = heartbeat.stat().st_size
+        time.sleep(HEARTBEAT_QUIET)
+
+        assert heartbeat.stat().st_size > size
+
+        with lock_directories([base]):
+            remove_stale_work_dirs(base)
+
+        assert sorted(path.name for path in base.iterdir()) == [LOCK_FILE_NAME]
+    finally:
+        with contextlib.suppress(OSError, ValueError):
+            os.kill(int(heartbeat.with_suffix(".pid").read_text()), signal.SIGKILL)
+
+
+def test_stale_work_dirs_tolerate_a_missing_base(tmp_path: Path) -> None:
+    """Test that a working directory that doesn't exist yet has nothing to remove."""
+    remove_stale_work_dirs(tmp_path / "work")
+
+    assert not (tmp_path / "work").exists()
 
 
 def test_rewrite_yafu_ini_makes_relative_paths_absolute(tmp_path: Path) -> None:
