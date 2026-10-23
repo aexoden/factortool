@@ -14,7 +14,7 @@ import threading
 import time
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
 if TYPE_CHECKING:
@@ -134,6 +134,8 @@ class Backend(Protocol):
     def fetch(self, criteria: FetchCriteria) -> set[Number]:
         """Fetch up to criteria.count matching composites, possibly returning an empty set.
 
+        A service that limits how many composites a single request returns is asked for no more than that limit.
+
         Raises:
             PermanentHttpError: If a permanent client error is encountered and should not be retried.
             ValueError: If criteria are invalid or contain unsupported constraints.
@@ -199,6 +201,9 @@ class BaseBackend(ABC):
 
     # Whether the service accepts factorizations that include composite factors.
     accepts_partial_results: bool
+
+    # The most composites the service returns for a single request, or None if it has no limit.
+    max_fetch_count: ClassVar[int | None] = None
 
     # The largest number of composites to submit in a single batch.
     submit_batch_size: ClassVar[int] = 1
@@ -307,8 +312,9 @@ class BaseBackend(ABC):
     def fetch(self, criteria: FetchCriteria) -> set[Number]:  # ruff: ignore[complex-structure]
         """Fetch up to criteria.count matching composites, possibly returning an empty set.
 
-        Composites above criteria.max_digits are discarded even if the service would otherwise return them. Retries
-        continue until composites are found, unless an interrupt arrives, in which case an empty set is returned.
+        A request for more than max_fetch_count composites is reduced to max_fetch_count. Composites above
+        criteria.max_digits are discarded even if the service would otherwise return them. Retries continue until
+        composites are found, unless an interrupt arrives, in which case an empty set is returned.
 
         Returns:
             set[Number]: A set of composite numbers matching the criteria.
@@ -321,6 +327,19 @@ class BaseBackend(ABC):
 
         if criteria.count == 0:
             return set()
+
+        if self.max_fetch_count is not None and criteria.count > self.max_fetch_count:
+            logger.info(
+                "Fetching {} composite numbers from {} (reduced from the {} requested, due to the service maximum)",
+                self.max_fetch_count,
+                self.name,
+                criteria.count,
+            )
+            criteria = replace(criteria, count=self.max_fetch_count)
+        else:
+            logger.info(
+                "Fetching {} composite number{} from {}", criteria.count, "" if criteria.count == 1 else "s", self.name
+            )
 
         delay = RETRY_DELAY
 

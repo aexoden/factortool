@@ -138,7 +138,7 @@ def test_a_normal_run_tops_the_batch_back_up() -> None:
     """Test that retained work counts toward the batch and the rest is fetched."""
     backend = FakeBackend(resumed=CARRIED_OVER)
 
-    numbers = acquire_numbers(backend, make_config(), CRITERIA)
+    numbers = acquire_numbers(backend, CRITERIA)
 
     assert backend.requested == [1]
     assert sorted(x.n for x in numbers) == sorted([*CARRIED_OVER, FETCHED[0]])
@@ -148,7 +148,7 @@ def test_no_new_work_works_only_what_is_already_assigned() -> None:
     """Test that the no new work option only uses already assigned work."""
     backend = FakeBackend(resumed=CARRIED_OVER)
 
-    numbers = acquire_numbers(backend, make_config(), CRITERIA, fetch=False)
+    numbers = acquire_numbers(backend, CRITERIA, fetch=False)
 
     assert backend.requested == []
     assert sorted(x.n for x in numbers) == CARRIED_OVER
@@ -158,7 +158,7 @@ def test_no_new_work_with_nothing_carried_over_finds_no_work() -> None:
     """Test that the no new work option finds no work when nothing is retained."""
     backend = FakeBackend()
 
-    numbers = acquire_numbers(backend, make_config(), CRITERIA, fetch=False)
+    numbers = acquire_numbers(backend, CRITERIA, fetch=False)
 
     assert backend.requested == []
     assert numbers == set()

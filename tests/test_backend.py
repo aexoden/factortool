@@ -59,6 +59,7 @@ class FakeBackend(BaseBackend):
     def __init__(self, config: Config, stats: FactoringStats, responses: Iterable[str | Exception]) -> None:
         """Initialize the fake backend with the fetch responses to return in order."""
         self.responses = iter(responses)
+        self.requested: list[int] = []
         self.submitted: list[int] = []
         self.outcomes: dict[int, list[SubmitOutcome]] = {}
         super().__init__(config, stats, 1.0, "")
@@ -66,6 +67,7 @@ class FakeBackend(BaseBackend):
 
     @override
     def _request_composites(self, criteria: FetchCriteria) -> list[int]:
+        self.requested.append(criteria.count)
         response = next(self.responses)
 
         if isinstance(response, Exception):
@@ -272,6 +274,48 @@ def test_base_fetch_retries_failures_with_backoff(config: Config, wait: Mock) ->
 
     assert {number.n for number in numbers} == {15}
     assert wait.call_args_list[:2] == [call(1.0), call(2.0)]
+
+
+@pytest.mark.parametrize(
+    ("max_fetch_count", "count", "requested", "expected"),
+    [
+        (None, 1, 1, "Fetching 1 composite number from Fake\n"),
+        (None, 3, 3, "Fetching 3 composite numbers from Fake\n"),
+        (3, 3, 3, "Fetching 3 composite numbers from Fake\n"),
+        (
+            2,
+            3,
+            2,
+            "Fetching 2 composite numbers from Fake (reduced from the 3 requested, due to the service maximum)\n",
+        ),
+    ],
+    ids=["single", "uncapped", "at-cap", "capped"],
+)
+def test_base_fetch_caps_the_count_and_logs_it_once(  # ruff: ignore[too-many-arguments, too-many-positional-arguments] (Fixtures and parameters)
+    config: Config,
+    wait: Mock,
+    monkeypatch: pytest.MonkeyPatch,
+    max_fetch_count: int | None,
+    count: int,
+    requested: int,
+    expected: str,
+) -> None:
+    """Test that a request is reduced to the most the service returns at once, logged once despite retries."""
+    monkeypatch.setattr(FakeBackend, "max_fetch_count", max_fetch_count)
+    backend = make_fake_backend(config, [requests.RequestException("rejected"), "", "15\n"])
+    messages: list[str] = []
+    sink = logger.add(messages.append, format="{message}", filter=lambda record: record["level"].name == "INFO")
+
+    try:
+        numbers = backend.fetch(FetchCriteria(count=count, min_digits=2))
+    finally:
+        logger.remove(sink)
+        backend.close()
+
+    assert {number.n for number in numbers} == {15}
+    assert backend.requested == [requested] * 3
+    assert [x for x in messages if x.startswith("Fetching")] == [expected]
+    assert wait.call_args_list == [call(1.0), call(NO_WORK_DELAY)]
 
 
 @pytest.mark.parametrize("blank_response", ["", "\n  \n"], ids=["empty", "whitespace"])

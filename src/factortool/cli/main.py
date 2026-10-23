@@ -220,7 +220,7 @@ def write_results(numbers: Collection[Number], output_path: Path) -> None:
             return
 
 
-def acquire_numbers(backend: Backend, config: Config, criteria: FetchCriteria, *, fetch: bool = True) -> set[Number]:
+def acquire_numbers(backend: Backend, criteria: FetchCriteria, *, fetch: bool = True) -> set[Number]:
     """Collect a batch of numbers to work on by resuming retained assignments and optionally fetching new work.
 
     Returns:
@@ -233,7 +233,6 @@ def acquire_numbers(backend: Backend, config: Config, criteria: FetchCriteria, *
     remaining = criteria.count - len(numbers)
 
     if fetch and remaining > 0:
-        logger.info("Fetching {} composite numbers from {}", remaining, config.backend)
         numbers |= backend.fetch(replace(criteria, count=remaining))
 
     return numbers
@@ -352,7 +351,6 @@ def run_batch(args: Arguments, session: Session) -> ExitStatus:
     try:
         numbers = acquire_numbers(
             backend,
-            config,
             FetchCriteria(
                 count=batch_size, min_digits=args.min_digits, max_digits=max_digits, skip_count=args.skip_count
             ),

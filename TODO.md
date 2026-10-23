@@ -7,7 +7,6 @@ later ones.
 
 ## Minor Features
 
-- Log when a FactorDB fetch is capped at 1000 numbers.
 - When a backend refuses a submission request outright (a permanent HTTP error),
   the results in it are kept for the next run, but each later batch still sends
   one more request. Consider not submitting anything further for the rest of the

@@ -218,6 +218,8 @@ class FactorDB(BaseBackend):
 
     accepts_partial_results = True
 
+    max_fetch_count = MAX_FETCH_COUNT
+
     submit_batch_size = SUBMIT_BATCH_SIZE
 
     def __init__(self, config: Config, stats: FactoringStats, interrupts: InterruptState | None = None) -> None:
@@ -317,7 +319,7 @@ class FactorDB(BaseBackend):
     def _request_composites(self, criteria: FetchCriteria) -> list[int]:
         """Request composites from FactorDB, smallest first.
 
-        All criteria are respected. Requests are capped at MAX_FETCH_COUNT numbers.
+        All criteria are respected. The count is at most MAX_FETCH_COUNT, as guaranteed by fetch.
 
         Returns:
             list[int]: The composite numbers returned by FactorDB.
@@ -329,7 +331,7 @@ class FactorDB(BaseBackend):
             "table": "C",
             "min_digits": criteria.min_digits,
             "offset": criteria.skip_count,
-            "limit": min(criteria.count, MAX_FETCH_COUNT),
+            "limit": criteria.count,
         }
 
         if criteria.max_digits is not None:
