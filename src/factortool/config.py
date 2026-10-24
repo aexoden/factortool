@@ -25,7 +25,7 @@ from pydantic import (
 
 from factortool.constants import FINAL_METHOD_NAMES, NFS_CADO_MIN_DIGITS, NFS_YAFU_MIN_DIGITS
 from factortool.exit_status import ExitStatus
-from factortool.util import DEFAULT_LOG_LEVEL, LogLevel
+from factortool.util import DEFAULT_LOG_LEVEL, LogLevel, pluralize
 
 
 class YafuPaths(NamedTuple):
@@ -153,7 +153,7 @@ class Config(BaseModel):
                 msg = (
                     f"no longer supported: {', '.join(renamed)}. Use "
                     f"{', '.join(RENAMED_SETTINGS[key] for key in renamed)} instead, which "
-                    f"{'is' if len(renamed) == 1 else 'are'} the minimum time in seconds between requests to the "
+                    f"{pluralize(len(renamed), 'is', 'are')} the minimum time in seconds between requests to the "
                     "service rather than the initial delay before a retry."
                 )
                 raise ValueError(msg)

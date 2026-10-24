@@ -422,7 +422,7 @@ def test_base_summarizes_each_batch_that_resolves_a_submission(config: Config, r
     assert sorted(messages) == [
         "Fake accepted 0 of 1 factorization\n",
         "Fake accepted 1 factorization\n",
-        "Successfully submitted 1 factorizations to Fake\n",
+        "Successfully submitted 1 factorization to Fake\n",
     ]
     assert retry_wait.called
 

@@ -89,6 +89,27 @@ def format_number(n: int, *, truncate: bool = True) -> str:
     return f"{str_n}{suffix}"
 
 
+def pluralize(count: int, singular: str, plural: str | None = None) -> str:
+    """Choose the form of a word that agrees with a count. The plural defaults to the singular with an "s" appended.
+
+    Returns:
+        str: The singular if the count is one, and the plural otherwise.
+    """
+    if count == 1:
+        return singular
+
+    return plural if plural is not None else f"{singular}s"
+
+
+def format_count(count: int, singular: str, plural: str | None = None) -> str:
+    """Format a count followed by the form of a word that agrees with it, such as "1 number" or "2 numbers".
+
+    Returns:
+        str: The count and the word.
+    """
+    return f"{count} {pluralize(count, singular, plural)}"
+
+
 @cache
 def is_prime(n: int) -> bool:
     """Check if a number is prime using GMP's trial division, Baillie-PSW and Miller-Rabin tests.

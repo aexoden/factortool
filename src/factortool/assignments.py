@@ -17,7 +17,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from factortool.constants import MIN_FACTORABLE
-from factortool.util import safe_write
+from factortool.util import format_count, safe_write
 
 
 def assignment_expired(expires_at: float) -> bool:
@@ -107,7 +107,7 @@ class AssignmentStore:
             pending = len(self._assignments)
 
         if pending:
-            logger.info("Saved {} unfinished composite{} for the next run", pending, "" if pending == 1 else "s")
+            logger.info("Saved {} for the next run", format_count(pending, "unfinished composite"))
 
     def _read(self) -> list[Assignment]:
         """Read the unexpired assignments from the state file, rewriting it without any that have expired.
@@ -132,7 +132,7 @@ class AssignmentStore:
         expired = len(assignments) - len(pending)
 
         if expired > 0:
-            logger.warning("Discarding {} composite{} with an expired assignment", expired, "" if expired == 1 else "s")
+            logger.warning("Discarding {} with an expired assignment", format_count(expired, "composite"))
 
             try:
                 self._write_state(pending)

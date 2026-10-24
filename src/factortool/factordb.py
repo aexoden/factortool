@@ -17,7 +17,7 @@ from pydantic import BaseModel, TypeAdapter
 from factortool.backend import BaseBackend, SubmitOutcome
 from factortool.http import MAX_DELAY, RETRY_DELAY, PermanentHttpError
 from factortool.interrupt import Interrupted
-from factortool.util import format_number
+from factortool.util import format_count, format_number
 
 if TYPE_CHECKING:
     from factortool.backend import FetchCriteria
@@ -443,14 +443,14 @@ class FactorDB(BaseBackend):
         try:
             responses = self._rpc_batch(calls, timeout=timeout, wait=self._submission_wait)
         except PermanentHttpError as e:
-            logger.error("Leaving the factors for {} numbers for the next run: {}", len(calls), e)
+            logger.error("Leaving the factors for {} for the next run: {}", format_count(len(calls), "number"), e)
 
             for i, _ in reports:
                 outcomes[i] = SubmitOutcome.DEFERRED
 
             return outcomes
         except (requests.RequestException, ValueError) as e:
-            logger.warning("Error submitting factors for {} numbers to FactorDB: {}", len(calls), e)
+            logger.warning("Error submitting factors for {} to FactorDB: {}", format_count(len(calls), "number"), e)
 
             for i, _ in reports:
                 outcomes[i] = SubmitOutcome.FAILED
@@ -508,7 +508,7 @@ class FactorDB(BaseBackend):
         if not self._signed_in:
             return description
 
-        return f"{description}, crediting {self._batch_credited} factor{'' if self._batch_credited == 1 else 's'}"
+        return f"{description}, crediting {format_count(self._batch_credited, 'factor')}"
 
     @override
     def close(self) -> None:
@@ -519,4 +519,4 @@ class FactorDB(BaseBackend):
             return
 
         # A submission repeated after its response was lost reports no credit for factors credited the first time.
-        logger.info("FactorDB credited at least {} factors to your account", self._credited_count)
+        logger.info("FactorDB credited at least {} to your account", format_count(self._credited_count, "factor"))

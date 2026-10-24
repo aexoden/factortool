@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-# SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+# SPDX-FileCopyrightText: 2024-2026 Jason Lynch <jason@aexoden.com>
 """Factorization engine for processing numbers."""
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from factortool.constants import ECM_CURVES, ECM_MAX_LEVEL, ECM_MIN_LEVEL, FINAL
 from factortool.interrupt import Interrupted, InterruptState
 from factortool.number import Number
 from factortool.tools import ToolDeadlineExceeded, abandon_tools, tool_deadline
-from factortool.util import format_number
+from factortool.util import format_count, format_number
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -241,7 +241,7 @@ class FactorEngine:
         Returns:
             EngineStatus: The ending status of the factorization run.
         """
-        logger.info("Using direct YAFU factoring mode for {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
+        logger.info("Using direct YAFU factoring mode for {}", format_count(len(numbers), "number"))
 
         for number in sorted(numbers):
             # Check before each factorization, so a factorization isn't started if an interrupt has been received.
@@ -267,7 +267,7 @@ class FactorEngine:
             EngineStatus: The ending status of the factorization run.
         """
         # Attempt to trial factor each number.
-        logger.info("Attempting trial factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
+        logger.info("Attempting trial factoring on {}", format_count(len(numbers), "number"))
 
         for number in numbers:
             if self._skip_expired(number):
@@ -279,7 +279,7 @@ class FactorEngine:
                 return status
 
         # Attempt to find factors via the Rho method.
-        logger.info("Attempting rho factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
+        logger.info("Attempting rho factoring on {}", format_count(len(numbers), "number"))
 
         self._factor_concurrently(numbers, Number.factor_rho)
 
@@ -287,7 +287,7 @@ class FactorEngine:
             return status
 
         # Attempt to find factors via P-1.
-        logger.info("Attempting P-1 factoring on {} number{}", len(numbers), "s" if len(numbers) != 1 else "")
+        logger.info("Attempting P-1 factoring on {}", format_count(len(numbers), "number"))
 
         self._factor_concurrently(numbers, Number.factor_pm1)
 
@@ -306,14 +306,11 @@ class FactorEngine:
             curves, b1 = ECM_CURVES[ecm_level]
 
             logger.info(
-                "Attempting ECM factoring on {} number{} (of {} total remaining)"
-                " at t-level {} with {} curve{} of B1 = {}",
-                ecm_number_count,
-                "s" if ecm_number_count != 1 else "",
+                "Attempting ECM factoring on {} (of {} total remaining) at t-level {} with {} of B1 = {}",
+                format_count(ecm_number_count, "number"),
                 overall_number_count,
                 ecm_level,
-                curves,
-                "s" if curves != 1 else "",
+                format_count(curves, "curve"),
                 b1,
             )
 
@@ -344,9 +341,8 @@ class FactorEngine:
                 continue
 
             logger.info(
-                "Attempting final factoring on {} number{} (of {} total remaining) (initially grouped under {})",
-                number_count,
-                "s" if number_count != 1 else "",
+                "Attempting final factoring on {} (of {} total remaining) (initially grouped under {})",
+                format_count(number_count, "number"),
                 overall_number_count,
                 method_name,
             )

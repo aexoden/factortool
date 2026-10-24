@@ -30,7 +30,7 @@ from factortool.http import MAX_DELAY, RETRY_DELAY, HttpClient, PermanentHttpErr
 from factortool.interrupt import ABORT, POLL_INTERVAL, Interrupted, InterruptState
 from factortool.number import Number
 from factortool.submissions import Submission, SubmissionJournal
-from factortool.util import format_number, is_prime
+from factortool.util import format_count, format_number, is_prime, pluralize
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -261,9 +261,7 @@ class BaseBackend(ABC):
             self._submit_queue.put_nowait(QueuedSubmission(submission))
 
         if carried_over:
-            logger.info(
-                "Resubmitting {} result{} from a previous run", len(carried_over), "" if len(carried_over) == 1 else "s"
-            )
+            logger.info("Resubmitting {} from a previous run", format_count(len(carried_over), "result"))
 
         self._http_client = HttpClient(
             self.name,
@@ -314,11 +312,10 @@ class BaseBackend(ABC):
         if len(composites) < len(numbers):
             discarded = len(numbers) - len(composites)
             logger.warning(
-                "Discarding {} number{} from {} that {} not composite",
-                discarded,
-                "" if discarded == 1 else "s",
+                "Discarding {} from {} that {} not composite",
+                format_count(discarded, "number"),
                 self.name,
-                "is" if discarded == 1 else "are",
+                pluralize(discarded, "is", "are"),
             )
 
         return composites
@@ -354,9 +351,7 @@ class BaseBackend(ABC):
             )
             criteria = replace(criteria, count=self.max_fetch_count)
         else:
-            logger.info(
-                "Fetching {} composite number{} from {}", criteria.count, "" if criteria.count == 1 else "s", self.name
-            )
+            logger.info("Fetching {} from {}", format_count(criteria.count, "composite number"), self.name)
 
         delay = RETRY_DELAY
 
@@ -385,7 +380,7 @@ class BaseBackend(ABC):
                     assigned = self._assign(numbers)
                     self._raise_if_refused()
 
-                    logger.info("Fetched {} numbers from {}", len(numbers), self.name)
+                    logger.info("Fetched {} from {}", format_count(len(numbers), "number"), self.name)
                     return assigned
 
                 logger.info(
@@ -450,19 +445,13 @@ class BaseBackend(ABC):
         self._record_assignments(resumed)
 
         if finished := [x for x in resumed if x.factored]:
-            logger.info(
-                "Resubmitting {} result{} a previous run could not record",
-                len(finished),
-                "" if len(finished) == 1 else "s",
-            )
+            logger.info("Resubmitting {} a previous run could not record", format_count(len(finished), "result"))
             self.submit(finished)
 
         unfinished = {x for x in resumed if not x.factored}
 
         if unfinished:
-            logger.info(
-                "Resuming {} composite{} from a previous run", len(unfinished), "" if len(unfinished) == 1 else "s"
-            )
+            logger.info("Resuming {} from a previous run", format_count(len(unfinished), "composite"))
 
         return unfinished
 
@@ -582,13 +571,16 @@ class BaseBackend(ABC):
                 self._assignments.compact()
 
         if self._successful_submissions > 0:
-            logger.info("Successfully submitted {} factorizations to {}", self._successful_submissions, self.name)
+            logger.info(
+                "Successfully submitted {} to {}",
+                format_count(self._successful_submissions, "factorization"),
+                self.name,
+            )
 
         if (pending := self._journal.pending_count) > 0:
             logger.warning(
-                "{} result{} could not be submitted to {}, and will be resubmitted on the next run",
-                pending,
-                "" if pending == 1 else "s",
+                "{} could not be submitted to {}, and will be resubmitted on the next run",
+                format_count(pending, "result"),
                 self.name,
             )
 
@@ -880,7 +872,7 @@ class BaseBackend(ABC):
             str: A summary of how many submissions in the batch were accepted.
         """
         accepted = outcomes.count(SubmitOutcome.ACCEPTED)
-        noun = "factorization" if len(outcomes) == 1 else "factorizations"
+        noun = pluralize(len(outcomes), "factorization")
 
         if accepted == len(outcomes):
             return f"{self.name} accepted {accepted} {noun}"

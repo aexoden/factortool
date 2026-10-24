@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from factortool.util import safe_write
+from factortool.util import format_count, safe_write
 
 
 class Submission(BaseModel):
@@ -95,9 +95,7 @@ class SubmissionJournal:
                     unreadable += 1
 
             if unreadable > 0:
-                logger.warning(
-                    "Ignoring {} unreadable line{} in {}", unreadable, "" if unreadable == 1 else "s", self._path
-                )
+                logger.warning("Ignoring {} in {}", format_count(unreadable, "unreadable line"), self._path)
 
             try:
                 self._rewrite()

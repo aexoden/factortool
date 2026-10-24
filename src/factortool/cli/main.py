@@ -33,7 +33,7 @@ from factortool.lock import DirectoryInUseError, lock_directories
 from factortool.number import Number, Outcome, format_results
 from factortool.stats import FactoringStats, InvalidStatsError
 from factortool.tools import ToolError, tool_failures
-from factortool.util import ConfigArguments, format_number, remove_stale_work_dirs, setup_logger
+from factortool.util import ConfigArguments, format_count, format_number, remove_stale_work_dirs, setup_logger
 
 if TYPE_CHECKING:
     from factortool.config import Config
@@ -168,9 +168,8 @@ def report_summary(numbers: Collection[Number]) -> None:
 
     if len(failed_numbers) > 0:
         logger.warning(
-            "{} number{} failed to factor: {}",
-            len(failed_numbers),
-            "s" if len(failed_numbers) != 1 else "",
+            "{} failed to factor: {}",
+            format_count(len(failed_numbers), "number"),
             ", ".join(format_number(x.n, truncate=False) for x in failed_numbers),
         )
 
@@ -181,10 +180,9 @@ def report_summary(numbers: Collection[Number]) -> None:
     ]
 
     logger.info(
-        "Factored {} of {} number{}{}",
+        "Factored {} of {}{}",
         outcomes[Outcome.FACTORED],
-        len(numbers),
-        "s" if len(numbers) != 1 else "",
+        format_count(len(numbers), "number"),
         f" ({', '.join(unfactored)})" if unfactored else "",
     )
 
@@ -379,7 +377,7 @@ def run_batch(args: Arguments, session: Session) -> ExitStatus:
         duration = time.monotonic() - start_time
         factored_count = len([number for number in numbers if number.factored])
 
-        logger.info("Factored {} numbers in {:.2f} seconds", factored_count, duration)
+        logger.info("Factored {} in {:.2f} seconds", format_count(factored_count, "number"), duration)
 
         cleanup = session.cleanup
 
@@ -424,7 +422,7 @@ def run_session(args: Arguments, config: Config) -> ExitStatus:
 
     logger.info("Using backend: {}", config.backend)
     logger.info("Using factoring mode: {}", config.factoring_mode)
-    logger.info("Using up to {} thread{}", config.max_threads, "s" if config.max_threads != 1 else "")
+    logger.info("Using up to {}", format_count(config.max_threads, "thread"))
 
     # The backend is closed last, as flushing its pending submissions can take some time.
     try:

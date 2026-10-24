@@ -30,9 +30,11 @@ from factortool.util import (
     WORK_DIR_MARKER,
     ConfigArguments,
     LogLevel,
+    format_count,
     format_number,
     get_work_dir,
     is_prime,
+    pluralize,
     remove_stale_work_dirs,
     rewrite_yafu_ini,
     safe_write,
@@ -74,6 +76,21 @@ def test_format_number_without_truncation() -> None:
     n = int("1234567890" * 10)
 
     assert format_number(n, truncate=False) == f"{n} <100>"
+
+
+@pytest.mark.parametrize(
+    ("count", "expected"), [(0, "0 numbers"), (1, "1 number"), (2, "2 numbers"), (-1, "-1 numbers")]
+)
+def test_format_count(count: int, expected: str) -> None:
+    """Test that a count is followed by the singular only when it is exactly one."""
+    assert format_count(count, "number") == expected
+
+
+def test_pluralize_uses_an_irregular_plural() -> None:
+    """Test that a given plural is used in place of appending an "s"."""
+    assert pluralize(1, "is", "are") == "is"
+    assert pluralize(2, "is", "are") == "are"
+    assert format_count(3, "match", "matches") == "3 matches"
 
 
 # The number of primes below one million, and the largest of them.
