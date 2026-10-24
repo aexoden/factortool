@@ -164,7 +164,6 @@ class FactoringStats:
             return
 
         # Work around pydantic not offering a way to sort keys.
-        # data = self._data.model_dump_json(indent=2, so)
         model_dict = self._data.model_dump()
         data = json.dumps(model_dict, sort_keys=True, indent=2).encode("utf-8")
         safe_write(self._path, data)
@@ -182,15 +181,8 @@ class FactoringStats:
     ) -> None:
         """Update probabilistic factorization data."""
         with self._lock:
-            data = getattr(self._data, method)
-
-            if digits not in data:
-                data[digits] = ProbabilityDigitData()
-
-            if threads not in data[digits].thread_data:
-                data[digits].thread_data[threads] = ProbabilityRunData()
-
-            run_data = data[digits].thread_data[threads]
+            digit_data = getattr(self._data, method).setdefault(digits, ProbabilityDigitData())
+            run_data = digit_data.thread_data.setdefault(threads, ProbabilityRunData())
 
             run_data.total_time += execution_time
             run_data.run_count += 1
@@ -204,15 +196,8 @@ class FactoringStats:
     def update_final(self, method: str, digits: int, threads: int, execution_time: float) -> None:
         """Update final factorization data for the method with the given statistics key."""
         with self._lock:
-            data = getattr(self._data, method)
-
-            if digits not in data:
-                data[digits] = FinalDigitData()
-
-            if threads not in data[digits].thread_data:
-                data[digits].thread_data[threads] = FinalRunData()
-
-            run_data = data[digits].thread_data[threads]
+            digit_data = getattr(self._data, method).setdefault(digits, FinalDigitData())
+            run_data = digit_data.thread_data.setdefault(threads, FinalRunData())
 
             run_data.total_time += execution_time
             run_data.run_count += 1
@@ -223,16 +208,9 @@ class FactoringStats:
     def update_ecm(self, digits: int, ecm_level: int, threads: int, execution_time: float, *, success: bool) -> None:
         """Update ECM factorization data."""
         with self._lock:
-            if digits not in self._data.ecm:
-                self._data.ecm[digits] = ECMDigitData()
-
-            if ecm_level not in self._data.ecm[digits].level_data:
-                self._data.ecm[digits].level_data[ecm_level] = ECMLevelData()
-
-            if threads not in self._data.ecm[digits].level_data[ecm_level].thread_data:
-                self._data.ecm[digits].level_data[ecm_level].thread_data[threads] = ProbabilityRunData()
-
-            run_data = self._data.ecm[digits].level_data[ecm_level].thread_data[threads]
+            digit_data = self._data.ecm.setdefault(digits, ECMDigitData())
+            level_data = digit_data.level_data.setdefault(ecm_level, ECMLevelData())
+            run_data = level_data.thread_data.setdefault(threads, ProbabilityRunData())
 
             run_data.total_time += execution_time
             run_data.run_count += 1

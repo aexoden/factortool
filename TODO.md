@@ -7,8 +7,6 @@ later ones.
 
 ## Code/Architectural Improvements
 
-- Thoroughly check for any opportunities to replace hand-rolled code with a
-  third-party library. Avoid libraries that are not currently maintained.
 - Track ECM progress for each composite factor rather than for the number as a
   whole. ECM currently runs on every remaining composite at a level chosen by
   the largest one, so a small composite is carried through levels it would never
@@ -18,7 +16,12 @@ later ones.
   progress with each retained mersenne.ca assignment. Only the factors found are
   saved at present, so a resumed number repeats rho, P-1 and every ECM level on
   its remaining composites. Figure out how to handle a switch between standard
-  and yafu modes with a still pending number.
+  and yafu modes with a still pending number. Consider moving the state files
+  (assignments, pending submissions, statistics, batch and tool state) into a
+  single SQLite database at the same time, as this reshapes what is stored
+  anyway. Transactions would replace the journal's compaction and the atomic
+  file rewrites, and storing individual runs rather than running totals would
+  allow the statistics to report their variance.
 - Determine how multithreaded YAFU's implementation of SIQS is (may vary by
   digit count), and consider threading it ourselves like with rho and P-1.
   Should probably check how well YAFU NFS and CADO-NFS use threads as well.
@@ -40,7 +43,9 @@ later ones.
   Tap, at least standardize on using hyphens rather than underscores in option
   names. Whatever the parser, invalid arguments should probably keep exiting
   with status 2 (`ExitStatus.INVALID_INPUT`), as click and argparse both do by
-  default.
+  default. A parser with range types (such as click's `IntRange` and
+  `FloatRange`) could replace the hand-written checks in
+  `validate_argument_ranges`.
 - Investigate switching from the FactorDB list_by_type endpoint to the download
   endpoint. The offset option would no longer be supported, but that was largely
   intended to minimize the risk of overlapping work, and the `random` option

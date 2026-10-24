@@ -154,15 +154,7 @@ def validate_tools(config: Config) -> None:
 
 def report_summary(numbers: Collection[Number]) -> None:
     """Log a summary of the factoring results, including method usage and failures."""
-    method_counts: dict[str, int] = {}
-
-    for number in numbers:
-        for method in set(number.methods):
-            if method not in method_counts:
-                method_counts[method] = 0
-
-            method_counts[method] += 1
-
+    method_counts = Counter(method for number in numbers for method in set(number.methods))
     outcomes = Counter(number.outcome for number in numbers)
     failed_numbers = sorted(number for number in numbers if number.outcome is Outcome.FAILED)
 
