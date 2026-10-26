@@ -16,6 +16,16 @@ env:
 permissions: {}
 
 jobs:
+  broken:
+    name: An intentionally broken job to flag zizmor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        name: Use an unpinned version of checkout
+
+      - name: Do nothing
+        run: echo "This job is intentionally broken"
+
   ci:
     name: Continuous integration on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
