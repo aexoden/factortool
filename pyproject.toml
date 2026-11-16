@@ -15,7 +15,7 @@ dependencies = [
   "filelock==4.2.4",
   "gmpy2==2.3.2",
   "loguru==0.7.3",
-  "pydantic==2.14.2",
+  "pydantic==2.14.3",
   "requests==2.34.2",
   "typed-argument-parser==1.12.0",
 ]
