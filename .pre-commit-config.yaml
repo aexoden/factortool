@@ -19,7 +19,7 @@ repos:
 
   # Zizmor
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: v1.32.0
+    rev: v1.33.0
     hooks:
     - id: zizmor
 
