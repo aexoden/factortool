@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, NoReturn, override
+from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, override
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -218,7 +218,7 @@ class FactorDB(BaseBackend):
 
     accepts_partial_results = True
 
-    max_fetch_count = MAX_FETCH_COUNT
+    max_fetch_count: ClassVar[int | None] = MAX_FETCH_COUNT
 
     submit_batch_size = SUBMIT_BATCH_SIZE
 

@@ -147,15 +147,14 @@ def test_ecm_cutoff_follows_the_latest_statistics() -> None:
     number._stats = stats
     number._ecm_level = 10
 
-    stats.get_ecm_cutoffs.return_value = ECMCutoffs(None, 20)
-    assert number.ecm_needed
+    # Each reading is collected rather than asserted in turn, which type checkers would narrow as if it couldn't change.
+    # In the last case, resuming would skip the levels the engine ran in the meantime.
+    needed: list[bool] = []
+    for cutoffs in (ECMCutoffs(None, 20), ECMCutoffs(8, 10), ECMCutoffs(8, 20)):
+        stats.get_ecm_cutoffs.return_value = cutoffs
+        needed.append(number.ecm_needed)
 
-    stats.get_ecm_cutoffs.return_value = ECMCutoffs(8, 10)
-    assert not number.ecm_needed
-
-    # Resuming would skip the levels the engine ran in the meantime.
-    stats.get_ecm_cutoffs.return_value = ECMCutoffs(8, 20)
-    assert not number.ecm_needed
+    assert needed == [True, False, False]
 
 
 def test_yafu_nfs_forces_nfs_and_records_its_own_statistics(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
