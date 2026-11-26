@@ -31,7 +31,7 @@ from factortool.number import (
 from factortool.stats import ECMCutoffs, FactoringStats
 from factortool.tools import CadoNfsError, ToolError, ToolFailure, YafuError, run_tool
 
-from .helpers import NO_STATS_PATH, make_config, make_number
+from .helpers import NO_STATS_PATH, fake_time, make_config, make_number
 
 # Composites on either side of the YAFU NFS minimum, each with a small factor.
 C84 = 10**83 + 1
@@ -66,7 +66,7 @@ def test_tf_time_excludes_generating_the_primes(monkeypatch: pytest.MonkeyPatch)
         return (2, 3, 5)
 
     monkeypatch.setattr("factortool.number.small_primes", small_primes)
-    monkeypatch.setattr("factortool.number.time.perf_counter_ns", lambda: clock)
+    monkeypatch.setattr("factortool.number.time", fake_time(perf_counter_ns=lambda: clock))
     stats = Mock()
 
     assert factor_tf(2 * 3 * 5 * 7 * 11, stats) == [2, 3, 5, 77]

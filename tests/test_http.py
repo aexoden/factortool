@@ -32,6 +32,8 @@ from factortool.http import (
 )
 from factortool.interrupt import Interrupted
 
+from .helpers import fake_time
+
 
 @pytest.mark.parametrize(
     ("identity", "encoded"),
@@ -116,9 +118,10 @@ def make_client(
         return outcome
 
     monkeypatch.setattr(client.session, "request", fake_request)
-    monkeypatch.setattr(time, "sleep", sleeps.append)
-    monkeypatch.setattr(time, "time", lambda: START_TIME + sum(sleeps))
-    monkeypatch.setattr(time, "monotonic", lambda: sum(sleeps))
+    monkeypatch.setattr(
+        "factortool.http.time",
+        fake_time(sleep=sleeps.append, time=lambda: START_TIME + sum(sleeps), monotonic=lambda: sum(sleeps)),
+    )
 
     return client, sleeps
 

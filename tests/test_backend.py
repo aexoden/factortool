@@ -47,7 +47,7 @@ from factortool.submissions import Submission, SubmissionJournal
 if TYPE_CHECKING:
     from factortool.config import Config
 
-from .helpers import make_config
+from .helpers import fake_time, make_config
 
 
 class FakeBackend(BaseBackend):
@@ -107,13 +107,14 @@ class UnreachableBackend(FakeBackend):
 
 @pytest.fixture
 def sleep(monkeypatch: pytest.MonkeyPatch) -> Mock:
-    """Record sleeps instead of sleeping.
+    """Record sleeps instead of sleeping, in the modules that sleep on a backend's behalf.
 
     Returns:
         Mock: The recording sleep mock.
     """
     sleep = Mock()
-    monkeypatch.setattr("factortool.backend.time.sleep", sleep)
+    monkeypatch.setattr("factortool.http.time", fake_time(sleep=sleep))
+    monkeypatch.setattr("factortool.interrupt.time", fake_time(sleep=sleep))
     return sleep
 
 

@@ -9,6 +9,7 @@ import sys
 import time
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -18,6 +19,27 @@ from factortool.config import Config
 from factortool.interrupt import InterruptState
 from factortool.number import Number
 from factortool.stats import FactoringStats
+
+
+def fake_time(**overrides: object) -> SimpleNamespace:
+    """Build a stand-in for the time module, for one module under test to use in place of the shared one.
+
+    Patching a function of the time module itself would change it for every thread, pytest's own included.
+
+    Returns:
+        SimpleNamespace: The time module's public functions and constants, with the given ones replaced.
+
+    Raises:
+        AttributeError: If an override names nothing in the time module, which would leave the real one in use.
+    """
+    public = {name: getattr(time, name) for name in dir(time) if not name.startswith("_")}
+
+    if unknown := overrides.keys() - public.keys():
+        msg = f"The time module has no {', '.join(sorted(unknown))}"
+        raise AttributeError(msg)
+
+    return SimpleNamespace(**(public | overrides))
+
 
 # Never exists, so that statistics a test doesn't supply are empty.
 NO_STATS_PATH = Path("nonexistent") / "stats.json"
