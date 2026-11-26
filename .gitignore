@@ -1,7 +1,19 @@
-__pycache__
-/.coverage
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+
+# Python
+__pycache__/
+.coverage
+.coverage.*
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+dist/
+htmlcov/
+
+# factortool's configuration, and the files and directories it writes
 /config.json
-/dist
 /results/*.txt
 /state
 /work

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+
 # Auto-detect text files and normalize line endings to LF
 *       text=auto eol=lf
 
@@ -21,5 +24,5 @@
 *.py    text diff=python
 *.pyi   text diff=python
 
-# Version metadata for source archives (hatch-vcs / setuptools-scm)
+# Version metadata for source archives (hatch-vcs)
 .git_archival.txt  export-subst

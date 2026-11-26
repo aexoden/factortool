@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+
 root = true
 
 [*]
@@ -8,5 +11,5 @@ indent_size = 4
 insert_final_newline = true
 trim_trailing_whitespace = true
 
-[*.{yml,yaml,json,toml}]
+[*.{yml,yaml,json,jsonc,toml}]
 indent_size = 2

@@ -1,0 +1,180 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 Jason Lynch <jason@aexoden.com>
+
+# prek configuration
+# Install: prek install
+
+# The oldest prek that runs this configuration, which priority aliases need.
+# Raise it only when the configuration needs a newer prek.
+minimum_prek_version = "0.4.11"
+
+default_install_hook_types = ["pre-commit", "commit-msg"]
+# Hooks without their own stages run only before a commit, not on its message.
+default_stages = ["pre-commit"]
+
+# Hooks of one priority run together, and lower priorities first. The lock
+# checks finish before the other hooks, since pnpm install may rewrite
+# node_modules, and hooks without a priority, such as the builtin hooks, run
+# before both in their own order.
+[priorities]
+lock = 100
+check = 200
+
+# General hooks, built into prek
+[[repos]]
+repo = "builtin"
+
+[[repos.hooks]]
+id = "check-added-large-files"
+
+[[repos.hooks]]
+id = "check-case-conflict"
+
+[[repos.hooks]]
+id = "check-illegal-windows-names"
+
+[[repos.hooks]]
+id = "check-merge-conflict"
+
+[[repos.hooks]]
+id = "check-symlinks"
+
+[[repos.hooks]]
+id = "check-toml"
+
+[[repos.hooks]]
+id = "check-vcs-permalinks"
+
+[[repos.hooks]]
+id = "check-yaml"
+
+[[repos.hooks]]
+id = "detect-private-key"
+
+[[repos.hooks]]
+id = "end-of-file-fixer"
+
+[[repos.hooks]]
+id = "trailing-whitespace"
+
+# Licensing
+[[repos]]
+repo = "https://github.com/fsfe/reuse-tool"
+rev = "v6.3.0"
+
+# No priority, so reuse runs alone before the hooks that write ignored files:
+# it lists the ignored files once, then counts any created later as unlicensed.
+[[repos.hooks]]
+id = "reuse"
+
+# Markdown
+[[repos]]
+repo = "https://github.com/DavidAnson/markdownlint-cli2"
+rev = "v0.24.2"
+
+[[repos.hooks]]
+id = "markdownlint-cli2"
+priority = "check"
+
+# TOML
+[[repos]]
+repo = "https://github.com/tombi-toml/tombi-pre-commit"
+rev = "v1.11.3"
+
+[[repos.hooks]]
+id = "tombi-format"
+args = ["--check"]
+# Lock files are generated, so they aren't formatted.
+exclude = '(^|/)(Cargo|uv)\.lock$'
+priority = "check"
+
+# GitHub Actions security
+[[repos]]
+repo = "https://github.com/zizmorcore/zizmor-pre-commit"
+rev = "v1.33.1"
+
+[[repos.hooks]]
+id = "zizmor"
+args = ["--pedantic", "--strict-collection"]
+priority = "check"
+
+# Conventional commits
+[[repos]]
+repo = "https://github.com/compilerla/conventional-pre-commit"
+rev = "v4.5.0"
+
+[[repos.hooks]]
+id = "conventional-pre-commit"
+stages = ["commit-msg"]
+args = ["feat", "fix", "perf", "refactor", "style", "test", "docs", "build", "ci", "revert", "chore"]
+
+# norms: commit messages, and the project against the standards
+[[repos]]
+repo = "https://github.com/aexoden/norms"
+rev = "v0.3.1"
+
+[[repos.hooks]]
+id = "norms-commit-msg"
+
+[[repos.hooks]]
+id = "norms-verify"
+args = ["--deny-warnings"]
+priority = "check"
+
+# Python
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "uv-lock"
+name = "uv lock"
+description = "Check that uv.lock is up to date"
+entry = "uv lock --check"
+language = "system"
+pass_filenames = false
+priority = "lock"
+
+[[repos.hooks]]
+id = "ruff-format"
+name = "ruff format"
+description = "Check Python formatting using Ruff"
+entry = "uv run ruff format --check"
+language = "system"
+pass_filenames = false
+priority = "check"
+
+[[repos.hooks]]
+id = "ruff-check"
+name = "ruff check"
+description = "Lint Python code using Ruff"
+entry = "uv run ruff check"
+language = "system"
+pass_filenames = false
+priority = "check"
+
+[[repos.hooks]]
+id = "mypy"
+name = "mypy"
+description = "Type check Python code using mypy"
+entry = "uv run mypy ."
+language = "system"
+pass_filenames = false
+priority = "check"
+
+[[repos.hooks]]
+id = "basedpyright"
+name = "basedpyright"
+description = "Type check Python code using basedpyright"
+entry = "uv run basedpyright"
+language = "system"
+pass_filenames = false
+priority = "check"
+
+[[repos.hooks]]
+id = "pytest"
+name = "pytest"
+description = "Run Python tests using pytest"
+entry = "uv run pytest --cov=src/factortool --cov-report=term-missing"
+language = "system"
+pass_filenames = false
+priority = "check"

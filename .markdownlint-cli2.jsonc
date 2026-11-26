@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 Jason Lynch <jason@aexoden.com>
+
+{
+  "config": {
+    "default": true,
+
+    // MD004 - Unordered list style
+    "MD004": {
+      "style": "dash",
+    },
+
+    // MD013 - Line length
+    "MD013": {
+      "line_length": 80,
+      "tables": false,
+      "code_blocks": false,
+    },
+
+    // MD024 - No duplicate headings
+    "MD024": {
+      "siblings_only": true,
+    },
+  },
+}

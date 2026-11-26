@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 Jason Lynch <jason@aexoden.com>
+
+# Changes here will be overwritten by Copier; do not edit manually.
+_commit: v0.3.1
+_src_path: gh:aexoden/norms
+author_email: jason@aexoden.com
+author_name: Jason Lynch
+changelog: true
+copyright_year: '2026'
+description: A utility for factoring numbers, primarily for submission to FactorDB
+    and mersenne.ca.
+license: MIT
+primary_language: python
+project_name: factortool
+project_type: application
+repository_url: https://github.com/aexoden/factortool
+secondary_languages: []

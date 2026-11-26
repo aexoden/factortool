@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 Jason Lynch <jason@aexoden.com>
+
+# Files that cannot carry a comment header. Where several annotations match a
+# file, the last one applies, giving the year each file was created.
+version = 1
+
+[[annotations]]
+path = [
+  "**/*.md",
+  "config.dist.json",
+  "renovate.json",
+  ".git_archival.txt",
+]
+SPDX-FileCopyrightText = "2026 Jason Lynch <jason@aexoden.com>"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = ["TODO.md", ".python-version", "uv.lock"]
+SPDX-FileCopyrightText = "2025 Jason Lynch <jason@aexoden.com>"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = ["README.md"]
+SPDX-FileCopyrightText = "2024 Jason Lynch <jason@aexoden.com>"
+SPDX-License-Identifier = "MIT"

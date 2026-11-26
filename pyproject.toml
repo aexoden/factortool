@@ -1,14 +1,18 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2024 Jason Lynch <jason@aexoden.com>
+
 [project]
 name = "factortool"
-description = "A tool to help perform and manage various integer factorization tasks."
+description = "A utility for factoring numbers, primarily for submission to FactorDB and mersenne.ca."
 readme = "README.md"
 requires-python = "==3.15.2"
 license = "MIT"
+license-files = ["LICENSES/*.txt"]
 authors = [{ name = "Jason Lynch", email = "jason@aexoden.com" }]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Programming Language :: Python",
-  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Programming Language :: Python :: Implementation :: CPython",
 ]
 dependencies = [
@@ -32,17 +36,34 @@ factortool = "factortool.cli.main:main"
 
 [dependency-groups]
 dev = [
+  "basedpyright==1.40.2",
   "gmpy2-stubs==2.2.1.5",
   "mypy==2.4.1",
   "pytest==9.2.0",
   "pytest-cov==7.1.0",
-  "ruff==0.17.1",
+  "ruff==0.17.6",
   "types-requests==2.33.0.20261030",
 ]
 
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatch-vcs", "hatchling"]
 build-backend = "hatchling.build"
+
+[tool.basedpyright]
+typeCheckingMode = "recommended"
+# Tests reach into private members to set up and inspect state, as Ruff's per-file ignores allow.
+executionEnvironments = [{ root = "tests", reportPrivateUsage = false }]
+reportImplicitStringConcatenation = false  # Ruff's explicit-string-concatenation asks for it across lines.
+reportUnusedParameter = false  # Ruff's unused-argument covers it, allowing unused arguments of a do-nothing hook.
+reportAny = false  # Temporarily off while adopting the norms standards (see TODO.md).
+reportExplicitAny = false  # Temporarily off while adopting the norms standards (see TODO.md).
+reportImportCycles = false  # Temporarily off while adopting the norms standards (see TODO.md).
+reportUnannotatedClassAttribute = false  # Temporarily off while adopting the norms standards (see TODO.md).
+reportUnknownArgumentType = false  # Temporarily off while adopting the norms standards (see TODO.md).
+reportUnknownLambdaType = false  # Temporarily off while adopting the norms standards (see TODO.md).
+reportUnknownMemberType = false  # Temporarily off while adopting the norms standards (see TODO.md).
+reportUnknownVariableType = false  # Temporarily off while adopting the norms standards (see TODO.md).
+reportUnusedCallResult = false  # Temporarily off while adopting the norms standards (see TODO.md).
 
 [tool.hatch.version]
 source = "vcs"
@@ -55,9 +76,24 @@ packages = ["src/factortool"]
 
 [tool.mypy]
 strict = true
+strict_equality_for_none = true
+warn_unreachable = true
+enable_error_code = [
+  "deprecated",
+  "exhaustive-match",
+  "explicit-override",
+  "mutable-override",
+  "possibly-undefined",
+  "redundant-expr",
+  "redundant-self",
+  "truthy-bool",
+  "truthy-iterable",
+  "unimported-reveal",
+  "unused-awaitable",
+]
 
-[tool.pyright]
-executionEnvironments = [{ root = "tests", reportPrivateUsage = false }]
+[tool.pytest]
+strict = true
 
 [tool.ruff]
 line-length = 120
@@ -68,7 +104,10 @@ line-ending = "lf"
 [tool.ruff.lint]
 preview = true
 select = ["ALL"]
-ignore = ["docstring-extraneous-exception", "missing-trailing-comma", "single-line-implicit-string-concatenation"]
+ignore = [
+  "missing-trailing-comma",
+  "docstring-extraneous-exception",  # Docstrings document the exceptions a function's callees raise through it.
+]
 
 [tool.ruff.lint.flake8-copyright]
 notice-rgx = "(?i)SPDX-FileCopyrightText: \\d{4}"
@@ -89,5 +128,5 @@ convention = "google"
 # uv installs the project once and would otherwise keep reporting the version from that install. Treating the commit and
 # tags as cache keys makes it reinstall when HEAD moves.
 cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
-exclude-newer = "7 days"
-required-version = ">=0.12.0"
+exclude-newer = "3 days"
+required-version = ">=0.13.9"

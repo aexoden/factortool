@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2026 Jason Lynch <jason@aexoden.com>
+
 name: CI
 
 on:
@@ -9,40 +12,321 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  PYTHONUNBUFFERED: "1"
-  FORCE_COLOR: "1"
-
 permissions: {}
 
+# Tools CI installs or runs at a pinned version, which Renovate updates from the
+# comment above each one.
+env:
+  # renovate: datasource=pypi depName=prek
+  PREK_VERSION: "0.5.11"
+
 jobs:
-  ci:
-    name: Continuous integration on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+  markdownlint:
+    name: Lint Markdown with markdownlint
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Lint Markdown with markdownlint
+        uses: DavidAnson/markdownlint-cli2-action@3ce8f712b5d8f31acd8e201be6d97e3d2bb23eb7 # v25.1.0
+        with:
+          globs: '**/*.md'
+
+  norms-verify:
+    name: Verify the project and the commit message
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      # Without CHANGELOG.md, norms reads the release tags.
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install prek
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        with:
+          tool: prek@${{ env.PREK_VERSION }}
+
+      # prek builds norms and installs the commit-msg hooks again only when prek or prek.toml changes.
+      - name: Cache prek's hook environments
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          key: prek-${{ runner.os }}-${{ env.PREK_VERSION }}-${{ hashFiles('prek.toml') }}
+          path: ~/.cache/prek
+
+      # prek builds norms at the revision prek.toml pins.
+      - name: Verify the project with norms
+        run: prek run norms-verify --all-files
+
+      # The commit-msg hooks check the message of the commit CI tests: the one pushed, or a pull
+      # request's head commit, unless it's a merge commit, which linear history keeps off main. They
+      # pass autosquash and merge subjects, which shouldn't reach main, so those are rejected first.
+      # The commit is already made, so lines over 72 characters are only a warning. GIT_EDITOR=:
+      # tells norms, as git does, that the message wasn't edited, so a line starting with git's
+      # comment character is checked as it's recorded.
+      - name: Check the commit message
+        env:
+          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          GIT_EDITOR: ":"
+          NORMS_COMMIT_MSG_LENGTH: warn
+        run: |
+          if [ "$(git cat-file commit "$COMMIT" | sed '/^$/q' | grep -c '^parent ')" -gt 1 ]; then
+            echo "The commit is a merge, such as GitHub's Update branch makes, which never reaches main."
+            exit 0
+          fi
+          git log -1 --format=%B "$COMMIT" > "$RUNNER_TEMP/commit-msg.txt"
+          case "$(head -n 1 "$RUNNER_TEMP/commit-msg.txt")" in
+            'fixup! '* | 'squash! '* | 'amend! '* | Merge*)
+              echo "::error::The subject is an autosquash or merge subject, not a conventional commit subject."
+              exit 1
+              ;;
+          esac
+          prek run --stage commit-msg --commit-msg-filename "$RUNNER_TEMP/commit-msg.txt"
+
+  prek:
+    name: Run the remaining prek hooks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install prek
+        uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+        with:
+          tool: prek@${{ env.PREK_VERSION }}
+
+      - name: Run the hooks that have no job of their own
+        env:
+          PREK_SKIP: basedpyright,markdownlint-cli2,mypy,norms-verify,pytest,reuse,ruff-check,ruff-format,tombi-format,uv-lock,zizmor
+        run: prek run --all-files --show-diff-on-failure
+
+  reuse:
+    name: Check REUSE compliance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check REUSE compliance
+        uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
+
+  tombi:
+    name: Check TOML formatting with Tombi
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Tombi
+        uses: tombi-toml/setup-tombi@7417bd6e820cf0d4f89d77b48d13ba5d060435bf # v1.11.3
+        with:
+          enable-cache: false
+
+      - name: Check TOML formatting with Tombi
+        run: tombi format --check --diagnostics-format github
+
+  zizmor:
+    name: GitHub Actions security analysis with zizmor 🌈
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run zizmor 🌈
+        uses: zizmorcore/zizmor-action@a818f16177a5395fc11d3c73577caabaa7119391 # v0.9.1
+        with:
+          advanced-security: false
+          annotations: true
+          persona: pedantic
+          strict-collection: true
+
+  basedpyright:
+    name: Type check Python code with basedpyright
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
+          require-checksums: true
           version: "0.13.9"
 
-      - name: Set up uv
+      - name: Install dependencies
         run: uv sync --locked
 
-      - name: Check formatting
-        run: uv run ruff format --check
+      - name: Type check Python code with basedpyright
+        run: uv run basedpyright
 
-      - name: Lint
-        run: uv run ruff check
+  mypy:
+    name: Type check Python code with mypy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Type check
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          require-checksums: true
+          version: "0.13.9"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Type check Python code with mypy
         run: uv run mypy .
 
-      - name: Run tests
+  # Signal handling, file locking and the external tools' processes differ between platforms.
+  pytest:
+    name: Run Python tests on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          require-checksums: true
+          version: "0.13.9"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run Python tests
         run: uv run pytest --cov=src/factortool --cov-report=term-missing
+
+  ruff-check:
+    name: Lint Python code with Ruff
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          require-checksums: true
+          version: "0.13.9"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint Python code with Ruff
+        run: uv run ruff check
+
+  ruff-format:
+    name: Check Python code formatting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          require-checksums: true
+          version: "0.13.9"
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Check Python code formatting
+        run: uv run ruff format --check
+
+  uv-lock:
+    name: Check that uv.lock is up to date
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          # The jobs share setup-uv's cache, which this one would save without the packages they install.
+          enable-cache: false
+          require-checksums: true
+          version: "0.13.9"
+
+      - name: Check that uv.lock is up to date
+        run: uv lock --check
+
+  # The gate, which the ruleset requires, after the jobs it needs.
+  ci-success:
+    name: CI success
+    if: always()
+    needs: [basedpyright, markdownlint, mypy, norms-verify, prek, pytest, reuse, ruff-check, ruff-format, tombi, uv-lock, zizmor]
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - name: Fail unless every job succeeded
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: exit 1

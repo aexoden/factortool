@@ -1,7 +1,5 @@
 # factortool
 
------
-
 `factortool` is a utility for factoring numbers, primarily for submission to
 FactorDB and mersenne.ca.
 
@@ -258,7 +256,18 @@ The analyzer exits with status 2 for invalid arguments, configuration or
 statistics data, and with status 1 if it has no YAFU, SIQS or NFS data for the
 requested digit count.
 
+## Development
+
+Install [prek](https://prek.j178.dev/installation/), then the hooks:
+
+```sh
+prek install
+```
+
+Python uses [uv](https://docs.astral.sh/uv/), which installs the Python version
+pinned in `.python-version`.
+
 ## License
 
-`factortool` is distributed under the terms of the
-[MIT](https://spdx.org/licenses/MIT.html) license.
+Licensed under the MIT license ([LICENSE](LICENSE) or
+<https://opensource.org/licenses/MIT>).
