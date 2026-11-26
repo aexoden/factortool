@@ -18,7 +18,7 @@ import threading
 import time
 
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, ClassVar, NoReturn
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -45,7 +45,7 @@ class ToolDeadlineExceeded(Exception):  # ruff: ignore[error-suffix-on-exception
 class ToolError(Exception):
     """Exception raised when an external tool fails repeatedly."""
 
-    tool_name: str
+    tool_name: ClassVar[str]
 
 
 class YafuError(ToolError):

@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2024-2026 Jason Lynch <jason@aexoden.com>
 # ruff:file-ignore[print] (print() used for output)
+# Tap sets the arguments without defaults, such as digits, from the command line.
+# pyright: reportUninitializedInstanceVariable=false
 """Utility for analyzing factorization statistics."""
 
 from __future__ import annotations

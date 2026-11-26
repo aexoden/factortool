@@ -180,11 +180,11 @@ def test_an_early_exit_reports_partial_progress_without_an_assignment(tmp_path: 
     assert backend.submitted == [200]
 
 
-def make_unfinished(expires_at: float | None) -> tuple[list[Number], Number]:
+def make_unfinished(expires_at: float | None) -> tuple[list[Number], Mock]:
     """Build a finished, a partially factored and an untouched number sharing an assignment expiry.
 
     Returns:
-        tuple[list[Number], Number]: All three numbers, and the partially factored one by itself.
+        tuple[list[Number], Mock]: All three numbers, and the mock recording the partially factored one's reports.
     """
     done = make_number(100)
     done.prime_factors = [2, 2, 5, 5]
@@ -194,14 +194,15 @@ def make_unfinished(expires_at: float | None) -> tuple[list[Number], Number]:
     partially_factored = make_number(200)
     partially_factored.prime_factors = [2]
     partially_factored.composite_factors = [100]
-    partially_factored.report_partial = Mock()  # type: ignore[method-assign]
+    report_partial = Mock()
+    partially_factored.report_partial = report_partial  # type: ignore[method-assign]
 
     numbers = [done, partially_factored, make_number(300)]
 
     for number in numbers:
         number.expires_at = expires_at
 
-    return numbers, partially_factored
+    return numbers, report_partial
 
 
 @pytest.mark.parametrize("accepts_partial_results", [True, False])
@@ -212,11 +213,11 @@ def test_unfinished_work_whose_assignment_is_held_is_left_to_the_backend(
     warning = Mock()
     monkeypatch.setattr("factortool.cli.main.logger.warning", warning, raising=True)
     backend = FakeBackend(accepts_partial_results=accepts_partial_results)
-    numbers, partially_factored = make_unfinished(time.time() + 3600.0)
+    numbers, report_partial = make_unfinished(time.time() + 3600.0)
 
     report_unfinished(backend, numbers)
 
-    partially_factored.report_partial.assert_not_called()  # type: ignore[attr-defined]
+    report_partial.assert_not_called()
     warning.assert_not_called()
 
 
@@ -225,22 +226,22 @@ def test_a_partial_result_the_backend_does_not_want_is_discarded(monkeypatch: py
     warning = Mock()
     monkeypatch.setattr("factortool.cli.main.logger.warning", warning, raising=True)
     backend = FakeBackend(accepts_partial_results=False)
-    numbers, partially_factored = make_unfinished(time.time() - 1.0)
+    numbers, report_partial = make_unfinished(time.time() - 1.0)
 
     report_unfinished(backend, numbers)
 
-    partially_factored.report_partial.assert_not_called()  # type: ignore[attr-defined]
+    report_partial.assert_not_called()
     assert [call.args[1] for call in warning.call_args_list] == ["200 <3>"]
 
 
 def test_a_partial_result_whose_assignment_expired_is_reported() -> None:
     """Test that a backend accepting partial factorizations is sent one that can no longer be completed."""
     backend = FakeBackend(accepts_partial_results=True)
-    numbers, partially_factored = make_unfinished(time.time() - 1.0)
+    numbers, report_partial = make_unfinished(time.time() - 1.0)
 
     report_unfinished(backend, numbers)
 
-    partially_factored.report_partial.assert_called_once_with()  # type: ignore[attr-defined]
+    report_partial.assert_called_once_with()
 
 
 def test_no_new_work_is_rejected_by_a_backend_that_assigns_nothing() -> None:

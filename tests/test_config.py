@@ -10,6 +10,10 @@ import os
 import sys
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 import pytest
 
@@ -31,7 +35,7 @@ REQUIRED_SETTINGS = {
 }
 
 
-def write_config(tmp_path: Path, settings: dict[str, object]) -> Path:
+def write_config(tmp_path: Path, settings: Mapping[str, object]) -> Path:
     """Write a configuration file with the given settings.
 
     Returns:

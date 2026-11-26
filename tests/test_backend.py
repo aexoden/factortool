@@ -1898,7 +1898,11 @@ def test_progress_is_recorded_before_a_composite_factor_is_factored_further(
     backend = make_assigning_backend(config)
     seen: list[list[int]] = []
 
-    splits = {n: list(HARD_COMPOSITES), HARD_COMPOSITES[0]: [1000003, 1000033], HARD_COMPOSITES[1]: [1000037, 1000039]}
+    splits: dict[int, list[int]] = {
+        n: list(HARD_COMPOSITES),
+        HARD_COMPOSITES[0]: [1000003, 1000033],
+        HARD_COMPOSITES[1]: [1000037, 1000039],
+    }
 
     def run_final(_number: Number, composite: int, _method: str) -> list[int]:
         seen.append(sorted(x for assignment in retained(config) for x in assignment.factors))

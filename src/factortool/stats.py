@@ -127,7 +127,7 @@ class FactoringStats:
 
     def __init__(self, path: Path, *, min_write_interval: float = 5.0, read_only: bool = False) -> None:
         """Initialize the factoring statistics manager."""
-        self._path: Path = path
+        self._path = path
         self._min_write_interval = int(min_write_interval * 1_000_000_000)
         self._last_write_time = 0
         self._data_changed = False

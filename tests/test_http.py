@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, Unpack
 from unittest.mock import Mock
 
 if TYPE_CHECKING:
@@ -93,10 +93,17 @@ def make_response(status_code: int, headers: dict[str, str] | None = None) -> re
 START_TIME = 1_000_000.0
 
 
+class ClientOptions(TypedDict, total=False):
+    """Options a test may pass on to the HTTP client."""
+
+    rate_limited_until: float
+    on_rate_limit: Callable[[float], None]
+
+
 def make_client(
     monkeypatch: pytest.MonkeyPatch,
     outcomes: Sequence[requests.Response | requests.RequestException],
-    **options: float | Callable[[float], None],
+    **options: Unpack[ClientOptions],
 ) -> tuple[HttpClient, list[float]]:
     """Build a client whose requests yield the given outcomes in order, recording sleeps instead of sleeping.
 
@@ -105,7 +112,7 @@ def make_client(
     Returns:
         tuple[HttpClient, list[float]]: The constructed HTTP client and the recorded sleep durations.
     """
-    client = HttpClient("Test", 1.0, **options)  # type: ignore[arg-type]
+    client = HttpClient("Test", 1.0, **options)
     remaining = iter(outcomes)
     sleeps: list[float] = []
 
