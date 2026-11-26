@@ -316,6 +316,7 @@ class FactorDB(BaseBackend):
 
         return parse_rpc_batch(response.json(), len(calls))
 
+    @override
     def _request_composites(self, criteria: FetchCriteria) -> list[int]:
         """Request composites from FactorDB, smallest first.
 
@@ -374,6 +375,7 @@ class FactorDB(BaseBackend):
 
         return composites
 
+    @override
     def _submit_number(self, submission: Submission) -> SubmitOutcome:
         """Make a single attempt to submit the distinct prime factors of a number to FactorDB.
 

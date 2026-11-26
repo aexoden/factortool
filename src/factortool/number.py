@@ -9,7 +9,7 @@ import time
 
 from enum import Enum
 from functools import cache
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, override
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -301,6 +301,7 @@ class Number:
         """
         return isinstance(other, self.__class__) and self.n < other.n
 
+    @override
     def __eq__(self, other: object) -> bool:
         """Equality comparison based on the number value.
 
@@ -309,6 +310,7 @@ class Number:
         """
         return isinstance(other, self.__class__) and self.n == other.n
 
+    @override
     def __hash__(self) -> int:
         """Hash based on the number value.
 

@@ -93,6 +93,7 @@ class MersenneCA(BaseBackend):
             msg = "mersenne.ca does not support a skip count"
             raise ValueError(msg)
 
+    @override
     def _request_composites(self, criteria: FetchCriteria) -> list[int]:
         """Request composites assigned by mersenne.ca. An empty body means no work is available.
 
@@ -111,6 +112,7 @@ class MersenneCA(BaseBackend):
             self._service_request("GET", API_URL, params=params, timeout=30.0, wait=self._fetch_wait).text
         )
 
+    @override
     def _submit_number(self, submission: Submission) -> SubmitOutcome:
         """Make a single attempt to report a composite's complete factorization.
 

@@ -13,7 +13,7 @@ import tempfile
 
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, get_args
+from typing import TYPE_CHECKING, Literal, get_args, override
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
@@ -57,6 +57,7 @@ class ConfigArguments(Tap):
     log_level: LogLevel | None = None  # Minimum level of log messages to show (overrides log_level in config)
     max_threads: int | None = None  # Maximum number of threads to use (overrides max_threads in config)
 
+    @override
     def configure(self) -> None:
         """Accept log levels in any case, as the configuration file does."""
         self.add_argument("--log_level", type=str.upper, choices=get_args(LogLevel))
