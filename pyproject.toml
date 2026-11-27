@@ -18,7 +18,7 @@ classifiers = [
 dependencies = [
   "filelock==4.3.1",
   "gmpy2==2.3.2",
-  "loguru==0.7.3",
+  "loguru==0.8.0",
   "pydantic==2.14.4",
   "requests==2.34.2",
   "typed-argument-parser==1.12.0",
