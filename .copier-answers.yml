@@ -3,7 +3,7 @@
 
 # Changes here will be overwritten by Copier; do not edit manually.
 _commit: v0.3.1
-_src_path: gh:aexoden/norms
+_src_path: https://github.com/aexoden/norms
 author_email: jason@aexoden.com
 author_name: Jason Lynch
 changelog: true
