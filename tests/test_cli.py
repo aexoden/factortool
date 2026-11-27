@@ -21,7 +21,7 @@ import pytest
 
 from loguru import logger
 
-from factortool.backend import FetchCriteria
+from factortool.backends.base import FetchCriteria
 from factortool.cli.main import (
     Arguments,
     Cleanup,

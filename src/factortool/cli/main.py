@@ -22,7 +22,8 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from factortool.__about__ import __version__
-from factortool.backend import Backend, FetchCriteria, create_backend
+from factortool.backends.base import Backend, FetchCriteria
+from factortool.backends.factory import create_backend
 from factortool.batch import BatchController, BatchKey
 from factortool.config import BackendName, FactoringMode, load_config
 from factortool.engine import EngineStatus, FactorEngine, TimeLimits

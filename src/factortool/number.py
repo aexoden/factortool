@@ -29,7 +29,7 @@ from factortool.tools import ToolFailure, run_cado_nfs, run_yafu
 from factortool.util import format_number, is_prime, log_factor_result, small_primes
 
 if TYPE_CHECKING:
-    from factortool.backend import Backend
+    from factortool.backends.base import Backend
     from factortool.config import Config, FinalMethods, YafuPaths
     from factortool.stats import ECMCutoffs, FactoringStats
     from factortool.submissions import Submission

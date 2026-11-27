@@ -933,19 +933,3 @@ class BaseBackend(ABC):
             logger.debug("Abandoned a submission to {}, leaving it for the next run", self.name)
         except Exception:  # ruff: ignore[blind-except] (The results are kept, and the run must shut down.)
             logger.exception("The {} submission worker failed", self.name)
-
-
-def create_backend(config: Config, stats: FactoringStats, interrupts: InterruptState) -> Backend:
-    """Build the backend selected in the configuration.
-
-    Returns:
-        Backend: The configured backend.
-    """
-    # Imported here to avoid a circular import: both backends subclass BaseBackend from this module.
-    from factortool.factordb import FactorDB  # ruff: ignore[import-outside-top-level]
-    from factortool.mersenne_ca import MersenneCA  # ruff: ignore[import-outside-top-level]
-
-    if config.backend == "mersenne_ca":
-        return MersenneCA(config, stats, interrupts)
-
-    return FactorDB(config, stats, interrupts)

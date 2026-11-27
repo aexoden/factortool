@@ -20,13 +20,13 @@ import requests
 
 from loguru import logger
 
-from factortool.backend import BaseBackend, SubmitOutcome, parse_composites
+from factortool.backends.base import BaseBackend, SubmitOutcome, parse_composites
 from factortool.http import PermanentHttpError
 from factortool.number import format_factorization
 from factortool.util import format_number
 
 if TYPE_CHECKING:
-    from factortool.backend import FetchCriteria
+    from factortool.backends.base import FetchCriteria
     from factortool.config import Config
     from factortool.interrupt import InterruptState
     from factortool.stats import FactoringStats

@@ -21,7 +21,7 @@ import requests
 from loguru import logger
 
 from factortool.assignments import Assignment, AssignmentState, AssignmentStore
-from factortool.backend import (
+from factortool.backends.base import (
     NO_WORK_DELAY,
     SUBMIT_ATTEMPTS,
     Backend,
@@ -30,7 +30,7 @@ from factortool.backend import (
     SubmitOutcome,
     parse_composites,
 )
-from factortool.factordb import (
+from factortool.backends.factordb import (
     API_URL,
     MAX_FETCH_COUNT,
     REJECTED_FACTORS_ERROR,
@@ -38,6 +38,8 @@ from factortool.factordb import (
     RpcError,
     parse_rpc_responses,
 )
+from factortool.backends.factory import create_backend
+from factortool.backends.mersenne_ca import MersenneCA
 from factortool.http import HttpClient, PermanentHttpError, build_user_agent
 from factortool.interrupt import ABORT, Interrupted, InterruptState
 from factortool.number import Number
@@ -45,7 +47,7 @@ from factortool.stats import FactoringStats
 from factortool.submissions import Submission, SubmissionJournal
 
 if TYPE_CHECKING:
-    from factortool.config import Config
+    from factortool.config import BackendName, Config
 
 from .helpers import fake_time, make_config
 
@@ -558,7 +560,7 @@ def test_base_fetch_stops_retrying_once_a_submission_request_is_refused(
     config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Test that a refusal arriving while a fetch waits to try again abandons the fetch rather than retrying it."""
-    monkeypatch.setattr("factortool.backend.RETRY_DELAY", 60.0)
+    monkeypatch.setattr("factortool.backends.base.RETRY_DELAY", 60.0)
 
     class OverlappingBackend(RefusingBackend):
         @override
@@ -641,7 +643,7 @@ def test_base_honors_a_rate_limit_from_a_previous_run(config: Config) -> None:
 
 def test_base_close_gives_up_on_an_unresponsive_service(config: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that closing stops waiting once nothing has been resolved for FLUSH_TIMEOUT, keeping what is unsent."""
-    monkeypatch.setattr("factortool.backend.FLUSH_TIMEOUT", 0.2)
+    monkeypatch.setattr("factortool.backends.base.FLUSH_TIMEOUT", 0.2)
     backend = UnreachableBackend(config, FactoringStats(config.stats_path, read_only=True), ())
     backend.submit(make_factored(config, backend, [3, 5], [3, 7]))
     start = time.monotonic()
@@ -673,7 +675,7 @@ def test_base_close_gives_up_at_once_on_an_interrupt(config: Config) -> None:
 
 def test_base_close_waits_out_a_rate_limit(config: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that time spent waiting for a rate limit to end does not count toward giving up."""
-    monkeypatch.setattr("factortool.backend.FLUSH_TIMEOUT", 0.2)
+    monkeypatch.setattr("factortool.backends.base.FLUSH_TIMEOUT", 0.2)
     rate_limit = 1.0
 
     class RateLimitedBackend(FakeBackend):
@@ -1106,7 +1108,7 @@ def test_factordb_leaves_a_whole_batch_for_another_attempt(
 
 def test_base_worker_submits_a_backlog_in_batches(config: Config, sleep: Mock, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that numbers queued while a submission is in progress are submitted together, up to the batch size."""
-    monkeypatch.setattr("factortool.backend.SUBMIT_MAX_HOLD", 0.0)
+    monkeypatch.setattr("factortool.backends.base.SUBMIT_MAX_HOLD", 0.0)
     started = threading.Event()
     release = threading.Event()
     batches: list[list[int]] = []
@@ -1466,7 +1468,7 @@ def test_base_holds_a_partial_batch_until_it_is_full(config: Config) -> None:
 
 def test_base_sends_a_partial_batch_once_its_hold_ends(config: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that a partial batch is sent without waiting to close once its oldest result has been held long enough."""
-    monkeypatch.setattr("factortool.backend.SUBMIT_MAX_HOLD", 0.5)
+    monkeypatch.setattr("factortool.backends.base.SUBMIT_MAX_HOLD", 0.5)
     backend = RecordingBatchesBackend(config)
 
     try:
@@ -1536,7 +1538,7 @@ def test_base_sends_what_a_previous_run_left_unsent_without_holding_it(config: C
 
 def test_base_close_does_not_count_request_spacing_as_a_stall(config: Config, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that waiting out the request interval while closing doesn't give up on a service that is answering."""
-    monkeypatch.setattr("factortool.backend.FLUSH_TIMEOUT", 0.3)
+    monkeypatch.setattr("factortool.backends.base.FLUSH_TIMEOUT", 0.3)
     response = requests.Response()
     response.status_code = 200
 
@@ -1930,3 +1932,17 @@ def test_progress_is_recorded_before_a_composite_factor_is_factored_further(
 
     assert seen == [[n], sorted(HARD_COMPOSITES), [1000003, 1000033, HARD_COMPOSITES[1]]]
     assert backend.submitted == [n]
+
+
+@pytest.mark.parametrize(("backend_name", "backend_class"), [("factordb", FactorDB), ("mersenne_ca", MersenneCA)])
+def test_create_backend_builds_the_configured_backend(
+    config: Config, backend_name: BackendName, backend_class: type[BaseBackend]
+) -> None:
+    """Test that the factory builds the backend the configuration names."""
+    config = make_config(**(config.model_dump() | {"backend": backend_name, "gimps_login": "tester"}))
+    backend = create_backend(config, FactoringStats(config.stats_path, read_only=True), InterruptState())
+
+    try:
+        assert type(backend) is backend_class
+    finally:
+        backend.close()

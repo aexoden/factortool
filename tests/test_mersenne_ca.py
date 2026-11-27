@@ -14,9 +14,9 @@ if TYPE_CHECKING:
 import pytest
 import requests
 
-from factortool.backend import FetchCriteria, SubmitOutcome
+from factortool.backends.base import FetchCriteria, SubmitOutcome
+from factortool.backends.mersenne_ca import MersenneCA, check_factorization
 from factortool.http import HttpClient, PermanentHttpError
-from factortool.mersenne_ca import MersenneCA, check_factorization
 from factortool.number import format_factorization
 from factortool.stats import FactoringStats
 from factortool.submissions import Submission
