@@ -402,7 +402,7 @@ class FactorDB(BaseBackend):
 
         # If there are no composite factors, avoid sending the trivial largest factor.
         if len(submission.composite_factors) == 0:
-            factors.pop()
+            del factors[-1]
 
         # Remove duplicate factors to avoid redundant submissions.
         factors = sorted(set(factors))

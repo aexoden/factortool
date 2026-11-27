@@ -216,7 +216,7 @@ def test_an_abort_kills_the_running_tool(
 
     def factor(n: int, *_args: object) -> list[int]:
         try:
-            run_tool(make_tool_with_helper(heartbeat), tmp_path, 1)
+            _ = run_tool(make_tool_with_helper(heartbeat), tmp_path, 1)
         finally:
             finished.set()
 
@@ -249,7 +249,7 @@ def test_an_abort_kills_a_tool_started_after_it(monkeypatch: pytest.MonkeyPatch,
         # The signal lands after the engine has decided to factor this number, but before the tool is running.
         signal.raise_signal(signal.SIGTERM)
         time.sleep(2 * POLL_INTERVAL)
-        run_tool(make_tool_with_helper(heartbeat), tmp_path, 1)
+        _ = run_tool(make_tool_with_helper(heartbeat), tmp_path, 1)
 
         return [n]
 
@@ -329,10 +329,10 @@ def test_a_single_tool_failure_does_not_end_the_run_with_an_error(
 def test_tool_failures_carry_over_from_one_run_to_the_next(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Test that a tool failing in run after run is reported, even though it only fails once in each."""
     for _ in range(MAX_CONSECUTIVE_TOOL_FAILURES - 1):
-        run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [make_number(15)])
+        _ = run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [make_number(15)])
 
     with pytest.raises(YafuError, match="has failed 3 times in a row"):
-        run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [make_number(15)])
+        _ = run_yafu_mode_with_15_failing(tmp_path, monkeypatch, [make_number(15)])
 
 
 def test_a_number_set_aside_is_skipped_by_the_later_stages(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -371,7 +371,7 @@ def test_worker_thread_failure_ends_the_run(monkeypatch: pytest.MonkeyPatch, err
     monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
 
     with pytest.raises(type(error)) as raised:
-        engine.run([make_number(n) for n in COMPOSITES])
+        _ = engine.run([make_number(n) for n in COMPOSITES])
 
     assert raised.value is error
     assert attempted == [COMPOSITES[0]]
@@ -385,7 +385,7 @@ def test_worker_thread_failure_keeps_results_already_in_progress(monkeypatch: py
     failure_raised = threading.Event()
 
     def factor_yafu(n: int, *_args: object) -> list[int]:
-        both_started.wait()
+        _ = both_started.wait()
 
         if n == failing.n:
             failure_raised.set()
@@ -393,7 +393,7 @@ def test_worker_thread_failure_keeps_results_already_in_progress(monkeypatch: py
             raise YafuError(message)
 
         # Outlast the failure, so this result arrives while the stage is already ending.
-        failure_raised.wait(TOOL_STOP_TIMEOUT)
+        _ = failure_raised.wait(TOOL_STOP_TIMEOUT)
         time.sleep(0.1)
         return [2, 3, 17]
 
@@ -401,7 +401,7 @@ def test_worker_thread_failure_keeps_results_already_in_progress(monkeypatch: py
     monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
 
     with pytest.raises(YafuError):
-        engine.run([failing, succeeding])
+        _ = engine.run([failing, succeeding])
 
     assert not failing.factored
     assert sorted(succeeding.prime_factors) == [2, 3, 17]
@@ -424,7 +424,7 @@ def test_an_abort_kills_a_worker_outlasting_a_failed_one(monkeypatch: pytest.Mon
             raise YafuError(message)
 
         try:
-            run_tool(make_tool_with_helper(heartbeat), tmp_path, 1)
+            _ = run_tool(make_tool_with_helper(heartbeat), tmp_path, 1)
         finally:
             finished.set()
 
@@ -439,7 +439,7 @@ def test_an_abort_kills_a_worker_outlasting_a_failed_one(monkeypatch: pytest.Mon
 
         # Whichever arrived first, the failure is what the run reports.
         with pytest.raises(YafuError):
-            engine.run([failing, outlasting])
+            _ = engine.run([failing, outlasting])
 
         for thread in threads:
             thread.join()
@@ -609,7 +609,9 @@ def slow_tool_engine(
 
     def factor(n: int, *_args: object) -> list[int]:
         if n not in finished:
-            run_tool(make_tool_with_helper(tmp_path / f"heartbeat-{n}"), tmp_path, 1, description=f"the tool on {n}")
+            _ = run_tool(
+                make_tool_with_helper(tmp_path / f"heartbeat-{n}"), tmp_path, 1, description=f"the tool on {n}"
+            )
 
         return [2, n // 2]
 

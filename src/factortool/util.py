@@ -140,7 +140,7 @@ def setup_logger(level: LogLevel | None = None) -> None:
         "<level>{level: <8}</level> | <level>{message}</level>"
     )
 
-    logger.configure(handlers=[{"sink": sys.stderr, "format": logger_format, "level": level or DEFAULT_LOG_LEVEL}])
+    _ = logger.configure(handlers=[{"sink": sys.stderr, "format": logger_format, "level": level or DEFAULT_LOG_LEVEL}])
 
 
 # Options in yafu.ini that represent file or directory paths.
@@ -183,7 +183,7 @@ def _place_yafu_ini(ini_path: Path, work_dir: Path) -> None:
         return
 
     try:
-        (work_dir / "yafu.ini").write_text(rewrite_yafu_ini(ini_text, ini_path.parent), encoding="utf-8")
+        _ = (work_dir / "yafu.ini").write_text(rewrite_yafu_ini(ini_text, ini_path.parent), encoding="utf-8")
     except OSError as e:
         logger.warning("Failed to write yafu.ini in {}: {}. YAFU will use its built-in defaults", work_dir, e)
 
@@ -246,10 +246,10 @@ def safe_write(path: Path, data: bytes) -> None:
     The temporary file is removed if the write or the rename fails.
     """
     with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent, suffix=".tmp", delete_on_close=False) as f:
-        f.write(data)
+        _ = f.write(data)
         f.flush()
         os.fsync(f.fileno())
 
         # Windows can't rename a file that is still open.
         f.close()
-        Path(f.name).replace(path)
+        _ = Path(f.name).replace(path)

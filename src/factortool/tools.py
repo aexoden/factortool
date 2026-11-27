@@ -241,7 +241,7 @@ def _kill_tool(process: subprocess.Popen[str], job: int | None) -> None:
         if job is not None:
             _kernel32.TerminateJobObject(job, 1)
         else:
-            subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+            _ = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
                 ["taskkill", "/F", "/T", "/PID", str(process.pid)],  # ruff: ignore[start-process-with-partial-path]
                 capture_output=True,
                 check=False,
@@ -328,8 +328,8 @@ def _tool_environment(threads: int) -> dict[str, str]:
         venv_bin = os.path.realpath(Path(sys.prefix) / ("Scripts" if sys.platform == "win32" else "bin"))
         path = env.get("PATH", "").split(os.pathsep)
         env["PATH"] = os.pathsep.join(entry for entry in path if not entry or os.path.realpath(entry) != venv_bin)
-        env.pop("VIRTUAL_ENV", None)
-        env.pop("VIRTUAL_ENV_PROMPT", None)
+        _ = env.pop("VIRTUAL_ENV", None)
+        _ = env.pop("VIRTUAL_ENV_PROMPT", None)
 
     return env
 
@@ -399,7 +399,7 @@ def run_tool(
             raise
         finally:
             with _tools_lock:
-                _running_tools.pop(process, None)
+                _ = _running_tools.pop(process, None)
                 abandoned = process in _abandoned_tools
                 _abandoned_tools.discard(process)
 

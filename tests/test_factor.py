@@ -105,7 +105,7 @@ def test_a_number_ignores_saved_factors_that_are_not_a_factorization(factors: li
 def test_a_number_below_two_is_rejected(n: int) -> None:
     """Test that a number with no prime factorization is refused rather than treated as a composite."""
     with pytest.raises(ValueError, match="cannot be factored"):
-        make_number(n)
+        _ = make_number(n)
 
 
 def test_a_number_split_into_composites_is_partially_factored() -> None:
@@ -187,7 +187,7 @@ def test_nfs_is_not_run_below_its_minimum(monkeypatch: pytest.MonkeyPatch, tmp_p
     }
 
     with pytest.raises(ValueError, match="needs at least"):
-        calls[tool]()
+        _ = calls[tool]()
 
     run_tool.assert_not_called()
 
@@ -292,13 +292,13 @@ def test_tools_are_given_the_threads_their_method_can_use(
     yafu = config.yafu_paths
 
     if tool == "ecm":
-        factor_ecm(C90, 2, config.final_methods, 4, yafu, stats)
+        _ = factor_ecm(C90, 2, config.final_methods, 4, yafu, stats)
     elif tool == "yafu_direct":
-        factor_yafu_direct(C90, 4, yafu, stats)
+        _ = factor_yafu_direct(C90, 4, yafu, stats)
     elif tool == "nfs_cado":
-        factor_nfs_cado(C90, 4, Path("cado-nfs.py"), tmp_path, stats)
+        _ = factor_nfs_cado(C90, 4, Path("cado-nfs.py"), tmp_path, stats)
     else:
-        factor_yafu(C90, tool, 4, yafu, stats)
+        _ = factor_yafu(C90, tool, 4, yafu, stats)
 
     cmd = run_tool.call_args.args[0]
     option = "-t" if tool == "nfs_cado" else "-threads"
@@ -353,7 +353,7 @@ def test_tool_exiting_with_an_error_fails_without_recording_statistics(
     monkeypatch.setattr("factortool.tools.run_tool", Mock(side_effect=failure), raising=True)
 
     with pytest.raises(ToolFailure, match=r"something broke$"):
-        failing_tools(tmp_path, stats)[tool][0]()
+        _ = failing_tools(tmp_path, stats)[tool][0]()
 
     assert recorded_runs(stats) == 1
 
@@ -365,7 +365,7 @@ def test_tool_that_cannot_be_started_fails(tmp_path: Path, tool: str) -> None:
     stats.update_final("siqs", 90, 1, 1.0)
 
     with pytest.raises(ToolFailure, match="missing"):
-        failing_tools(tmp_path, stats)[tool][0]()
+        _ = failing_tools(tmp_path, stats)[tool][0]()
 
     assert list(tmp_path.glob("*-*/")) == []
 
@@ -395,7 +395,7 @@ def test_tool_returning_an_unusable_result_fails_without_recording_statistics(
     monkeypatch.setattr("factortool.tools.run_tool", run_tool, raising=True)
 
     with pytest.raises(ToolFailure, match=problem):
-        failing_tools(tmp_path, stats)[tool][0]()
+        _ = failing_tools(tmp_path, stats)[tool][0]()
 
     assert recorded_runs(stats) == 1
 
@@ -409,10 +409,10 @@ def test_tool_failing_repeatedly_raises_its_tool_error(tmp_path: Path, tool: str
 
     for _ in range(MAX_CONSECUTIVE_TOOL_FAILURES - 1):
         with pytest.raises(ToolFailure):
-            call()
+            _ = call()
 
     with pytest.raises(error_type, match="broken installation"):
-        call()
+        _ = call()
 
 
 def test_tool_start_failure_names_the_tool_when_the_platform_does_not(
@@ -423,7 +423,7 @@ def test_tool_start_failure_names_the_tool_when_the_platform_does_not(
     monkeypatch.setattr("factortool.tools.subprocess.Popen", Mock(side_effect=failure), raising=True)
 
     with pytest.raises(FileNotFoundError, match="missing-tool"):
-        run_tool(["missing-tool"], tmp_path, 1)
+        _ = run_tool(["missing-tool"], tmp_path, 1)
 
 
 def test_a_tool_failure_sets_the_number_aside(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -165,13 +165,13 @@ def test_submit_refuses_an_inconsistent_factorization(mersenne_ca: MersenneCA, m
 def test_fetch_requires_max_digits(mersenne_ca: MersenneCA) -> None:
     """Test that fetching without specifying a maximum digit count raises a ValueError."""
     with pytest.raises(ValueError, match="maximum digit count"):
-        mersenne_ca.fetch(FetchCriteria(count=3, min_digits=50))
+        _ = mersenne_ca.fetch(FetchCriteria(count=3, min_digits=50))
 
 
 def test_fetch_rejects_skip_count(mersenne_ca: MersenneCA) -> None:
     """Test that specifying a skip count raises a ValueError."""
     with pytest.raises(ValueError, match="skip count"):
-        mersenne_ca.fetch(FetchCriteria(count=3, min_digits=50, max_digits=60, skip_count=5))
+        _ = mersenne_ca.fetch(FetchCriteria(count=3, min_digits=50, max_digits=60, skip_count=5))
 
 
 def test_fetch_maps_criteria(mersenne_ca: MersenneCA, monkeypatch: pytest.MonkeyPatch) -> None:

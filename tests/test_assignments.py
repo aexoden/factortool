@@ -35,7 +35,7 @@ def assigned(*composites: int, lifetime: float = LIFETIME) -> list[Assignment]:
 def write_state(state_path: Path, fields: dict[str, object], last_update: float | None = None) -> None:
     """Write a raw mersenne.ca assignment state file."""
     state = {"last_update": time.time() if last_update is None else last_update, "backend": "mersenne_ca", **fields}
-    state_path.write_text(json.dumps(state), encoding="utf-8")
+    _ = state_path.write_text(json.dumps(state), encoding="utf-8")
 
 
 def test_load_returns_nothing_without_a_state_file(tmp_path: Path) -> None:
@@ -109,7 +109,7 @@ def test_loading_tracks_the_assignments_it_resumes(tmp_path: Path) -> None:
     AssignmentStore(state_path, "mersenne_ca").record([resumed])
 
     store = AssignmentStore(state_path, "mersenne_ca")
-    store.load()
+    _ = store.load()
     store.record([fetched])
 
     assert read_state(state_path) == [resumed, fetched]
@@ -167,7 +167,7 @@ def test_load_ignores_state_from_a_different_backend(tmp_path: Path) -> None:
 def test_load_ignores_a_corrupt_state_file(tmp_path: Path) -> None:
     """Test that loading ignores a corrupt state file."""
     state_path = tmp_path / "assignments.json"
-    state_path.write_text("{not json", encoding="utf-8")
+    _ = state_path.write_text("{not json", encoding="utf-8")
 
     assert AssignmentStore(state_path, "mersenne_ca").load() == []
 
@@ -202,7 +202,7 @@ def test_load_removes_expired_assignments_from_the_state(tmp_path: Path) -> None
         {"assignments": [{"n": 101, "expires_at": now - LIFETIME}, {"n": 103, "expires_at": now + LIFETIME}]},
     )
 
-    AssignmentStore(state_path, "mersenne_ca").load()
+    _ = AssignmentStore(state_path, "mersenne_ca").load()
 
     assert [x.n for x in read_state(state_path)] == [103]
 

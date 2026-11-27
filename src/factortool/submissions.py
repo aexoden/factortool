@@ -115,11 +115,11 @@ class SubmissionJournal:
 
     def resolve(self, submissions: Iterable[Submission]) -> None:
         """Record that the given submissions are resolved."""
-        self._record(JournalRecord(backend=self._backend_name, resolved=x) for x in submissions)
+        _ = self._record(JournalRecord(backend=self._backend_name, resolved=x) for x in submissions)
 
     def note_rate_limit(self, rate_limited_until: float) -> None:
         """Record when a rate limit reported by the backend ends."""
-        self._record([JournalRecord(backend=self._backend_name, rate_limited_until=rate_limited_until)])
+        _ = self._record([JournalRecord(backend=self._backend_name, rate_limited_until=rate_limited_until)])
 
     def compact(self) -> None:
         """Rewrite the journal with only its pending submissions and any rate limit still in effect.
@@ -133,7 +133,7 @@ class SubmissionJournal:
     def _apply(self, record: JournalRecord) -> None:
         """Update the state for a single record."""
         if record.submission is not None:
-            self._pending.pop((record.backend, record.submission.n), None)
+            _ = self._pending.pop((record.backend, record.submission.n), None)
             self._pending[record.backend, record.submission.n] = record.submission
 
         if record.resolved is not None and self._pending.get((record.backend, record.resolved.n)) == record.resolved:

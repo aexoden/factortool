@@ -40,7 +40,7 @@ def test_a_locked_directory_is_refused_until_it_is_released(tmp_path: Path) -> N
     """Test that a directory can only be locked once at a time."""
     with lock_directories([tmp_path]):
         with pytest.raises(DirectoryInUseError) as raised:
-            lock_directories([tmp_path])
+            _ = lock_directories([tmp_path])
 
         assert raised.value.directory == tmp_path.resolve()
 
@@ -53,7 +53,7 @@ def test_a_directory_given_twice_is_locked_once(tmp_path: Path) -> None:
     (tmp_path / "work").mkdir()
 
     with lock_directories([tmp_path, tmp_path / "work" / ".."]), pytest.raises(DirectoryInUseError):
-        lock_directories([tmp_path])
+        _ = lock_directories([tmp_path])
 
 
 def test_a_refused_directory_releases_the_ones_already_locked(tmp_path: Path) -> None:
@@ -62,7 +62,7 @@ def test_a_refused_directory_releases_the_ones_already_locked(tmp_path: Path) ->
 
     with lock_directories([work]):
         with pytest.raises(DirectoryInUseError) as raised:
-            lock_directories([state, work])
+            _ = lock_directories([state, work])
 
         assert raised.value.directory == work.resolve()
 
@@ -80,7 +80,7 @@ def test_a_killed_instance_releases_its_lock(tmp_path: Path) -> None:
             assert holder.stdout.readline().strip() == "locked"
 
             with pytest.raises(DirectoryInUseError):
-                lock_directories([tmp_path])
+                _ = lock_directories([tmp_path])
         finally:
             holder.kill()
 

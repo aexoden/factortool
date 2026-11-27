@@ -72,7 +72,7 @@ class Cleanup:
     def run[**P](self, description: str, step: Callable[P, object], /, *args: P.args, **kwargs: P.kwargs) -> None:
         """Run a step, logging a failure instead of raising it."""
         try:
-            step(*args, **kwargs)
+            _ = step(*args, **kwargs)
         except OSError as e:
             logger.error("Failed to {}: {}", description, e)
             self.failed = True
@@ -204,7 +204,7 @@ def write_results(numbers: Collection[Number], output_path: Path) -> None:
 
         try:
             with output_path.joinpath(output_filename).open("x", encoding="utf-8") as f:
-                f.write(results)
+                _ = f.write(results)
         except FileExistsError:
             attempt += 1
         else:

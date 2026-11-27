@@ -44,10 +44,10 @@ def lock_directories(directories: Iterable[Path]) -> contextlib.ExitStack:
             lock = FileLock(directory / LOCK_FILE_NAME, blocking=False)
 
             try:
-                lock.acquire()
+                _ = lock.acquire()
             except Timeout as e:
                 raise DirectoryInUseError(directory) from e
 
-            stack.callback(lock.release)
+            _ = stack.callback(lock.release)
 
         return stack.pop_all()

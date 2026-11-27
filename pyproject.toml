@@ -61,7 +61,6 @@ reportUnknownArgumentType = false  # Temporarily off while adopting the norms st
 reportUnknownLambdaType = false  # Temporarily off while adopting the norms standards (see TODO.md).
 reportUnknownMemberType = false  # Temporarily off while adopting the norms standards (see TODO.md).
 reportUnknownVariableType = false  # Temporarily off while adopting the norms standards (see TODO.md).
-reportUnusedCallResult = false  # Temporarily off while adopting the norms standards (see TODO.md).
 
 [tool.hatch.version]
 source = "vcs"

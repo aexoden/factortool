@@ -27,7 +27,7 @@ ITEMS_PER_SECOND = 10.0
 def save_throughput(state_path: Path, key: object) -> None:
     """Save a recently measured throughput of ITEMS_PER_SECOND for the given key."""
     state = {"last_update": time.time(), "key": key, "items_per_second": ITEMS_PER_SECOND}
-    state_path.write_text(json.dumps(state), encoding="utf-8")
+    _ = state_path.write_text(json.dumps(state), encoding="utf-8")
 
 
 def test_the_measured_throughput_carries_over_for_the_same_selection(tmp_path: Path) -> None:

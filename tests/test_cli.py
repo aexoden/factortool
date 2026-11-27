@@ -58,7 +58,7 @@ FETCHED = [104, 106, 108]
 def write_config(tmp_path: Path, **overrides: object) -> None:
     """Write a configuration file whose tools are present, with any executable standing in for YAFU."""
     config = {"backend": "factordb", "max_threads": 1, "yafu_path": sys.executable, **overrides}
-    (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    _ = (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
 
 
 class FakeBackend:
@@ -301,7 +301,7 @@ def test_arguments_at_the_edge_of_their_range_are_accepted(arguments: list[str])
 def test_unparseable_arguments_exit_as_a_usage_error(arguments: list[str]) -> None:
     """Test that arguments the parser rejects exit with the same status as an invalid configuration."""
     with pytest.raises(SystemExit) as error:
-        Arguments().parse_args(arguments)
+        _ = Arguments().parse_args(arguments)
 
     assert error.value.code == ExitStatus.INVALID_INPUT
 
@@ -823,7 +823,7 @@ def test_an_unexpected_engine_failure_still_cleans_up(monkeypatch: pytest.Monkey
     close = Mock()
 
     with pytest.raises(RuntimeError, match="bug"):
-        run_main(monkeypatch, tmp_path, factoring(RuntimeError("bug")), close=close)
+        _ = run_main(monkeypatch, tmp_path, factoring(RuntimeError("bug")), close=close)
 
     assert (tmp_path / "state" / "stats.json").exists()
     assert len(list((tmp_path / "results").iterdir())) == 1
@@ -899,6 +899,6 @@ def test_a_backend_that_cannot_start_ends_the_run(
     monkeypatch.setattr("factortool.cli.main.create_backend", Mock(side_effect=error))
 
     with pytest.raises(SystemExit) as raised:
-        start_backend(config, FactoringStats(config.stats_path, read_only=True), InterruptState())
+        _ = start_backend(config, FactoringStats(config.stats_path, read_only=True), InterruptState())
 
     assert raised.value.code == exit_status

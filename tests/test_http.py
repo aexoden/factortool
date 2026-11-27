@@ -154,7 +154,7 @@ def test_every_failure_counts_toward_max_attempts(
     client, sleeps = make_client(monkeypatch, [failure() for _ in range(max_attempts + 1)])
 
     with pytest.raises(requests.RequestException, match=f"Giving up after {max_attempts} attempts"):
-        client.request("GET", "https://example.com/", max_attempts=max_attempts)
+        _ = client.request("GET", "https://example.com/", max_attempts=max_attempts)
 
     assert len(sleeps) == max_attempts - 1
 
@@ -183,7 +183,7 @@ def test_every_attempt_is_logged_with_its_duration(monkeypatch: pytest.MonkeyPat
     sink = logger.add(messages.append, format="{message}", filter=lambda record: record["level"].name == "DEBUG")
 
     try:
-        client.request("GET", "https://example.com/")
+        _ = client.request("GET", "https://example.com/")
     finally:
         logger.remove(sink)
 
@@ -203,7 +203,7 @@ def test_permanent_client_errors_are_not_retried(
     client, sleeps = make_client(monkeypatch, [make_response(status_code), make_response(200)])
 
     with pytest.raises(PermanentHttpError, match=f"Unexpected HTTP {status_code}.*Not retrying"):
-        client.request("GET", "https://example.com/", max_attempts=max_attempts)
+        _ = client.request("GET", "https://example.com/", max_attempts=max_attempts)
 
     assert sleeps == []
 
@@ -224,7 +224,7 @@ def test_service_specific_transient_status_codes_count_toward_max_attempts(monke
     client, _ = make_client(monkeypatch, [make_response(405)] * 3, transient_status_codes={405})
 
     with pytest.raises(requests.RequestException, match=r"Transient HTTP 405 from Test\. Giving up after 2 attempts"):
-        client.request("GET", "https://example.com/", max_attempts=2)
+        _ = client.request("GET", "https://example.com/", max_attempts=2)
 
 
 def test_unlimited_attempts_retry_until_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -244,7 +244,7 @@ def test_rate_limit_does_not_advance_backoff(monkeypatch: pytest.MonkeyPatch) ->
         [make_response(503), make_response(429, {"Retry-After": "7"}), make_response(503), make_response(200)],
     )
 
-    client.request("GET", "https://example.com/")
+    _ = client.request("GET", "https://example.com/")
 
     assert sleeps == [1.0, 7.0, 2.0]
 
@@ -291,14 +291,14 @@ def test_rate_limit_is_reported_and_holds_back_later_requests(monkeypatch: pytes
     )
 
     with pytest.raises(requests.RequestException, match="Giving up after 1 attempts"):
-        client.request("GET", "https://example.com/", max_attempts=1)
+        _ = client.request("GET", "https://example.com/", max_attempts=1)
 
     on_rate_limit.assert_called_once_with(START_TIME + 60.0)
     assert client.rate_limited_until == pytest.approx(START_TIME + 60.0)
     assert sleeps == []
 
     with pytest.raises(requests.RequestException, match="Giving up after 1 attempts"):
-        client.request("GET", "https://example.com/", max_attempts=1)
+        _ = client.request("GET", "https://example.com/", max_attempts=1)
 
     assert sleeps == [60.0]
 
@@ -323,7 +323,7 @@ def test_a_rate_limit_from_a_previous_run_holds_back_the_first_request(monkeypat
     """Tests that a client told of a rate limit already in effect waits for it before sending anything."""
     client, sleeps = make_client(monkeypatch, [make_response(200)], rate_limited_until=START_TIME + 45.0)
 
-    client.request("GET", "https://example.com/")
+    _ = client.request("GET", "https://example.com/")
 
     assert sleeps == [45.0]
 
@@ -334,14 +334,14 @@ def test_an_abandoned_wait_abandons_the_request(monkeypatch: pytest.MonkeyPatch)
     client, sleeps = make_client(monkeypatch, [make_response(503)] * 2, rate_limited_until=START_TIME + 45.0)
 
     with pytest.raises(Interrupted):
-        client.request("GET", "https://example.com/", max_attempts=None, wait=wait)
+        _ = client.request("GET", "https://example.com/", max_attempts=None, wait=wait)
 
     wait.assert_called_once_with(45.0)
 
     client, _ = make_client(monkeypatch, [make_response(503)] * 2)
 
     with pytest.raises(Interrupted):
-        client.request("GET", "https://example.com/", max_attempts=None, wait=wait)
+        _ = client.request("GET", "https://example.com/", max_attempts=None, wait=wait)
 
     wait.assert_called_with(1.0)
     assert sleeps == []
@@ -443,8 +443,8 @@ def test_requests_are_spaced_by_the_request_interval(monkeypatch: pytest.MonkeyP
     """Tests that consecutive requests wait out the request interval, but a retry's backoff already counts toward it."""
     client, sleeps = make_client(monkeypatch, [make_response(200), make_response(503), make_response(200)])
 
-    client.request("GET", "https://example.com/")
-    client.request("GET", "https://example.com/")
+    _ = client.request("GET", "https://example.com/")
+    _ = client.request("GET", "https://example.com/")
 
     assert sleeps == [1.0, 1.0]
 
@@ -453,9 +453,9 @@ def test_await_ready_does_not_claim_the_next_request(monkeypatch: pytest.MonkeyP
     """Tests that waiting until a request could be sent leaves the turn for the request itself."""
     client, sleeps = make_client(monkeypatch, [make_response(200), make_response(200)])
 
-    client.request("GET", "https://example.com/")
+    _ = client.request("GET", "https://example.com/")
     client.await_ready()
-    client.request("GET", "https://example.com/")
+    _ = client.request("GET", "https://example.com/")
 
     assert sleeps == [1.0]
 
@@ -474,7 +474,7 @@ def test_a_rate_limit_received_while_awaiting_a_turn_is_honored(monkeypatch: pyt
 
     def other_thread_request() -> None:
         with pytest.raises(requests.RequestException, match="Giving up after 1 attempts"):
-            client.request("GET", "https://example.com/", max_attempts=1)
+            _ = client.request("GET", "https://example.com/", max_attempts=1)
 
     def wait(delay: float) -> bool:
         if len(sent_at) == 1:
@@ -486,9 +486,9 @@ def test_a_rate_limit_received_while_awaiting_a_turn_is_honored(monkeypatch: pyt
         return False
 
     monkeypatch.setattr(client.session, "request", recording_send)
-    client.request("GET", "https://example.com/")
+    _ = client.request("GET", "https://example.com/")
     rate_limited_at = START_TIME + sum(sleeps)
-    client.request("GET", "https://example.com/", wait=wait)
+    _ = client.request("GET", "https://example.com/", wait=wait)
 
     assert len(sent_at) == 3  # ruff: ignore[magic-value-comparison]
     assert sent_at[2] >= client.rate_limited_until

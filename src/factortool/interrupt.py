@@ -101,15 +101,17 @@ class InterruptState:
         receiver = threading.Thread(target=self._receive_all, args=(reader,), name="Signal-Receiver", daemon=True)
         responder = threading.Thread(target=self._respond, name="Signal-Responder", daemon=True)
 
-        self._installed.callback(reader.close)
-        self._installed.callback(responder.join)
-        self._installed.callback(receiver.join)
-        self._installed.callback(writer.close)
-        self._installed.callback(signal.set_wakeup_fd, signal.set_wakeup_fd(writer.fileno(), warn_on_full_buffer=False))
+        _ = self._installed.callback(reader.close)
+        _ = self._installed.callback(responder.join)
+        _ = self._installed.callback(receiver.join)
+        _ = self._installed.callback(writer.close)
+        _ = self._installed.callback(
+            signal.set_wakeup_fd, signal.set_wakeup_fd(writer.fileno(), warn_on_full_buffer=False)
+        )
 
         for signum in self._handled:
             # Python only reports a signal that has a handler.
-            self._installed.callback(signal.signal, signum, signal.signal(signum, self._ignore))
+            _ = self._installed.callback(signal.signal, signum, signal.signal(signum, self._ignore))
 
         receiver.start()
         responder.start()
@@ -152,7 +154,7 @@ class InterruptState:
             if until is None:
                 time.sleep(min(remaining, POLL_INTERVAL))
             else:
-                until.wait(min(remaining, POLL_INTERVAL))
+                _ = until.wait(min(remaining, POLL_INTERVAL))
 
         return True
 
@@ -193,7 +195,7 @@ class InterruptState:
 
         # The responder thread itself may be stuck.
         self._announcements.put(announce)
-        announced.wait(EXIT_GRACE)
+        _ = announced.wait(EXIT_GRACE)
 
         os._exit(ExitStatus.INTERRUPTED)
 

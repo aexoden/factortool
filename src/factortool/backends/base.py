@@ -527,7 +527,7 @@ class BaseBackend(ABC):
                 if journaled:
                     # The journal now keeps each result, so the assignment no longer needs to be retained.
                     for submission in submissions:
-                        self._assigned.pop(submission.n, None)
+                        _ = self._assigned.pop(submission.n, None)
 
                     self._assignments.release(x.n for x in submissions)
                 else:
@@ -604,7 +604,7 @@ class BaseBackend(ABC):
             self._unjournaled -= released
 
             for n in released:
-                self._assigned.pop(n, None)
+                _ = self._assigned.pop(n, None)
 
             self._assignments.release(released)
 
@@ -754,7 +754,7 @@ class BaseBackend(ABC):
                 deadline = min(deadline, now + allowance)
                 remaining = deadline - now
 
-            self._give_up.wait(min(remaining, POLL_INTERVAL))
+            _ = self._give_up.wait(min(remaining, POLL_INTERVAL))
 
         return True
 

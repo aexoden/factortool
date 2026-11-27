@@ -185,7 +185,7 @@ def test_a_success_in_a_later_run_ends_a_saved_run_of_failures(tmp_path: Path) -
 def test_unreadable_tool_state_is_ignored(tmp_path: Path, content: bytes) -> None:
     """Test that a damaged state file costs the saved failures rather than the run."""
     state_path = tmp_path / "tool_state.json"
-    state_path.write_bytes(content)
+    _ = state_path.write_bytes(content)
     failures = ToolFailures()
     fail(failures, "ECM")
     fail(failures, "ECM")
@@ -211,7 +211,7 @@ def test_a_tool_still_running_at_its_deadline_is_killed_with_its_helpers(tmp_pat
     start = time.monotonic()
 
     with tool_deadline(start + 1.0), pytest.raises(ToolDeadlineExceeded, match="the tool"):
-        run_tool(make_tool_with_helper(heartbeat), tmp_path, 1, description="the tool")
+        _ = run_tool(make_tool_with_helper(heartbeat), tmp_path, 1, description="the tool")
 
     assert time.monotonic() - start < TOOL_STOP_TIMEOUT
     assert heartbeat_stopped(heartbeat)

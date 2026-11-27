@@ -39,7 +39,7 @@ def run_analyzer(
 
     config = {"backend": "factordb", "max_threads": 1, "state_path": str(tmp_path), "yafu_path": "yafu"}
     config_path = tmp_path / "config.json"
-    config_path.write_text(json.dumps(config), encoding="utf-8")
+    _ = config_path.write_text(json.dumps(config), encoding="utf-8")
 
     monkeypatch.setattr(
         sys, "argv", ["analyzer", "--config_path", str(config_path), "--digits", str(DIGITS), *arguments]
@@ -88,7 +88,7 @@ def test_the_log_level_option_overrides_the_configuration(
         "yafu_path": "yafu",
     }
     config_path = tmp_path / "config.json"
-    config_path.write_text(json.dumps(config), encoding="utf-8")
+    _ = config_path.write_text(json.dumps(config), encoding="utf-8")
     setup_logger = Mock()
     monkeypatch.setattr(sys, "argv", ["analyzer", "--config_path", str(config_path), "--digits", str(DIGITS), *argv])
     monkeypatch.setattr("factortool.analyzer.main.setup_logger", setup_logger, raising=True)
@@ -171,7 +171,7 @@ def test_an_unusable_thread_count_is_rejected(
     """Test that a thread count the configuration rejects is refused before the statistics are opened."""
     config = {"backend": "factordb", "max_threads": 1, "state_path": str(tmp_path), "yafu_path": "yafu"}
     config_path = tmp_path / "config.json"
-    config_path.write_text(json.dumps(config), encoding="utf-8")
+    _ = config_path.write_text(json.dumps(config), encoding="utf-8")
     factoring_stats = Mock()
     monkeypatch.setattr(
         sys,

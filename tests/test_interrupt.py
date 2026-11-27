@@ -265,7 +265,7 @@ def test_uninstalling_releases_everything_install_set_up(monkeypatch: pytest.Mon
         return pair
 
     monkeypatch.setattr("factortool.interrupt.socket.socketpair", socketpair, raising=True)
-    signal.set_wakeup_fd(previous.fileno())
+    _ = signal.set_wakeup_fd(previous.fileno())
 
     try:
         with installed_interrupts() as interrupts:
@@ -274,7 +274,7 @@ def test_uninstalling_releases_everything_install_set_up(monkeypatch: pytest.Mon
 
         restored = signal.set_wakeup_fd(-1)
     finally:
-        signal.set_wakeup_fd(-1)
+        _ = signal.set_wakeup_fd(-1)
         expected = previous.fileno()
         previous.close()
         other.close()
@@ -338,7 +338,7 @@ def test_an_ignored_termination_signal_stays_ignored() -> None:
             signal.raise_signal(signal.SIGTERM)
             time.sleep(TINY_WAIT)
     finally:
-        signal.signal(signal.SIGTERM, previous)
+        _ = signal.signal(signal.SIGTERM, previous)
 
     assert handler == signal.SIG_IGN
     assert interrupts.level == 0

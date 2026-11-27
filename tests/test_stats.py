@@ -293,7 +293,7 @@ def test_reads_and_explicit_saves_are_safe_alongside_updates(tmp_path: Path) -> 
 
             # These combine several reads, and so take the lock more than once.
             assert stats.get_final_method(DIGITS, 1, ["siqs"]) == "siqs"
-            stats.get_ecm_cutoffs(DIGITS, 1, ["siqs"])
+            _ = stats.get_ecm_cutoffs(DIGITS, 1, ["siqs"])
 
     run_threads([partial(update, thread) for thread in range(THREADS)], background=[read, read, stats.save_data])
 

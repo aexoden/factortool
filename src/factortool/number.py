@@ -540,7 +540,7 @@ class Number:
 
         for n in list(self.composite_factors):
             try:
-                self._replace_composite(n, method, factor_func(n, *args))
+                _ = self._replace_composite(n, method, factor_func(n, *args))
             except FinalMethodNeeded as e:
                 logger.info("Immediately doing {} on {} for statistics", FINAL_METHOD_NAMES[e.method], format_number(n))
                 self._factor_final(n, e.method)

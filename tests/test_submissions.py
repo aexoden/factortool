@@ -49,7 +49,7 @@ def test_a_missing_journal_has_nothing_pending(path: Path) -> None:
 def test_unresolved_submissions_survive_without_compaction(path: Path) -> None:
     """Test that a run that ends without any cleanup still leaves its unresolved submissions to the next."""
     journal = SubmissionJournal(path, "factordb")
-    journal.add([FIFTEEN, PARTIAL, LARGE])
+    assert journal.add([FIFTEEN, PARTIAL, LARGE])
     journal.resolve([PARTIAL])
 
     assert journal.pending_count == 2  # ruff: ignore[magic-value-comparison]
@@ -59,10 +59,10 @@ def test_unresolved_submissions_survive_without_compaction(path: Path) -> None:
 def test_loading_compacts_the_journal(path: Path) -> None:
     """Test that loading rewrites the journal without its resolved submissions."""
     journal = SubmissionJournal(path, "factordb")
-    journal.add([FIFTEEN, PARTIAL])
+    assert journal.add([FIFTEEN, PARTIAL])
     journal.resolve([FIFTEEN])
 
-    SubmissionJournal(path, "factordb").load()
+    _ = SubmissionJournal(path, "factordb").load()
 
     assert len(path.read_text(encoding="utf-8").splitlines()) == 1
 
@@ -70,7 +70,7 @@ def test_loading_compacts_the_journal(path: Path) -> None:
 def test_a_journal_with_nothing_pending_is_removed(path: Path) -> None:
     """Test that compacting a journal whose submissions are all resolved removes the file."""
     journal = SubmissionJournal(path, "factordb")
-    journal.add([FIFTEEN])
+    assert journal.add([FIFTEEN])
     journal.resolve([FIFTEEN])
     journal.compact()
 
@@ -81,7 +81,7 @@ def test_a_later_submission_replaces_an_earlier_one(path: Path) -> None:
     """Test that queueing a composite again keeps only its latest factorization, at the back of the queue."""
     complete = Submission(n=15015, prime_factors=(3, 5, 7, 11, 13), composite_factors=(), expires_at=4.0)
     journal = SubmissionJournal(path, "factordb")
-    journal.add([PARTIAL, FIFTEEN, complete])
+    assert journal.add([PARTIAL, FIFTEEN, complete])
 
     assert SubmissionJournal(path, "factordb").load() == [FIFTEEN, complete]
 
@@ -90,8 +90,8 @@ def test_resolving_an_earlier_submission_keeps_a_later_one(path: Path) -> None:
     """Test that an older factorization being resolved does not discard a newer one for the same composite."""
     complete = Submission(n=15015, prime_factors=(3, 5, 7, 11, 13), composite_factors=(), expires_at=4.0)
     journal = SubmissionJournal(path, "factordb")
-    journal.add([PARTIAL])
-    journal.add([complete])
+    assert journal.add([PARTIAL])
+    assert journal.add([complete])
     journal.resolve([PARTIAL])
 
     assert journal.pending_count == 1
@@ -105,13 +105,13 @@ def test_resolving_an_earlier_submission_keeps_a_later_one(path: Path) -> None:
 
 def test_other_backends_submissions_are_kept_but_not_returned(path: Path) -> None:
     """Test that switching backends neither submits nor discards what the other backend left unsent."""
-    SubmissionJournal(path, "mersenne_ca").add([PARTIAL])
+    assert SubmissionJournal(path, "mersenne_ca").add([PARTIAL])
 
     journal = SubmissionJournal(path, "factordb")
     assert journal.load() == []
     assert journal.pending_count == 0
 
-    journal.add([FIFTEEN])
+    assert journal.add([FIFTEEN])
     journal.resolve([PARTIAL])
     journal.compact()
 
@@ -121,10 +121,10 @@ def test_other_backends_submissions_are_kept_but_not_returned(path: Path) -> Non
 
 def test_a_partially_written_line_is_ignored(path: Path) -> None:
     """Test that a run killed while writing costs only the line it was writing."""
-    SubmissionJournal(path, "factordb").add([FIFTEEN, PARTIAL])
+    assert SubmissionJournal(path, "factordb").add([FIFTEEN, PARTIAL])
 
     with path.open("a", encoding="utf-8") as f:
-        f.write('{"backend":"factordb","submission":{"n":21,"prime_f')
+        _ = f.write('{"backend":"factordb","submission":{"n":21,"prime_f')
 
     assert SubmissionJournal(path, "factordb").load() == [FIFTEEN, PARTIAL]
 
@@ -139,7 +139,7 @@ def test_a_rate_limit_is_kept_until_it_ends(path: Path) -> None:
     assert journal.rate_limited_until == rate_limited_until
 
     reloaded = SubmissionJournal(path, "factordb")
-    reloaded.load()
+    _ = reloaded.load()
 
     assert reloaded.rate_limited_until == rate_limited_until
     assert SubmissionJournal(path, "mersenne_ca").rate_limited_until == pytest.approx(0.0)
@@ -197,7 +197,7 @@ class PartiallyFailingFile:
         Raises:
             OSError: Always, as if the disk filled up partway through.
         """
-        self._f.write(next(iter(lines))[:10])
+        _ = self._f.write(next(iter(lines))[:10])
         self._f.flush()
 
         message = "disk full"
@@ -253,7 +253,7 @@ def test_a_partial_line_left_by_a_killed_run_is_repaired_by_the_next_write(
 ) -> None:
     """Test that a partially written line that loading could not compact away is never appended to."""
     line = FIFTEEN.model_dump_json()
-    path.write_text(f'{{"backend":"factordb","submission":{line}}}\n{{"backend":"fa', encoding="utf-8")
+    _ = path.write_text(f'{{"backend":"factordb","submission":{line}}}\n{{"backend":"fa', encoding="utf-8")
     journal = SubmissionJournal(path, "factordb")
     monkeypatch.setattr("factortool.submissions.safe_write", Mock(side_effect=OSError("disk full")))
 

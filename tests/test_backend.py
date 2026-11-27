@@ -275,7 +275,7 @@ def test_parse_composites_treats_empty_body_as_no_work() -> None:
 def test_parse_composites_rejects_non_numeric_content() -> None:
     """Test that non-numeric content raises a ValueError."""
     with pytest.raises(ValueError, match="invalid literal"):
-        parse_composites("<html>service unavailable</html>")
+        _ = parse_composites("<html>service unavailable</html>")
 
 
 def test_base_fetch_retries_failures_with_backoff(config: Config, wait: Mock) -> None:
@@ -492,7 +492,7 @@ def test_base_retries_failed_submissions_then_leaves_them_for_the_next_run(
 def test_base_resubmits_what_a_previous_run_left_unsent(config: Config, sleep: Mock) -> None:
     """Test that submissions left in the journal are sent when the next run starts, unless they have expired."""
     journal = SubmissionJournal(config.pending_submissions_path, config.backend)
-    journal.add([make_submission(3, 5), make_submission(3, 7, lifetime=-1.0), make_submission(5, 7)])
+    assert journal.add([make_submission(3, 5), make_submission(3, 7, lifetime=-1.0), make_submission(5, 7)])
 
     backend = make_fake_backend(config)
     backend.close()
@@ -539,7 +539,7 @@ def test_base_stops_submitting_once_a_request_is_refused(config: Config, sleep: 
 
 def test_base_refuses_to_fetch_once_a_submission_request_is_refused(config: Config, sleep: Mock) -> None:
     """Test that no work is fetched once the service has refused to accept the results of earlier work."""
-    SubmissionJournal(config.pending_submissions_path, config.backend).add([make_submission(3, 5)])
+    assert SubmissionJournal(config.pending_submissions_path, config.backend).add([make_submission(3, 5)])
 
     backend = RefusingBackend(config, FactoringStats(config.stats_path, read_only=True), ["21\n"])
     backend._submit_thread.join(timeout=5.0)
@@ -547,7 +547,7 @@ def test_base_refuses_to_fetch_once_a_submission_request_is_refused(config: Conf
 
     try:
         with pytest.raises(PermanentHttpError, match="refused a submission request"):
-            backend.fetch(FetchCriteria(count=1, min_digits=1))
+            _ = backend.fetch(FetchCriteria(count=1, min_digits=1))
     finally:
         backend.close()
 
@@ -578,7 +578,7 @@ def test_base_fetch_stops_retrying_once_a_submission_request_is_refused(
 
     try:
         with pytest.raises(PermanentHttpError, match="refused a submission request"):
-            backend.fetch(FetchCriteria(count=1, min_digits=1))
+            _ = backend.fetch(FetchCriteria(count=1, min_digits=1))
     finally:
         backend.close()
 
@@ -606,7 +606,7 @@ def test_base_keeps_the_assignments_fetched_as_a_submission_request_is_refused(c
 
     try:
         with pytest.raises(PermanentHttpError, match="refused a submission request"):
-            backend.fetch(FetchCriteria(count=1, min_digits=1))
+            _ = backend.fetch(FetchCriteria(count=1, min_digits=1))
     finally:
         backend.close()
 
@@ -1069,7 +1069,7 @@ def test_base_keeps_a_newer_result_when_an_older_one_is_resolved(config: Config,
         @override
         def _submit_number(self, submission: Submission) -> SubmitOutcome:
             started.set()
-            release.wait(timeout=5.0)
+            _ = release.wait(timeout=5.0)
 
             # Only the carried-over result gets an answer before the run ends.
             if len(self.submitted) > 0:
@@ -1078,7 +1078,9 @@ def test_base_keeps_a_newer_result_when_an_older_one_is_resolved(config: Config,
             return super()._submit_number(submission)
 
     journal = SubmissionJournal(config.pending_submissions_path, config.backend)
-    journal.add([Submission(n=15015, prime_factors=(3, 5), composite_factors=(1001,), expires_at=time.time() + 600.0)])
+    assert journal.add(
+        [Submission(n=15015, prime_factors=(3, 5), composite_factors=(1001,), expires_at=time.time() + 600.0)]
+    )
 
     backend = SlowBackend(config, FactoringStats(config.stats_path, read_only=True), ())
     assert started.wait(timeout=5.0)
@@ -1119,7 +1121,7 @@ def test_base_worker_submits_a_backlog_in_batches(config: Config, sleep: Mock, m
         @override
         def _submit_numbers(self, submissions: Sequence[Submission]) -> list[SubmitOutcome]:
             started.set()
-            release.wait(timeout=5.0)
+            _ = release.wait(timeout=5.0)
             batches.append([submission.n for submission in submissions])
             return [SubmitOutcome.ACCEPTED] * len(submissions)
 
@@ -1278,14 +1280,14 @@ def test_parse_rpc_responses_orders_results_by_id() -> None:
 def test_parse_rpc_responses_rejects_malformed_responses(body: object) -> None:
     """Test that malformed batch responses raise a ValueError."""
     with pytest.raises(ValueError):  # ruff: ignore[pytest-raises-too-broad] (Pydantic and our own messages differ)
-        parse_rpc_responses(body, 1)
+        _ = parse_rpc_responses(body, 1)
 
 
 @pytest.mark.parametrize("code", [-32700, -32600, -32601, -32602])
 def test_parse_rpc_responses_treats_invalid_requests_as_permanent(code: int) -> None:
     """Test that errors indicating an invalid request are not retried."""
     with pytest.raises(PermanentHttpError, match="unsupported"):
-        parse_rpc_responses(rpc_error(code, "unsupported").json(), 1)
+        _ = parse_rpc_responses(rpc_error(code, "unsupported").json(), 1)
 
 
 @pytest.mark.parametrize("batch", [False, True], ids=["single", "batch"])
@@ -1294,13 +1296,13 @@ def test_parse_rpc_responses_raises_errors_without_an_id(*, batch: bool) -> None
     response: dict[str, object] = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}
 
     with pytest.raises(PermanentHttpError, match="Parse error"):
-        parse_rpc_responses([response] if batch else response, 2)
+        _ = parse_rpc_responses([response] if batch else response, 2)
 
 
 def test_parse_rpc_responses_raises_other_errors() -> None:
     """Test that other errors are raised as ordinary request exceptions."""
     with pytest.raises(RpcError, match="Division by zero") as exc_info:
-        parse_rpc_responses(rpc_error(-32000, "eval: Division by zero").json(), 1)
+        _ = parse_rpc_responses(rpc_error(-32000, "eval: Division by zero").json(), 1)
 
     assert not isinstance(exc_info.value, PermanentHttpError)
 
@@ -1325,7 +1327,7 @@ def test_factordb_rejects_unrecognized_api_token(config: Config, http_request: M
     http_request.return_value = rpc_response({"found": False})
 
     with pytest.raises(PermanentHttpError, match="does not recognize"):
-        FactorDB(config.model_copy(update={"factordb_api_token": "bogus"}), FactoringStats(config.stats_path))
+        _ = FactorDB(config.model_copy(update={"factordb_api_token": "bogus"}), FactoringStats(config.stats_path))
 
 
 @pytest.mark.parametrize(
@@ -1358,7 +1360,7 @@ def test_factordb_stops_verifying_the_token_on_an_interrupt(config: Config, http
     http_request.side_effect = [requests.RequestException("unreachable")]
 
     with pytest.raises(Interrupted):
-        FactorDB(config.model_copy(update={"factordb_api_token": "secret"}), FactoringStats(config.stats_path))
+        _ = FactorDB(config.model_copy(update={"factordb_api_token": "secret"}), FactoringStats(config.stats_path))
 
     http_request.assert_called_once()
 
@@ -1397,7 +1399,7 @@ def test_fetch_criteria_rejects_invalid_constraints(
 ) -> None:
     """Test invalid constraints are rejected at construction."""
     with pytest.raises(ValueError, match=message):
-        FetchCriteria(count=count, min_digits=min_digits, max_digits=max_digits, skip_count=skip_count)
+        _ = FetchCriteria(count=count, min_digits=min_digits, max_digits=max_digits, skip_count=skip_count)
 
 
 def test_fetch_criteria_accepts_boundary_values() -> None:
@@ -1416,7 +1418,7 @@ def test_base_fetch_does_not_retry_permanent_errors(config: Config, sleep: Mock,
 
     try:
         with pytest.raises(PermanentHttpError):
-            backend.fetch(FetchCriteria(count=3, min_digits=2))
+            _ = backend.fetch(FetchCriteria(count=3, min_digits=2))
     finally:
         backend.close()
 
@@ -1428,7 +1430,7 @@ def test_factordb_stops_if_token_verification_is_invalid(config: Config, http_re
     http_request.return_value = rpc_error(-32602, "invalid params")
 
     with pytest.raises(PermanentHttpError, match="invalid params"):
-        FactorDB(config.model_copy(update={"factordb_api_token": "secret"}), FactoringStats(config.stats_path))
+        _ = FactorDB(config.model_copy(update={"factordb_api_token": "secret"}), FactoringStats(config.stats_path))
 
 
 class RecordingBatchesBackend(FakeBackend):
@@ -1525,7 +1527,7 @@ def test_base_close_sends_a_held_batch_at_once(config: Config) -> None:
 
 def test_base_sends_what_a_previous_run_left_unsent_without_holding_it(config: Config) -> None:
     """Test that results carried over from a previous run are sent at once, even as a partial batch."""
-    SubmissionJournal(config.pending_submissions_path, config.backend).add([make_submission(3, 5)])
+    assert SubmissionJournal(config.pending_submissions_path, config.backend).add([make_submission(3, 5)])
     backend = RecordingBatchesBackend(config)
 
     try:
@@ -1545,7 +1547,7 @@ def test_base_close_does_not_count_request_spacing_as_a_stall(config: Config, mo
     class SpacedBackend(FakeBackend):
         @override
         def _submit_number(self, submission: Submission) -> SubmitOutcome:
-            self._service_request("POST", "https://example.invalid/", timeout=1.0, wait=self._submission_wait)
+            _ = self._service_request("POST", "https://example.invalid/", timeout=1.0, wait=self._submission_wait)
             return super()._submit_number(submission)
 
     backend = SpacedBackend(config, FactoringStats(config.stats_path, read_only=True), ())
@@ -1705,7 +1707,7 @@ def test_resumed_work_with_inconsistent_factors_is_recorded_as_rebuilt(config: C
     backend = make_assigning_backend(config)
 
     try:
-        backend.resume()
+        _ = backend.resume()
 
         assert [x.factors for x in retained(config)] == [(15015,)]
     finally:
@@ -1716,7 +1718,7 @@ def test_work_whose_result_is_awaiting_resubmission_is_not_resumed(config: Confi
     """Test that a run killed between journaling a result and releasing its assignment doesn't factor it again."""
     expires_at = time.time() + 1800.0
     retain(config, Assignment(n=15, expires_at=expires_at), Assignment(n=21, expires_at=expires_at))
-    SubmissionJournal(config.pending_submissions_path, config.backend).add([make_submission(3, 5)])
+    assert SubmissionJournal(config.pending_submissions_path, config.backend).add([make_submission(3, 5)])
     backend = make_assigning_backend(config)
 
     try:

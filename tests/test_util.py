@@ -136,7 +136,7 @@ def test_work_dir_is_isolated_and_removed(tmp_path: Path) -> None:
         assert work_dir.is_dir()
         assert work_dir.parent == base
         assert (work_dir / WORK_DIR_MARKER).is_file()
-        (work_dir / "siqs.dat").write_text("scratch", encoding="utf-8")
+        _ = (work_dir / "siqs.dat").write_text("scratch", encoding="utf-8")
 
     assert not work_dir.exists()
     assert list(base.iterdir()) == []
@@ -153,7 +153,7 @@ def test_work_dir_nests_concurrent_invocations_separately(tmp_path: Path) -> Non
 def test_work_dir_places_ini(tmp_path: Path) -> None:
     """Tests that yafu.ini is made available inside the directory."""
     ini = tmp_path / "yafu.ini"
-    ini.write_text("ggnfs_dir=/opt/ggnfs/\n", encoding="utf-8")
+    _ = ini.write_text("ggnfs_dir=/opt/ggnfs/\n", encoding="utf-8")
 
     with get_work_dir(tmp_path / "work", ini, "yafu-") as work_dir:
         assert (work_dir / "yafu.ini").read_text(encoding="utf-8") == "ggnfs_dir=/opt/ggnfs/\n"
@@ -176,14 +176,14 @@ def test_stale_work_dirs_are_removed_and_everything_else_is_kept(tmp_path: Path)
     make_marked_dir(outside)
     make_marked_dir(base / "yafu-abc")
     (base / "yafu-abc" / "nested").mkdir()
-    (base / "yafu-abc" / "nested" / "siqs.dat").write_text("scratch", encoding="utf-8")
+    _ = (base / "yafu-abc" / "nested" / "siqs.dat").write_text("scratch", encoding="utf-8")
     make_marked_dir(base / "cado-nfs-def")
-    (base / "cado-nfs-def" / "c60.db").write_text("scratch", encoding="utf-8")
+    _ = (base / "cado-nfs-def" / "c60.db").write_text("scratch", encoding="utf-8")
     (base / "cado-nfs-2.3.0").mkdir()
-    (base / "cado-nfs-2.3.0" / "cado-nfs.py").write_text("kept", encoding="utf-8")
+    _ = (base / "cado-nfs-2.3.0" / "cado-nfs.py").write_text("kept", encoding="utf-8")
     make_marked_dir(base / "other")
-    (base / "yafu-file").write_text("kept", encoding="utf-8")
-    (base / "factortool.lock").write_text("", encoding="utf-8")
+    _ = (base / "yafu-file").write_text("kept", encoding="utf-8")
+    _ = (base / "factortool.lock").write_text("", encoding="utf-8")
     kept = ["cado-nfs-2.3.0", "factortool.lock", "other", "yafu-file"]
 
     # Creating a symbolic link may need extra privileges on Windows.
@@ -296,7 +296,7 @@ def test_stale_work_dirs_tolerate_a_missing_base(tmp_path: Path) -> None:
 def test_safe_write_replaces_the_file(tmp_path: Path) -> None:
     """Tests that a safe write replaces any existing file, leaving nothing else behind."""
     path = tmp_path / "state.json"
-    path.write_bytes(b"old")
+    _ = path.write_bytes(b"old")
 
     safe_write(path, b"new")
 
@@ -310,7 +310,7 @@ def test_a_failed_safe_write_leaves_the_file_alone_and_removes_the_temporary_fil
 ) -> None:
     """Tests that a safe write that fails while writing or renaming leaves the original file and nothing else."""
     path = tmp_path / "state.json"
-    path.write_bytes(b"old")
+    _ = path.write_bytes(b"old")
 
     target = "factortool.util.os.fsync" if failing == "fsync" else "factortool.util.Path.replace"
     monkeypatch.setattr(target, Mock(side_effect=OSError("disk full")))
@@ -363,7 +363,7 @@ def restored_logger() -> Iterator[None]:
     logger.remove()
 
     if sys.__stderr__ is not None:
-        logger.add(sys.__stderr__)
+        _ = logger.add(sys.__stderr__)
 
 
 @pytest.mark.usefixtures("restored_logger")
@@ -405,7 +405,7 @@ def test_config_arguments_accept_a_log_level_in_any_case(argument: list[str], ex
 def test_config_arguments_reject_an_unknown_log_level(capsys: pytest.CaptureFixture[str]) -> None:
     """Test that an unknown log level is reported as invalid usage."""
     with pytest.raises(SystemExit) as raised:
-        ConfigArguments().parse_args(["--log_level", "verbose"])
+        _ = ConfigArguments().parse_args(["--log_level", "verbose"])
 
     assert raised.value.code == ExitStatus.INVALID_INPUT
     assert "invalid choice" in capsys.readouterr().err

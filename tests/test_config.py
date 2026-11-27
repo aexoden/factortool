@@ -42,7 +42,7 @@ def write_config(tmp_path: Path, settings: Mapping[str, object]) -> Path:
         Path: The path of the configuration file.
     """
     path = tmp_path / "config.json"
-    path.write_text(json.dumps(settings), encoding="utf-8")
+    _ = path.write_text(json.dumps(settings), encoding="utf-8")
     return path
 
 
@@ -72,7 +72,7 @@ def read_invalid_config(path: Path) -> list[str]:
 
     try:
         with pytest.raises(SystemExit) as exc_info:
-            read_config(path)
+            _ = read_config(path)
     finally:
         logger.remove(sink)
 
@@ -87,7 +87,7 @@ def test_config_can_be_constructed_directly() -> None:
     assert config == make_config()
 
     with pytest.raises(ValidationError, match="gimps_login"):
-        Config(backend="mersenne_ca", max_threads=1, yafu_path=Path("yafu"))
+        _ = Config(backend="mersenne_ca", max_threads=1, yafu_path=Path("yafu"))
 
 
 def test_config_is_immutable() -> None:
@@ -104,7 +104,7 @@ def test_config_is_immutable() -> None:
 def test_mersenne_ca_requires_gimps_login() -> None:
     """Test that selecting the mersenne.ca backend without a GIMPS login is rejected."""
     with pytest.raises(ValidationError, match="gimps_login"):
-        make_config(backend="mersenne_ca")
+        _ = make_config(backend="mersenne_ca")
 
     assert make_config(backend="mersenne_ca", gimps_login="tester").gimps_login == "tester"
 
@@ -119,7 +119,7 @@ def test_read_config_rejects_mersenne_ca_without_gimps_login(tmp_path: Path) -> 
 def test_cado_nfs_requires_its_path() -> None:
     """Test that the path to CADO-NFS is only required when CADO-NFS is enabled."""
     with pytest.raises(ValidationError, match="use_nfs_cado requires cado_nfs_path"):
-        make_config(use_nfs_cado=True)
+        _ = make_config(use_nfs_cado=True)
 
     assert make_config().cado_nfs_path is None
     assert make_config(**CADO_NFS).cado_nfs_path == Path("cado-nfs.py")
@@ -140,7 +140,7 @@ def test_cado_nfs_requires_its_path() -> None:
 def test_out_of_range_settings_are_rejected(setting: str, value: float) -> None:
     """Test that a setting outside its usable range is rejected rather than failing once work has been fetched."""
     with pytest.raises(ValidationError) as exc_info:
-        make_config(**{setting: value})
+        _ = make_config(**{setting: value})
 
     assert [error["loc"] for error in exc_info.value.errors()] == [(setting,)]
 
@@ -254,7 +254,7 @@ def test_read_config_rejects_unrecognized_settings(tmp_path: Path) -> None:
 def test_config_rejects_unrecognized_settings() -> None:
     """Test that a configuration built directly rejects an unrecognized setting as well."""
     with pytest.raises(ValidationError, match="max_siqs_digit"):
-        make_config(max_siqs_digit=90)
+        _ = make_config(max_siqs_digit=90)
 
 
 def test_state_files_live_in_the_state_directory() -> None:
@@ -328,7 +328,7 @@ def test_user_agent_accepts_valid_overrides(user_agent: str) -> None:
 def test_user_agent_rejects_invalid_overrides(user_agent: str) -> None:
     """Reject unsafe overrides through configuration validation."""
     with pytest.raises(ValidationError, match="user_agent must contain printable ASCII only") as exc_info:
-        make_config(user_agent=user_agent)
+        _ = make_config(user_agent=user_agent)
 
     assert [error["loc"] for error in exc_info.value.errors()] == [("user_agent",)]
 
@@ -360,7 +360,7 @@ def test_log_level_is_case_insensitive(log_level: str, expected: str) -> None:
 def test_log_level_rejects_unknown_levels(log_level: object) -> None:
     """Test that a log level that is not one of loguru's standard levels is rejected."""
     with pytest.raises(ValidationError, match="log_level"):
-        make_config(log_level=log_level)
+        _ = make_config(log_level=log_level)
 
 
 def test_override_replaces_only_the_settings_given() -> None:
@@ -377,7 +377,7 @@ def test_override_replaces_only_the_settings_given() -> None:
 def test_override_validates_the_overrides() -> None:
     """Test that an override is held to the same validation as the configuration file."""
     with pytest.raises(ValidationError, match="max_threads"):
-        make_config().override(max_threads=0)
+        _ = make_config().override(max_threads=0)
 
 
 def load_invalid_config(path: Path, **overrides: object) -> list[str]:
@@ -391,7 +391,7 @@ def load_invalid_config(path: Path, **overrides: object) -> list[str]:
 
     try:
         with pytest.raises(SystemExit) as exc_info:
-            load_config(path, **overrides)
+            _ = load_config(path, **overrides)
     finally:
         logger.remove(sink)
 
@@ -426,7 +426,7 @@ def test_load_config_reports_a_file_that_cannot_be_read(tmp_path: Path) -> None:
 def test_load_config_reports_a_file_that_is_not_utf8(tmp_path: Path) -> None:
     """Test that a configuration file that isn't valid UTF-8 is a configuration error, rather than an internal error."""
     path = tmp_path / "config.json"
-    path.write_bytes(b"\xff\xfe{}")
+    _ = path.write_bytes(b"\xff\xfe{}")
 
     assert any("Invalid JSON" in message for message in load_invalid_config(path))
 
