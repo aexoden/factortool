@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, TypedDict, Unpack
 from unittest.mock import Mock
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Collection, Sequence
 
 import pytest
 import requests
@@ -98,6 +98,7 @@ class ClientOptions(TypedDict, total=False):
 
     rate_limited_until: float
     on_rate_limit: Callable[[float], None]
+    transient_status_codes: Collection[int]
 
 
 def make_client(
@@ -193,7 +194,7 @@ def test_every_attempt_is_logged_with_its_duration(monkeypatch: pytest.MonkeyPat
     ]
 
 
-@pytest.mark.parametrize("status_code", [400, 403, 404, 422])
+@pytest.mark.parametrize("status_code", [400, 403, 404, 405, 422])
 @pytest.mark.parametrize("max_attempts", [5, None], ids=["limited", "unlimited"])
 def test_permanent_client_errors_are_not_retried(
     monkeypatch: pytest.MonkeyPatch, status_code: int, max_attempts: int | None
@@ -205,6 +206,25 @@ def test_permanent_client_errors_are_not_retried(
         client.request("GET", "https://example.com/", max_attempts=max_attempts)
 
     assert sleeps == []
+
+
+def test_service_specific_transient_status_codes_are_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests that a status code the service reports as transient is retried with backoff, as a 503 would be."""
+    ok = make_response(200)
+    client, sleeps = make_client(
+        monkeypatch, [make_response(405), make_response(405), ok], transient_status_codes={405}
+    )
+
+    assert client.request("GET", "https://example.com/") is ok
+    assert sleeps == [1.0, 2.0]
+
+
+def test_service_specific_transient_status_codes_count_toward_max_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests that a status code the service reports as transient still gives up after max_attempts."""
+    client, _ = make_client(monkeypatch, [make_response(405)] * 3, transient_status_codes={405})
+
+    with pytest.raises(requests.RequestException, match=r"Transient HTTP 405 from Test\. Giving up after 2 attempts"):
+        client.request("GET", "https://example.com/", max_attempts=2)
 
 
 def test_unlimited_attempts_retry_until_success(monkeypatch: pytest.MonkeyPatch) -> None:

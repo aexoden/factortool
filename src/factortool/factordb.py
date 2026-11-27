@@ -222,6 +222,9 @@ class FactorDB(BaseBackend):
 
     submit_batch_size = SUBMIT_BATCH_SIZE
 
+    # FactorDB occasionally answers 405 Method Not Allowed to a request that succeeds when retried.
+    transient_status_codes: ClassVar[frozenset[int]] = frozenset({requests.codes.method_not_allowed})
+
     def __init__(self, config: Config, stats: FactoringStats, interrupts: InterruptState | None = None) -> None:
         """Initialize the FactorDB interface, verifying any configured API token.
 

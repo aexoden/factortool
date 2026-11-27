@@ -218,6 +218,9 @@ class BaseBackend(ABC):
     # sooner. A factorization never goes stale by itself, so this only bounds the attempts.
     submission_lifetime: ClassVar[float] = 30 * 86400.0
 
+    # HTTP status codes, beyond 502, 503 and 504, that the service returns for failures that retrying can fix.
+    transient_status_codes: ClassVar[frozenset[int]] = frozenset()
+
     def __init__(
         self,
         config: Config,
@@ -269,6 +272,7 @@ class BaseBackend(ABC):
             build_user_agent(identity, config.user_agent),
             self._journal.rate_limited_until,
             self._journal.note_rate_limit,
+            transient_status_codes=self.transient_status_codes,
         )
 
         # Set once the backend is closing, after which the worker stops when the queue is empty.

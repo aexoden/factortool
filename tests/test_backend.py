@@ -1368,6 +1368,18 @@ def test_factordb_without_token_is_anonymous(factordb: FactorDB, http_request: M
     assert not factordb._signed_in
 
 
+def test_factordb_retries_method_not_allowed(factordb: FactorDB, monkeypatch: pytest.MonkeyPatch, wait: Mock) -> None:
+    """Test that FactorDB's occasional 405 Method Not Allowed is retried as a transient failure."""
+    not_allowed = requests.Response()
+    not_allowed.status_code = requests.codes.method_not_allowed
+    ok = rpc_response({"rows": [row(15)], "has_more": False})
+    ok.status_code = requests.codes.ok
+    monkeypatch.setattr(factordb._http_client.session, "request", Mock(side_effect=[not_allowed, ok]))
+
+    assert [x.n for x in factordb.fetch(FetchCriteria(count=1, min_digits=2))] == [15]
+    assert wait.call_args_list == [call(1.0)]
+
+
 @pytest.mark.parametrize(
     ("count", "min_digits", "max_digits", "skip_count", "message"),
     [

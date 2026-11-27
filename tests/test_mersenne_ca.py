@@ -130,6 +130,18 @@ def test_submit_keeps_a_refused_request_for_the_next_run(
     assert mersenne_ca._submit_number(submission) is SubmitOutcome.DEFERRED
 
 
+def test_method_not_allowed_is_not_retried(mersenne_ca: MersenneCA, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a 405 Method Not Allowed is a permanent error, unlike FactorDB's transient one."""
+    submission = Submission(n=100, prime_factors=(2, 2, 5, 5), composite_factors=(), expires_at=0.0)
+    not_allowed = requests.Response()
+    not_allowed.status_code = requests.codes.method_not_allowed
+    request = Mock(side_effect=[not_allowed])
+    monkeypatch.setattr(mersenne_ca._http_client.session, "request", request)
+
+    assert mersenne_ca._submit_number(submission) is SubmitOutcome.DEFERRED
+    request.assert_called_once()
+
+
 def test_submit_refuses_a_partial_factorization(mersenne_ca: MersenneCA, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that a partial factorization, such as one left queued by an earlier version, is never sent."""
     submission = Submission(n=15015, prime_factors=(3, 5), composite_factors=(1001,), expires_at=0.0)

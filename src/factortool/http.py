@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Collection, Mapping
 
 import requests
 
@@ -142,16 +142,19 @@ class HttpClient:
     """HTTP client that retries transient failures with exponential backoff.
 
     Requests, including each retry, are spaced at least request_interval apart across all threads. Client errors (4xx)
-    other than 408 and 429 are treated as permanent and fail immediately regardless of max_attempts.
+    other than 408, 429 and those given as transient_status_codes are treated as permanent and fail immediately
+    regardless of max_attempts.
     """
 
-    def __init__(
+    def __init__(  # ruff: ignore[too-many-arguments] (Each option configures how a different service is contacted)
         self,
         service_name: str,
         request_interval: float,
         user_agent: str | None = None,
         rate_limited_until: float = 0.0,
         on_rate_limit: Callable[[float], None] | None = None,
+        *,
+        transient_status_codes: Collection[int] = (),
     ) -> None:
         """Initialize the HTTP client.
 
@@ -161,6 +164,8 @@ class HttpClient:
             user_agent (str | None): Custom User-Agent header value. If None, a default User-Agent will be used.
             rate_limited_until (float): When a rate limit already in effect ends, as a timestamp.
             on_rate_limit (Callable[[float], None] | None): Called with the timestamp at which each new rate limit ends.
+            transient_status_codes (Collection[int]): Status codes this service also returns for transient failures, to
+                be retried like 502, 503 and 504 rather than treated as permanent.
         """
         self._service_name = service_name
         self._request_interval = request_interval
@@ -169,6 +174,7 @@ class HttpClient:
         self._rate_limited_until = rate_limited_until
         self._rate_limit_lock = threading.Lock()
         self._on_rate_limit = on_rate_limit
+        self._transient_status_codes = TRANSIENT_STATUS_CODES | frozenset(transient_status_codes)
         self.session = requests.Session()
         self.session.headers["User-Agent"] = user_agent if user_agent is not None else build_user_agent()
 
@@ -305,7 +311,7 @@ class HttpClient:
                 if response.status_code == requests.codes.too_many_requests:
                     rate_limit_delay = self._note_rate_limit(response)
                     reason = f"Rate limited by {self._service_name} (429)"
-                elif response.status_code in TRANSIENT_STATUS_CODES:
+                elif response.status_code in self._transient_status_codes:
                     reason = f"Transient HTTP {response.status_code} from {self._service_name}"
                 else:
                     response.raise_for_status()
