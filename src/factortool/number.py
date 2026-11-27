@@ -9,10 +9,10 @@ import time
 
 from enum import Enum
 from functools import cache
-from typing import TYPE_CHECKING, cast, override
+from typing import TYPE_CHECKING, Protocol, cast, override
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Sequence
+    from collections.abc import Callable, Collection, Iterable, Sequence
     from pathlib import Path
 
 from loguru import logger
@@ -29,7 +29,6 @@ from factortool.tools import ToolFailure, run_cado_nfs, run_yafu
 from factortool.util import format_number, is_prime, log_factor_result, small_primes
 
 if TYPE_CHECKING:
-    from factortool.backends.base import Backend
     from factortool.config import Config, FinalMethods, YafuPaths
     from factortool.stats import ECMCutoffs, FactoringStats
     from factortool.submissions import Submission
@@ -59,6 +58,22 @@ class Outcome(Enum):
 
     # The run ended before any method was run on the number.
     NOT_STARTED = "not started"
+
+
+class ResultSink(Protocol):
+    """Where a number reports its progress and its finished factorization, as every backend does.
+
+    Declared here rather than taking the full Backend protocol, which would make this module and the backends import
+    each other.
+    """
+
+    def submit(self, numbers: Collection[Number]) -> None:
+        """Queue factored numbers for submission."""
+        ...
+
+    def checkpoint(self, number: Number) -> None:
+        """Record the progress made on a number, so a later run can resume it."""
+        ...
 
 
 class FinalMethodNeeded(Exception):  # ruff: ignore[error-suffix-on-exception-name]
@@ -254,10 +269,10 @@ class Number:
     _ecm_finished: bool
     _stats: FactoringStats
     _config: Config
-    _backend: Backend | None
+    _backend: ResultSink | None
 
     def __init__(
-        self, n: int, config: Config, stats: FactoringStats, backend: Backend | None, factors: Sequence[int] = ()
+        self, n: int, config: Config, stats: FactoringStats, backend: ResultSink | None, factors: Sequence[int] = ()
     ) -> None:
         """Initialize the number object, optionally resuming from factors found by a previous run.
 
