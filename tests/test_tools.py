@@ -14,6 +14,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from factortool import tools
 from factortool.constants import MAX_CONSECUTIVE_TOOL_FAILURES
 from factortool.tools import (
     CadoNfsError,
@@ -248,3 +249,20 @@ def test_a_long_running_tool_is_warned_about_until_it_finishes(monkeypatch: pyte
     assert result.stdout.strip() == "factors"
     assert len(warning.call_args_list) >= 2  # ruff: ignore[magic-value-comparison]
     assert warning.call_args.args[1] == "SIQS on 15"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Only Windows places tools in jobs")
+@pytest.mark.parametrize(("terminated", "taskkill_runs"), [(1, False), (0, True)])
+def test_a_tool_whose_job_cannot_be_ended_is_killed_by_its_process_tree(
+    monkeypatch: pytest.MonkeyPatch, *, terminated: int, taskkill_runs: bool
+) -> None:
+    """Test that taskkill kills a tool only when ending its job fails."""
+    terminate = Mock(return_value=terminated)
+    run = Mock()
+    monkeypatch.setattr("factortool.tools._kernel32.TerminateJobObject", terminate)
+    monkeypatch.setattr("factortool.tools.subprocess.run", run)
+
+    tools._kill_tool(Mock(spec=subprocess.Popen, pid=1234), job=42)
+
+    terminate.assert_called_once_with(42, 1)
+    assert run.called == taskkill_runs

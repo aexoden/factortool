@@ -199,6 +199,20 @@ if sys.platform == "win32":
 
         return None
 
+    def _terminate_job(job: int) -> bool:
+        """Kill every process in a job.
+
+        Returns:
+            bool: True if the job was ended, or False, having logged why, if it could not be.
+        """
+        if cast("int", _kernel32.TerminateJobObject(job, 1)):
+            return True
+
+        error = ctypes.WinError(ctypes.get_last_error())
+        logger.warning("Failed to end a tool's job, so killing its process tree instead: {}", error)
+
+        return False
+
     def _start_in_job(process: subprocess.Popen[str]) -> int | None:
         """Let a tool that was started suspended run, having first placed it in a job.
 
@@ -238,14 +252,15 @@ if sys.platform == "win32":
 def _kill_tool(process: subprocess.Popen[str], job: int | None) -> None:
     """Kill a tool along with every helper process it may have started."""
     if sys.platform == "win32":
-        if job is not None:
-            _kernel32.TerminateJobObject(job, 1)
-        else:
-            _ = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
-                ["taskkill", "/F", "/T", "/PID", str(process.pid)],  # ruff: ignore[start-process-with-partial-path]
-                capture_output=True,
-                check=False,
-            )
+        if job is not None and _terminate_job(job):
+            return
+
+        # Walking the process tree can miss a helper that is started while the walk is underway.
+        _ = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true]
+            ["taskkill", "/F", "/T", "/PID", str(process.pid)],  # ruff: ignore[start-process-with-partial-path]
+            capture_output=True,
+            check=False,
+        )
     else:
         with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
