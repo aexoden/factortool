@@ -9,7 +9,7 @@ import shutil
 import sys
 
 from pathlib import Path
-from typing import Annotated, ClassVar, Literal, NamedTuple
+from typing import Annotated, ClassVar, Literal, NamedTuple, cast
 
 from loguru import logger
 from pydantic import (
@@ -90,6 +90,18 @@ CaseInsensitiveLogLevel = Annotated[
 ]
 
 
+def _setting_names(data: object) -> set[str]:
+    """Get the names of the settings in raw configuration data.
+
+    Returns:
+        set[str]: The data's string keys, or an empty set if the data isn't a dict.
+    """
+    if not isinstance(data, dict):
+        return set()
+
+    return {key for key in cast("dict[object, object]", data) if isinstance(key, str)}
+
+
 def _is_executable_file(path: Path) -> bool:
     """Check if the given path is an executable file.
 
@@ -137,26 +149,26 @@ class Config(BaseModel):
         Raises:
             ValueError: If any removed or renamed settings are present in the configuration.
         """
-        if isinstance(data, dict):
-            removed = sorted(data.keys() & REMOVED_STATE_SETTINGS.keys())
-            renamed = sorted(data.keys() & RENAMED_SETTINGS.keys())
+        settings = _setting_names(data)
+        removed = sorted(settings & REMOVED_STATE_SETTINGS.keys())
+        renamed = sorted(settings & RENAMED_SETTINGS.keys())
 
-            if removed:
-                msg = (
-                    f"no longer supported: {', '.join(removed)}. State files now have fixed names in the state_path "
-                    f"directory ({', '.join(REMOVED_STATE_SETTINGS[key] for key in removed)}). Move the existing "
-                    "files there and remove the old settings."
-                )
-                raise ValueError(msg)
+        if removed:
+            msg = (
+                f"no longer supported: {', '.join(removed)}. State files now have fixed names in the state_path "
+                f"directory ({', '.join(REMOVED_STATE_SETTINGS[key] for key in removed)}). Move the existing "
+                "files there and remove the old settings."
+            )
+            raise ValueError(msg)
 
-            if renamed:
-                msg = (
-                    f"no longer supported: {', '.join(renamed)}. Use "
-                    f"{', '.join(RENAMED_SETTINGS[key] for key in renamed)} instead, which "
-                    f"{pluralize(len(renamed), 'is', 'are')} the minimum time in seconds between requests to the "
-                    "service rather than the initial delay before a retry."
-                )
-                raise ValueError(msg)
+        if renamed:
+            msg = (
+                f"no longer supported: {', '.join(renamed)}. Use "
+                f"{', '.join(RENAMED_SETTINGS[key] for key in renamed)} instead, which "
+                f"{pluralize(len(renamed), 'is', 'are')} the minimum time in seconds between requests to the "
+                "service rather than the initial delay before a retry."
+            )
+            raise ValueError(msg)
 
         return data
 

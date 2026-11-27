@@ -95,7 +95,7 @@ def _print_ecm_table(
         _, ecm_average_time = stats.get_ecm_average_time(digits, ecm_level, threads, final_methods)
         _, average_time = stats.get_average_time(digits, ecm_level, threads, final_methods)
 
-        markers = []
+        markers: list[str] = []
 
         if ecm_level == cutoffs.optimal:
             markers.append("optimal")

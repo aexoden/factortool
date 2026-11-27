@@ -42,6 +42,15 @@ COMPOSITES = [100, 102, 104]
 C41_FACTORS = [100000000000000000039, 300000000000000000053]
 
 
+def factor_tf_finding_nothing(n: int, _stats: object) -> list[int]:
+    """Stand in for trial factoring that finds no factor.
+
+    Returns:
+        list[int]: The number itself, as its only factor.
+    """
+    return [n]
+
+
 def run_interrupted_on(
     monkeypatch: pytest.MonkeyPatch,
     mode: Literal["standard", "yafu"],
@@ -222,7 +231,7 @@ def test_an_abort_kills_the_running_tool(
 
         return [n]
 
-    monkeypatch.setattr("factortool.number.factor_tf", lambda n, _stats: [n], raising=True)
+    monkeypatch.setattr("factortool.number.factor_tf", factor_tf_finding_nothing, raising=True)
     monkeypatch.setattr("factortool.number.factor_yafu", factor, raising=True)
     monkeypatch.setattr("factortool.number.factor_yafu_direct", factor, raising=True)
 
@@ -345,7 +354,10 @@ def test_a_number_set_aside_is_skipped_by_the_later_stages(monkeypatch: pytest.M
         self.tool_failed = self.n == failing.n
 
     def record(stage: str) -> Callable[..., None]:
-        return lambda self, *_args: attempted.append((stage, self.n))
+        def run_stage(self: Number, *_args: object) -> None:
+            attempted.append((stage, self.n))
+
+        return run_stage
 
     monkeypatch.setattr("factortool.number.Number.factor_tf", Mock(), raising=True)
     monkeypatch.setattr("factortool.number.Number.factor_rho", factor_rho, raising=True)
@@ -367,7 +379,7 @@ def test_worker_thread_failure_ends_the_run(monkeypatch: pytest.MonkeyPatch, err
         attempted.append(n)
         raise error
 
-    monkeypatch.setattr("factortool.number.factor_tf", lambda n, _stats: [n], raising=True)
+    monkeypatch.setattr("factortool.number.factor_tf", factor_tf_finding_nothing, raising=True)
     monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
 
     with pytest.raises(type(error)) as raised:
@@ -397,7 +409,7 @@ def test_worker_thread_failure_keeps_results_already_in_progress(monkeypatch: py
         time.sleep(0.1)
         return [2, 3, 17]
 
-    monkeypatch.setattr("factortool.number.factor_tf", lambda n, _stats: [n], raising=True)
+    monkeypatch.setattr("factortool.number.factor_tf", factor_tf_finding_nothing, raising=True)
     monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
 
     with pytest.raises(YafuError):
@@ -430,7 +442,7 @@ def test_an_abort_kills_a_worker_outlasting_a_failed_one(monkeypatch: pytest.Mon
 
         return [n]
 
-    monkeypatch.setattr("factortool.number.factor_tf", lambda n, _stats: [n], raising=True)
+    monkeypatch.setattr("factortool.number.factor_tf", factor_tf_finding_nothing, raising=True)
     monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
 
     with installed_interrupts() as interrupts:
@@ -615,10 +627,14 @@ def slow_tool_engine(
 
         return [2, n // 2]
 
-    monkeypatch.setattr("factortool.number.factor_tf", lambda n, _stats: [n], raising=True)
+    monkeypatch.setattr("factortool.number.factor_tf", factor_tf_finding_nothing, raising=True)
     monkeypatch.setattr("factortool.number.factor_yafu", factor, raising=True)
     monkeypatch.setattr("factortool.number.factor_yafu_direct", factor, raising=True)
-    monkeypatch.setattr("factortool.number.is_prime", lambda n: n not in COMPOSITES, raising=True)
+
+    def is_prime(n: int) -> bool:
+        return n not in COMPOSITES
+
+    monkeypatch.setattr("factortool.number.is_prime", is_prime, raising=True)
 
     config = make_config(factoring_mode=mode, max_threads=max_threads)
 

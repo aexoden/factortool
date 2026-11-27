@@ -60,7 +60,8 @@ class ConfigArguments(Tap):
     @override
     def configure(self) -> None:
         """Accept log levels in any case, as the configuration file does."""
-        self.add_argument("--log_level", type=str.upper, choices=get_args(LogLevel))
+        # Tap leaves add_argument's parameters unannotated.
+        self.add_argument("--log_level", type=str.upper, choices=get_args(LogLevel))  # pyright: ignore[reportUnknownMemberType]
 
 
 # The width of a number truncated for display, including its digit count.

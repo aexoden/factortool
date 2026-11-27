@@ -40,6 +40,15 @@ C90 = 10**89 + 7 * 13
 C90_SPLIT = [101, C90 // 101]
 
 
+def is_prime_unless_c90(n: int) -> bool:
+    """Treat every number but C90 as prime, so that only C90 needs factoring.
+
+    Returns:
+        bool: Whether n is to be treated as prime.
+    """
+    return n != C90
+
+
 def yafu_output(factors: list[int]) -> str:
     """Build the part of YAFU's output that lists the given factors.
 
@@ -219,7 +228,10 @@ def test_final_factoring_chooses_a_method_for_each_composite(monkeypatch: pytest
     monkeypatch.setattr("factortool.number.factor_nfs_cado", factor_nfs_cado, raising=True)
 
     # Treat the cofactors as prime, so that only the two composites need a final method.
-    monkeypatch.setattr("factortool.number.is_prime", lambda n: n not in splits, raising=True)
+    def is_prime(n: int) -> bool:
+        return n not in splits
+
+    monkeypatch.setattr("factortool.number.is_prime", is_prime, raising=True)
 
     assert number.final_method == "nfs_yafu"
 
@@ -235,7 +247,7 @@ def test_ecm_runs_yafu_nfs_immediately_without_statistics(monkeypatch: pytest.Mo
     number = Number(C90, make_config(use_nfs_yafu=True, max_siqs_digits=80), stats, None)
     factor_yafu = Mock(return_value=C90_SPLIT)
     monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
-    monkeypatch.setattr("factortool.number.is_prime", lambda n: n != C90, raising=True)
+    monkeypatch.setattr("factortool.number.is_prime", is_prime_unless_c90, raising=True)
 
     number.factor_ecm(2)
 
@@ -465,7 +477,7 @@ def test_a_factored_number_is_factored_whatever_else_happened(monkeypatch: pytes
     """Test that a number factored just before its assignment ran out is not reported as expired."""
     number = make_number(C90)
     monkeypatch.setattr("factortool.number.factor_yafu", Mock(return_value=C90_SPLIT), raising=True)
-    monkeypatch.setattr("factortool.number.is_prime", lambda n: n != C90, raising=True)
+    monkeypatch.setattr("factortool.number.is_prime", is_prime_unless_c90, raising=True)
 
     number.factor_rho()
     number.expires_at = 0.0
@@ -510,7 +522,7 @@ def final_number(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, results: dict[
         return result
 
     monkeypatch.setattr("factortool.number.Number._run_final", run_final, raising=True)
-    monkeypatch.setattr("factortool.number.is_prime", lambda n: n != C90, raising=True)
+    monkeypatch.setattr("factortool.number.is_prime", is_prime_unless_c90, raising=True)
 
     return Number(C90, make_config(cado_nfs_path="cado-nfs.py", use_nfs_cado=True, use_nfs_yafu=True), stats, None)
 
@@ -604,7 +616,11 @@ def test_an_immediate_final_run_does_not_rename_the_method_for_later_composites(
         return [7, 11]
 
     monkeypatch.setattr("factortool.number.factor_ecm", factor_ecm, raising=True)
-    monkeypatch.setattr("factortool.number.Number._run_final", lambda *_args: [3, 5], raising=True)
+
+    def run_final(*_args: object) -> list[int]:
+        return [3, 5]
+
+    monkeypatch.setattr("factortool.number.Number._run_final", run_final, raising=True)
 
     number.factor_ecm(2)
 
