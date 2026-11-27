@@ -51,13 +51,13 @@ class ToolError(Exception):
 class YafuError(ToolError):
     """Exception raised when YAFU continues to fail."""
 
-    tool_name = "YAFU"
+    tool_name: ClassVar[str] = "YAFU"
 
 
 class CadoNfsError(ToolError):
     """Exception raised when CADO-NFS continues to fail."""
 
-    tool_name = "CADO-NFS"
+    tool_name: ClassVar[str] = "CADO-NFS"
 
 
 class ToolState(BaseModel):
@@ -71,7 +71,7 @@ class ToolFailures:
 
     def __init__(self) -> None:
         """Initialize the record."""
-        self._lock = threading.Lock()
+        self._lock: threading.Lock = threading.Lock()
         self._streaks: dict[str, int] = {}
 
     def reset(self) -> None:

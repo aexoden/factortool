@@ -238,21 +238,23 @@ class BaseBackend(ABC):
             identity (str): Account name used with the service, included in the User-Agent. May be empty.
             interrupts (InterruptState | None): Interrupt state for interrupt signals, or None for a private one.
         """
-        self._config = config
-        self._stats = stats
-        self._interrupts = interrupts if interrupts is not None else InterruptState()
-        self._journal = SubmissionJournal(config.pending_submissions_path, config.backend)
+        self._config: Config = config
+        self._stats: FactoringStats = stats
+        self._interrupts: InterruptState = interrupts if interrupts is not None else InterruptState()
+        self._journal: SubmissionJournal = SubmissionJournal(config.pending_submissions_path, config.backend)
         self._submit_queue: queue.Queue[QueuedSubmission] = queue.Queue()
 
-        self._assignments = AssignmentStore(config.assignment_state_path, config.backend) if self.assigns_work else None
+        self._assignments: AssignmentStore | None = (
+            AssignmentStore(config.assignment_state_path, config.backend) if self.assigns_work else None
+        )
         self._assigned: dict[int, Number] = {}
-        self._assigned_lock = threading.Lock()
+        self._assigned_lock: threading.Lock = threading.Lock()
 
         # Composites whose results are queued but the journal failed to record.
         self._unjournaled: set[int] = set()
 
         carried_over = self._journal.load()
-        self._resubmitting = {x.n for x in carried_over}
+        self._resubmitting: set[int] = {x.n for x in carried_over}
 
         self._carried_assignments: list[Assignment] = []
 
@@ -266,7 +268,7 @@ class BaseBackend(ABC):
         if carried_over:
             logger.info("Resubmitting {} from a previous run", format_count(len(carried_over), "result"))
 
-        self._http_client = HttpClient(
+        self._http_client: HttpClient = HttpClient(
             self.name,
             request_interval,
             build_user_agent(identity, config.user_agent),
@@ -276,24 +278,24 @@ class BaseBackend(ABC):
         )
 
         # Set once the backend is closing, after which the worker stops when the queue is empty.
-        self._closing = threading.Event()
-        self._closing_since = 0.0
+        self._closing: threading.Event = threading.Event()
+        self._closing_since: float = 0.0
 
         # Set to make the worker stop prematurely, even if the queue is not empty.
-        self._give_up = threading.Event()
+        self._give_up: threading.Event = threading.Event()
 
         # Set once the service refuses a submission request outright, after which nothing further is sent this run.
-        self._refused = threading.Event()
+        self._refused: threading.Event = threading.Event()
 
-        self._last_progress = time.monotonic()
-        self._last_queued = time.monotonic()
-        self._successful_submissions = 0
-        self._submission_lock = threading.Lock()
+        self._last_progress: float = time.monotonic()
+        self._last_queued: float = time.monotonic()
+        self._successful_submissions: int = 0
+        self._submission_lock: threading.Lock = threading.Lock()
 
-        self._submit_thread = threading.Thread(
+        self._submit_thread: threading.Thread = threading.Thread(
             target=self._submit_worker, name=f"{type(self).__name__}-Submission-Worker", daemon=True
         )
-        self._submitting = False
+        self._submitting: bool = False
 
     @property
     def submissions_refused(self) -> bool:

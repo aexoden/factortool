@@ -8,7 +8,7 @@ import math
 import threading
 import time
 
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any, ClassVar, override
 from unittest.mock import Mock, call
 
 if TYPE_CHECKING:
@@ -55,12 +55,12 @@ from .helpers import fake_time, make_config
 class FakeBackend(BaseBackend):
     """Minimal backend serving canned fetch responses and recording submissions."""
 
-    name = "Fake"
-    assigns_work = False
+    name: ClassVar[str] = "Fake"
+    assigns_work: bool = False
 
     def __init__(self, config: Config, stats: FactoringStats, responses: Iterable[str | Exception]) -> None:
         """Initialize the fake backend with the fetch responses to return in order."""
-        self.responses = iter(responses)
+        self.responses: Iterator[str | Exception] = iter(responses)
         self.requested: list[int] = []
         self.submitted: list[int] = []
         self.outcomes: dict[int, list[SubmitOutcome]] = {}
@@ -1114,7 +1114,7 @@ def test_base_worker_submits_a_backlog_in_batches(config: Config, sleep: Mock, m
     batches: list[list[int]] = []
 
     class BatchingBackend(FakeBackend):
-        submit_batch_size = 2
+        submit_batch_size: ClassVar[int] = 2
 
         @override
         def _submit_numbers(self, submissions: Sequence[Submission]) -> list[SubmitOutcome]:
@@ -1434,12 +1434,12 @@ def test_factordb_stops_if_token_verification_is_invalid(config: Config, http_re
 class RecordingBatchesBackend(FakeBackend):
     """A fake backend that records each batch it is asked to submit."""
 
-    submit_batch_size = 3
+    submit_batch_size: ClassVar[int] = 3
 
     def __init__(self, config: Config) -> None:
         """Initialize the backend with no batches submitted."""
         self.batches: list[list[int]] = []
-        self.batch_sent = threading.Event()
+        self.batch_sent: threading.Event = threading.Event()
         super().__init__(config, FactoringStats(config.stats_path, read_only=True), ())
 
     @override
@@ -1562,8 +1562,8 @@ def test_base_close_does_not_count_request_spacing_as_a_stall(config: Config, mo
 class AssigningBackend(FakeBackend):
     """A fake backend whose service reserves the composites it hands out."""
 
-    assigns_work = True
-    assignment_lifetime = 3600.0
+    assigns_work: bool = True
+    assignment_lifetime: float = 3600.0
 
 
 # Products of two primes too large for trial factoring to find.
@@ -1793,8 +1793,8 @@ def test_factors_found_before_a_method_is_abandoned_are_recorded(
 class UnreachableAssigningBackend(UnreachableBackend):
     """A fake backend that assigns work and whose service never answers a submission."""
 
-    assigns_work = True
-    assignment_lifetime = 3600.0
+    assigns_work: bool = True
+    assignment_lifetime: float = 3600.0
 
 
 def close_abandoning_submissions(backend: BaseBackend) -> None:

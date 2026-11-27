@@ -67,7 +67,7 @@ class Cleanup:
 
     def __init__(self) -> None:
         """Initialize the cleanup."""
-        self.failed = False
+        self.failed: bool = False
 
     def run[**P](self, description: str, step: Callable[P, object], /, *args: P.args, **kwargs: P.kwargs) -> None:
         """Run a step, logging a failure instead of raising it."""

@@ -82,7 +82,7 @@ class FinalMethodNeeded(Exception):  # ruff: ignore[error-suffix-on-exception-na
     def __init__(self, method: str) -> None:
         """Initialize the exception with the statistics key of the needed method."""
         super().__init__(method)
-        self.method = method
+        self.method: str = method
 
 
 @cache
@@ -270,6 +270,7 @@ class Number:
     _stats: FactoringStats
     _config: Config
     _backend: ResultSink | None
+    _submitted: bool
 
     def __init__(
         self, n: int, config: Config, stats: FactoringStats, backend: ResultSink | None, factors: Sequence[int] = ()

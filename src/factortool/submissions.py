@@ -7,7 +7,7 @@ from __future__ import annotations
 import threading
 import time
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -22,7 +22,7 @@ from factortool.util import format_count, safe_write
 class Submission(BaseModel):
     """A factorization, complete or partial, ready for submission."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     n: int
     prime_factors: tuple[int, ...]
@@ -48,15 +48,15 @@ class SubmissionJournal:
 
     def __init__(self, path: Path, backend_name: str) -> None:
         """Initialize the journal for the given backend. Other backends' submissions are kept but never returned."""
-        self._path = path
-        self._backend_name = backend_name
-        self._lock = threading.Lock()
+        self._path: Path = path
+        self._backend_name: str = backend_name
+        self._lock: threading.Lock = threading.Lock()
         self._pending: dict[tuple[str, int], Submission] = {}
         self._rate_limited_until: dict[str, float] = {}
-        self._append_failed = False
+        self._append_failed: bool = False
 
         # Whether the journal on disk may not match the pending submissions.
-        self._needs_rewrite = False
+        self._needs_rewrite: bool = False
 
     @property
     def pending_count(self) -> int:

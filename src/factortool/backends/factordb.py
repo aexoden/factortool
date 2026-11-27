@@ -52,8 +52,8 @@ class RpcError(requests.RequestException):
     def __init__(self, code: int, message: str) -> None:
         """Initialize the error from the code and message reported by FactorDB."""
         super().__init__(f"FactorDB reported error {code}: {message}")
-        self.code = code
-        self.message = message
+        self.code: int = code
+        self.message: str = message
 
 
 class RpcErrorDetail(BaseModel):
@@ -210,17 +210,17 @@ def parse_rpc_responses(body: object, count: int) -> list[Any]:
 class FactorDB(BaseBackend):
     """Interface for interacting with FactorDB."""
 
-    name = "FactorDB"
+    name: ClassVar[str] = "FactorDB"
 
     # FactorDB does not currently have any sort of reservation system.
-    assigns_work = False
-    assignment_lifetime = 0.0
+    assigns_work: bool = False
+    assignment_lifetime: float = 0.0
 
-    accepts_partial_results = True
+    accepts_partial_results: bool = True
 
     max_fetch_count: ClassVar[int | None] = MAX_FETCH_COUNT
 
-    submit_batch_size = SUBMIT_BATCH_SIZE
+    submit_batch_size: ClassVar[int] = SUBMIT_BATCH_SIZE
 
     # FactorDB occasionally answers 405 Method Not Allowed to a request that succeeds when retried.
     transient_status_codes: ClassVar[frozenset[int]] = frozenset({requests.codes.method_not_allowed})
@@ -234,11 +234,11 @@ class FactorDB(BaseBackend):
         """
         super().__init__(config, stats, config.factordb_request_interval, "", interrupts)
 
-        self._signed_in = False
+        self._signed_in: bool = False
 
         # Factors credited to the account over the whole run, and for the batch most recently submitted.
-        self._credited_count = 0
-        self._batch_credited = 0
+        self._credited_count: int = 0
+        self._batch_credited: int = 0
 
         if not config.factordb_api_token:
             logger.warning("No FactorDB API token is configured; results will be submitted anonymously")

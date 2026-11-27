@@ -23,7 +23,7 @@ class DirectoryInUseError(Exception):
     def __init__(self, directory: Path) -> None:
         """Initialize the error for the directory that is in use."""
         super().__init__(f"Another instance of factortool is using {directory}")
-        self.directory = directory
+        self.directory: Path = directory
 
 
 def lock_directories(directories: Iterable[Path]) -> contextlib.ExitStack:

@@ -57,13 +57,13 @@ class InterruptState:
 
     def __init__(self) -> None:
         """Initialize the interrupt state."""
-        self._level = 0
+        self._level: int = 0
         self._abandon: Callable[[], None] | None = None
         self._handled: frozenset[int] = frozenset()
 
         self._announcements: queue.SimpleQueue[Callable[[], None] | None] = queue.SimpleQueue()
 
-        self._installed = contextlib.ExitStack()
+        self._installed: contextlib.ExitStack = contextlib.ExitStack()
 
     @property
     def level(self) -> int:

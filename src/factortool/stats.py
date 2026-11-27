@@ -9,7 +9,7 @@ import math
 import threading
 import time
 
-from typing import TYPE_CHECKING, Literal, NamedTuple
+from typing import TYPE_CHECKING, ClassVar, Literal, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -85,7 +85,7 @@ class ECMCutoffs(NamedTuple):
 class FactoringData(BaseModel):
     """All factoring statistics data."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
     schema_version: Literal[1]
 
     tf: dict[int, ProbabilityDigitData] = Field(

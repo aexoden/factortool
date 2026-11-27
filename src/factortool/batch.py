@@ -43,10 +43,12 @@ class BatchState(BaseModel):
 class BatchController:
     """Controller for adaptive batch sizing."""
 
+    _state: BatchState
+
     def __init__(self, target_duration: float, key: BatchKey, state_path: Path) -> None:
         """Initialize the batch controller."""
-        self._target_duration = target_duration
-        self._state_path = state_path
+        self._target_duration: float = target_duration
+        self._state_path: Path = state_path
 
         self._reset_state(key)
         self._load_state()

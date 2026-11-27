@@ -7,7 +7,7 @@ from __future__ import annotations
 import threading
 import time
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -32,7 +32,7 @@ def assignment_expired(expires_at: float) -> bool:
 class Assignment(BaseModel):
     """An assignment of a composite number, with any factors found so far."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     n: int = Field(ge=MIN_FACTORABLE)
     expires_at: float
@@ -55,11 +55,11 @@ class AssignmentStore:
 
     def __init__(self, state_path: Path, backend_name: str) -> None:
         """Initialize the assignment store."""
-        self._state_path = state_path
-        self._backend_name = backend_name
-        self._lock = threading.Lock()
+        self._state_path: Path = state_path
+        self._backend_name: str = backend_name
+        self._lock: threading.Lock = threading.Lock()
         self._assignments: dict[int, Assignment] = {}
-        self._write_failed = False
+        self._write_failed: bool = False
 
     def load(self) -> list[Assignment]:
         """Read the assignments retained by a previous run, discarding any that have expired, and track the rest.

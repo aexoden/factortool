@@ -177,7 +177,7 @@ class PartiallyFailingFile:
 
     def __init__(self, f: IO[str]) -> None:
         """Wrap the opened journal."""
-        self._f = f
+        self._f: IO[str] = f
 
     def __enter__(self) -> Self:
         """Enter the context of the opened journal.

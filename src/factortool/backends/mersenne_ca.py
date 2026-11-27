@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 
-from typing import TYPE_CHECKING, Any, cast, override
+from typing import TYPE_CHECKING, Any, ClassVar, cast, override
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -47,17 +47,17 @@ def check_factorization(n: int, factors: Sequence[int]) -> bool:
 class MersenneCA(BaseBackend):
     """Interface for interacting with the mersenne.ca Aliquot composite service."""
 
-    name = "mersenne.ca"
+    name: ClassVar[str] = "mersenne.ca"
 
     # Fetched composites are reserved for this client for an hour.
-    assigns_work = True
+    assigns_work: bool = True
 
     # The nominal assignment lifetime is one hour. We shorten is slightly to account for delays during the fetch.
-    assignment_lifetime = 3600.0 - 10.0
-    submission_lifetime = assignment_lifetime
+    assignment_lifetime: float = 3600.0 - 10.0
+    submission_lifetime: ClassVar[float] = assignment_lifetime
 
     # The service can technically accept partial results, but it is not preferred.
-    accepts_partial_results = False
+    accepts_partial_results: bool = False
 
     def __init__(self, config: Config, stats: FactoringStats, interrupts: InterruptState | None = None) -> None:
         """Initialize the mersenne.ca interface.

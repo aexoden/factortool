@@ -167,15 +167,15 @@ class HttpClient:
             transient_status_codes (Collection[int]): Status codes this service also returns for transient failures, to
                 be retried like 502, 503 and 504 rather than treated as permanent.
         """
-        self._service_name = service_name
-        self._request_interval = request_interval
-        self._next_request_at = 0.0
-        self._request_lock = threading.Lock()
-        self._rate_limited_until = rate_limited_until
-        self._rate_limit_lock = threading.Lock()
-        self._on_rate_limit = on_rate_limit
-        self._transient_status_codes = TRANSIENT_STATUS_CODES | frozenset(transient_status_codes)
-        self.session = requests.Session()
+        self._service_name: str = service_name
+        self._request_interval: float = request_interval
+        self._next_request_at: float = 0.0
+        self._request_lock: threading.Lock = threading.Lock()
+        self._rate_limited_until: float = rate_limited_until
+        self._rate_limit_lock: threading.Lock = threading.Lock()
+        self._on_rate_limit: Callable[[float], None] | None = on_rate_limit
+        self._transient_status_codes: frozenset[int] = TRANSIENT_STATUS_CODES | frozenset(transient_status_codes)
+        self.session: requests.Session = requests.Session()
         self.session.headers["User-Agent"] = user_agent if user_agent is not None else build_user_agent()
 
     @property

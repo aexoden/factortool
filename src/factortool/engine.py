@@ -57,18 +57,18 @@ class FactorEngine:
 
     def __init__(self, config: Config, interrupts: InterruptState | None = None) -> None:
         """Initialize the factorization engine."""
-        self._config = config
+        self._config: Config = config
 
-        self._limits = TimeLimits()
-        self._start_time = time.monotonic()
+        self._limits: TimeLimits = TimeLimits()
+        self._start_time: float = time.monotonic()
         self._expired: set[Number] = set()
-        self._expired_lock = threading.Lock()
+        self._expired_lock: threading.Lock = threading.Lock()
 
         if interrupts is None:
             interrupts = InterruptState()
             interrupts.install()
 
-        self._interrupts = interrupts
+        self._interrupts: InterruptState = interrupts
 
     def _skip_expired(self, number: Number) -> bool:
         """Check if a number's assignment is expired, logging the first time it is skipped.

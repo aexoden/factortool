@@ -9,7 +9,7 @@ import shutil
 import sys
 
 from pathlib import Path
-from typing import Annotated, Literal, NamedTuple
+from typing import Annotated, ClassVar, Literal, NamedTuple
 
 from loguru import logger
 from pydantic import (
@@ -102,7 +102,7 @@ def _is_executable_file(path: Path) -> bool:
 class Config(BaseModel):
     """Configuration for factorization tool."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
     # Required settings
     backend: BackendName

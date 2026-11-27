@@ -456,7 +456,7 @@ class FakeClock:
 
     def __init__(self) -> None:
         """Initialize the clock at an arbitrary time."""
-        self.now = 1000.0
+        self.now: float = 1000.0
 
     def monotonic(self) -> float:
         """Report the current fake time.

@@ -64,18 +64,18 @@ def write_config(tmp_path: Path, **overrides: object) -> None:
 class FakeBackend:
     """A backend that records requests, assigning work unless told otherwise."""
 
-    assignment_lifetime = 3600.0
+    assignment_lifetime: float = 3600.0
 
     def __init__(
         self, *, assigns_work: bool = True, accepts_partial_results: bool = True, resumed: Collection[int] = ()
     ) -> None:
         """Initialize the fake backend, which resumes the given composites."""
-        self.assigns_work = assigns_work
-        self.accepts_partial_results = accepts_partial_results
-        self.resumed = resumed
+        self.assigns_work: bool = assigns_work
+        self.accepts_partial_results: bool = accepts_partial_results
+        self.resumed: Collection[int] = resumed
         self.requested: list[int] = []
         self.submitted: list[int] = []
-        self.submissions_refused = False
+        self.submissions_refused: bool = False
 
     def resume(self) -> set[Number]:
         """Hand back the composites this backend resumes.

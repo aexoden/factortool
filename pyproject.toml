@@ -57,7 +57,6 @@ reportImplicitStringConcatenation = false  # Ruff's explicit-string-concatenatio
 reportUnusedParameter = false  # Ruff's unused-argument covers it, allowing unused arguments of a do-nothing hook.
 reportAny = false  # Temporarily off while adopting the norms standards (see TODO.md).
 reportExplicitAny = false  # Temporarily off while adopting the norms standards (see TODO.md).
-reportUnannotatedClassAttribute = false  # Temporarily off while adopting the norms standards (see TODO.md).
 reportUnknownArgumentType = false  # Temporarily off while adopting the norms standards (see TODO.md).
 reportUnknownLambdaType = false  # Temporarily off while adopting the norms standards (see TODO.md).
 reportUnknownMemberType = false  # Temporarily off while adopting the norms standards (see TODO.md).
