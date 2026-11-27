@@ -9,6 +9,7 @@ import sys
 import time
 
 from pathlib import Path
+from typing import cast
 from unittest.mock import Mock
 
 import pytest
@@ -74,12 +75,12 @@ def test_cado_nfs_works_in_the_managed_working_directory(monkeypatch: pytest.Mon
 
     factors, _ = run_cado_nfs("CADO-NFS", 15, 2, Path("cado-nfs.py"), Path("work"))
 
-    cmd = run_tool.call_args.args[0]
+    cmd = cast("list[str]", run_tool.call_args.args[0])
     work_dir = Path(cmd[cmd.index("--workdir") + 1])
 
     assert factors == [3, 5]
     assert work_dir.is_absolute()
-    assert work_dir == run_tool.call_args.args[1].absolute()
+    assert work_dir == cast("Path", run_tool.call_args.args[1]).absolute()
     assert work_dir.parent == tmp_path / "work"
     assert "stdin" not in run_tool.call_args.kwargs
 

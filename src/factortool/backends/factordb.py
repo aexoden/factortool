@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar, NoReturn, override
+from http import HTTPStatus
+from typing import TYPE_CHECKING, ClassVar, NoReturn, cast, override
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -12,7 +13,7 @@ if TYPE_CHECKING:
 import requests
 
 from loguru import logger
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from factortool.backends.base import BaseBackend, SubmitOutcome
 from factortool.http import MAX_DELAY, RETRY_DELAY, PermanentHttpError
@@ -67,7 +68,7 @@ class RpcResponse(BaseModel):
     """A single JSON-RPC response, carrying either a result or an error."""
 
     id: int | None
-    result: Any = None
+    result: JsonValue = None
     error: RpcErrorDetail | None = None
 
 
@@ -193,11 +194,11 @@ def rpc_result(response: RpcResponse) -> object:
     return response.result
 
 
-def parse_rpc_responses(body: object, count: int) -> list[Any]:
+def parse_rpc_responses(body: object, count: int) -> list[object]:
     """Extract the results from a batch JSON-RPC response, in request order.
 
     Returns:
-        list[Any]: The result of each call, in the order the calls were made.
+        list[object]: The result of each call, in the order the calls were made.
 
     Raises:
         ValueError: If the response is malformed.
@@ -223,7 +224,7 @@ class FactorDB(BaseBackend):
     submit_batch_size: ClassVar[int] = SUBMIT_BATCH_SIZE
 
     # FactorDB occasionally answers 405 Method Not Allowed to a request that succeeds when retried.
-    transient_status_codes: ClassVar[frozenset[int]] = frozenset({requests.codes.method_not_allowed})
+    transient_status_codes: ClassVar[frozenset[int]] = frozenset({HTTPStatus.METHOD_NOT_ALLOWED})
 
     def __init__(self, config: Config, stats: FactoringStats, interrupts: InterruptState | None = None) -> None:
         """Initialize the FactorDB interface, verifying any configured API token.
@@ -292,14 +293,14 @@ class FactorDB(BaseBackend):
 
     def _rpc(
         self, calls: Sequence[tuple[str, Mapping[str, object]]], *, timeout: float, wait: Callable[[float], bool]
-    ) -> list[Any]:
+    ) -> list[object]:
         """Make a batch of JSON-RPC calls.
 
         HTTP failures are retried until the wait function says to abandon the request. Errors reported by FactorDB for
         individual calls are not retried.
 
         Returns:
-            list[Any]: The result of each call, in the order the calls were made.
+            list[object]: The result of each call, in the order the calls were made.
         """
         return [rpc_result(response) for response in self._rpc_batch(calls, timeout=timeout, wait=wait)]
 
@@ -317,7 +318,7 @@ class FactorDB(BaseBackend):
 
         response = self._service_request("POST", API_URL, json=payload, timeout=timeout, wait=wait)
 
-        return parse_rpc_batch(response.json(), len(calls))
+        return parse_rpc_batch(cast("object", response.json()), len(calls))
 
     @override
     def _request_composites(self, criteria: FetchCriteria) -> list[int]:

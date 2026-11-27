@@ -113,13 +113,14 @@ def test_uninterrupted_run_reports_success(monkeypatch: pytest.MonkeyPatch, mode
 def test_finished_ecm_number_does_not_resume_when_statistics_change(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that changing cutoffs between rounds stops ECM without later skipping ahead to resume it."""
     config = make_config()
-    stats = Mock(spec=FactoringStats)
-    stats.get_ecm_cutoffs.return_value = ECMCutoffs(2, 4)
-    stats.get_final_method.return_value = "siqs"
+    get_ecm_cutoffs = Mock(return_value=ECMCutoffs(2, 4))
+    stats = Mock(spec_set=FactoringStats, get_ecm_cutoffs=get_ecm_cutoffs, get_final_method=Mock(return_value="siqs"))
     finished = Number(100, config, stats, None)
-    continuing_stats = Mock(spec=FactoringStats)
-    continuing_stats.get_ecm_cutoffs.return_value = ECMCutoffs(2, 4)
-    continuing_stats.get_final_method.return_value = "siqs"
+    continuing_stats = Mock(
+        spec_set=FactoringStats,
+        get_ecm_cutoffs=Mock(return_value=ECMCutoffs(2, 4)),
+        get_final_method=Mock(return_value="siqs"),
+    )
     continuing = Number(102, config, continuing_stats, None)
     first_level = 2
     ecm_calls: list[tuple[int, int]] = []
@@ -130,7 +131,7 @@ def test_finished_ecm_number_does_not_resume_when_statistics_change(monkeypatch:
         if n == continuing.n:
             # Lower the first number's cutoff after round 2, then raise it after round 3.
             # The second number keeps the engine running so round 4 can expose an erroneous resume.
-            stats.get_ecm_cutoffs.return_value = ECMCutoffs(2, first_level if level == first_level else 4)
+            get_ecm_cutoffs.return_value = ECMCutoffs(2, first_level if level == first_level else 4)
         return [n]
 
     def factor_yafu(n: int, method: str, *_args: object) -> list[int]:

@@ -7,19 +7,6 @@ later ones.
 
 ## Code/Architectural Improvements
 
-- Finish adopting the norms standards by turning back on the basedpyright rules
-  that `pyproject.toml` turns off temporarily, one rule (or a few related ones)
-  per commit, with the fixes it needs. As of adoption, the counts were:
-  `reportUnusedCallResult` 150, `reportAny` 112, `reportUnannotatedClassAttribute`
-  88, `reportUnknownLambdaType` 26, `reportUnknownArgumentType` 18,
-  `reportExplicitAny` 10, `reportUnknownMemberType` 4,
-  `reportUnknownVariableType` 6 and `reportImportCycles` 4. Most of `reportAny`
-  comes from JSON and pydantic data and from mocks in the tests. The import
-  cycles run through `backend.py`: its `create_backend` imports both backends,
-  which subclass its `BaseBackend`, and `number.py`, which it imports, imports
-  `Backend` back for its annotations. basedpyright counts imports made inside a
-  function or for type checking only, so fixing them means deciding where the
-  backend factory and the shared types should live.
 - Track ECM progress for each composite factor rather than for the number as a
   whole. ECM currently runs on every remaining composite at a level chosen by
   the largest one, so a small composite is carried through levels it would never

@@ -10,7 +10,7 @@ import os
 import sys
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -290,12 +290,16 @@ def test_read_config_rejects_the_renamed_cooldown_settings(tmp_path: Path) -> No
 
 def test_dist_config_matches_defaults() -> None:
     """Test that the distributed configuration file matches the default settings."""
-    dist = json.loads((Path(__file__).parent.parent / "config.dist.json").read_text(encoding="utf-8"))
+    dist = cast(
+        "dict[str, object]", json.loads((Path(__file__).parent.parent / "config.dist.json").read_text(encoding="utf-8"))
+    )
     defaults = Config.model_validate(REQUIRED_SETTINGS)
 
     assert dist.keys() == Config.model_fields.keys()
     assert {key: value for key, value in dist.items() if key not in REQUIRED_SETTINGS} == {
-        key: value for key, value in defaults.model_dump(mode="json").items() if key not in REQUIRED_SETTINGS
+        key: value
+        for key, value in cast("dict[str, object]", defaults.model_dump(mode="json")).items()
+        if key not in REQUIRED_SETTINGS
     }
 
 

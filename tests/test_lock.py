@@ -7,7 +7,7 @@ from __future__ import annotations
 import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -76,8 +76,9 @@ def test_a_killed_instance_releases_its_lock(tmp_path: Path) -> None:
         [sys.executable, "-c", _HOLDER, str(tmp_path)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
     ) as holder:
         try:
-            assert holder.stdout is not None
-            assert holder.stdout.readline().strip() == "locked"
+            # basedpyright, unlike mypy, types a text-mode process's output as Any.
+            output = cast("IO[str]", holder.stdout)
+            assert output.readline().strip() == "locked"
 
             with pytest.raises(DirectoryInUseError):
                 _ = lock_directories([tmp_path])

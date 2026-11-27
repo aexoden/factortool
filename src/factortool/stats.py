@@ -176,12 +176,54 @@ class FactoringStats:
         with self._lock:
             self._save_data(force=True)
 
+    def _probability_data(self, method: str) -> dict[int, ProbabilityDigitData]:
+        """Get the data of a probabilistic method by its statistics key.
+
+        Returns:
+            dict[int, ProbabilityDigitData]: The method's data for each digit count.
+
+        Raises:
+            ValueError: If the method has no probabilistic data.
+        """
+        match method:
+            case "tf":
+                return self._data.tf
+            case "rho":
+                return self._data.rho
+            case "pm1":
+                return self._data.pm1
+            case "yafu":
+                return self._data.yafu
+            case _:
+                msg = f"{method} is not a probabilistic factoring method"
+                raise ValueError(msg)
+
+    def _final_data(self, method: str) -> dict[int, FinalDigitData]:
+        """Get the data of a final factoring method by its statistics key.
+
+        Returns:
+            dict[int, FinalDigitData]: The method's data for each digit count.
+
+        Raises:
+            ValueError: If the method is not a final factoring method.
+        """
+        match method:
+            case "siqs":
+                return self._data.siqs
+            case "nfs_cado":
+                return self._data.nfs_cado
+            case "nfs_yafu":
+                return self._data.nfs_yafu
+            case _:
+                msg = f"{method} is not a final factoring method"
+                raise ValueError(msg)
+
     def update_probability(
         self, digits: int, method: str, threads: int, execution_time: float, *, success: bool
     ) -> None:
         """Update probabilistic factorization data."""
         with self._lock:
-            digit_data = getattr(self._data, method).setdefault(digits, ProbabilityDigitData())
+            digit_data = self._probability_data(method).setdefault(digits, ProbabilityDigitData())
             run_data = digit_data.thread_data.setdefault(threads, ProbabilityRunData())
 
             run_data.total_time += execution_time
@@ -196,7 +238,7 @@ class FactoringStats:
     def update_final(self, method: str, digits: int, threads: int, execution_time: float) -> None:
         """Update final factorization data for the method with the given statistics key."""
         with self._lock:
-            digit_data = getattr(self._data, method).setdefault(digits, FinalDigitData())
+            digit_data = self._final_data(method).setdefault(digits, FinalDigitData())
             run_data = digit_data.thread_data.setdefault(threads, FinalRunData())
 
             run_data.total_time += execution_time
@@ -228,7 +270,7 @@ class FactoringStats:
             A tuple containing the number of runs and the average time per run, or None if no data is available.
         """
         with self._lock:
-            data = getattr(self._data, method)
+            data = self._final_data(method)
 
             if digits in data and threads in data[digits].thread_data:
                 run_data = data[digits].thread_data[threads]
@@ -297,7 +339,7 @@ class FactoringStats:
             or None values if no data is available.
         """
         with self._lock:
-            data = getattr(self._data, method)
+            data = self._probability_data(method)
 
             if digits not in data:
                 return (0, None, None)

@@ -18,7 +18,7 @@ import threading
 import time
 
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, NoReturn
+from typing import TYPE_CHECKING, ClassVar, NoReturn, cast
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -137,7 +137,7 @@ def _describe_tool_failure(error: OSError | subprocess.CalledProcessError) -> st
         str: The tool's error output, or the reason it could not be started.
     """
     if isinstance(error, subprocess.CalledProcessError):
-        return str(error.stderr).strip() or f"exit status {error.returncode}"
+        return str(cast("object", error.stderr)).strip() or f"exit status {error.returncode}"
 
     return str(error)
 
@@ -185,7 +185,7 @@ if sys.platform == "win32":
         Returns:
             int | None: A handle to the job, or None if the process could not be placed in one.
         """
-        job: int | None = _kernel32.CreateJobObjectW(None, None)
+        job = cast("int | None", _kernel32.CreateJobObjectW(None, None))
 
         if job is not None and _kernel32.AssignProcessToJobObject(job, process_handle):
             return job
@@ -211,7 +211,7 @@ if sys.platform == "win32":
             OSError: If the tool could not be resumed.
         """
         access = PROCESS_TERMINATE | PROCESS_SET_QUOTA | PROCESS_SUSPEND_RESUME
-        process_handle: int | None = _kernel32.OpenProcess(access, False, process.pid)  # ruff: ignore[boolean-positional-value-in-call]
+        process_handle = cast("int | None", _kernel32.OpenProcess(access, False, process.pid))  # ruff: ignore[boolean-positional-value-in-call]
 
         if process_handle is None:
             error = ctypes.WinError(ctypes.get_last_error())
@@ -221,7 +221,7 @@ if sys.platform == "win32":
             job = _create_job(process_handle)
 
             # The subprocess module keeps no handle to the suspended thread, leaving this as the way to resume it.
-            status: int = _ntdll.NtResumeProcess(process_handle)
+            status = cast("int", _ntdll.NtResumeProcess(process_handle))
 
             if status < 0:
                 if job is not None:
@@ -378,7 +378,7 @@ def run_tool(
         )
     except OSError as e:
         # Windows doesn't say which file it failed to start.
-        if e.filename is None:
+        if cast("object", e.filename) is None:
             e.filename = cmd[0]
 
         raise

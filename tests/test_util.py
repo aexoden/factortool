@@ -12,7 +12,7 @@ import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 import time
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock
 
 if TYPE_CHECKING:
@@ -64,7 +64,7 @@ def test_format_number(n: int, expected: str) -> None:
 @pytest.mark.parametrize("digits", [28, 31, 32, 33, 99, 100, 999, 1000, 4300])
 def test_format_number_truncates_to_display_width(digits: int) -> None:
     """Test that a number too long to display in full, including its digit count, fills exactly the display width."""
-    formatted = format_number(10 ** (digits - 1) + 7)
+    formatted = format_number(cast("int", 10 ** (digits - 1)) + 7)
 
     assert formatted.startswith("1")
     assert formatted.endswith(f"7 <{digits}>")

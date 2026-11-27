@@ -305,3 +305,47 @@ def test_reads_and_explicit_saves_are_safe_alongside_updates(tmp_path: Path) -> 
         assert source.get_ecm_stats(DIGITS, ECM_LEVEL, 1) == (total, 1.0, 1.0)
         assert source.get_final_stats("siqs", 1000 + total - 1, 1) == (1, 1.0)
         assert source.get_ecm_stats(1000 + total - 1, ECM_LEVEL, 1) == (1, 1.0, 0.0)
+
+
+@pytest.mark.parametrize("method", ["tf", "rho", "pm1", "yafu"])
+def test_probability_data_is_kept_for_each_method(tmp_path: Path, method: str) -> None:
+    """Test that each probabilistic method's runs are recorded under that method alone."""
+    stats = FactoringStats(tmp_path / "stats.json", read_only=True)
+    stats.update_probability(DIGITS, method, 1, 2.0, success=True)
+
+    assert stats.get_probability_stats(DIGITS, method, 1) == (1, 2.0, 1.0)
+    assert [x for x in ("tf", "rho", "pm1", "yafu") if DIGITS in getattr(stats._data, x)] == [method]
+
+
+@pytest.mark.parametrize("method", ["siqs", "nfs_cado", "nfs_yafu"])
+def test_final_data_is_kept_for_each_method(tmp_path: Path, method: str) -> None:
+    """Test that each final method's runs are recorded under that method alone."""
+    stats = FactoringStats(tmp_path / "stats.json", read_only=True)
+    stats.update_final(method, DIGITS, 1, 2.0)
+
+    assert stats.get_final_stats(method, DIGITS, 1) == (1, 2.0)
+    assert [x for x in ("siqs", "nfs_cado", "nfs_yafu") if DIGITS in getattr(stats._data, x)] == [method]
+
+
+@pytest.mark.parametrize("method", ["ecm", "siqs", "bogus"])
+def test_unknown_probabilistic_methods_are_rejected(tmp_path: Path, method: str) -> None:
+    """Test that statistics for a method that has no probabilistic data are refused rather than misfiled."""
+    stats = FactoringStats(tmp_path / "stats.json", read_only=True)
+
+    with pytest.raises(ValueError, match="not a probabilistic factoring method"):
+        stats.update_probability(DIGITS, method, 1, 2.0, success=True)
+
+    with pytest.raises(ValueError, match="not a probabilistic factoring method"):
+        _ = stats.get_probability_stats(DIGITS, method, 1)
+
+
+@pytest.mark.parametrize("method", ["ecm", "tf", "bogus"])
+def test_unknown_final_methods_are_rejected(tmp_path: Path, method: str) -> None:
+    """Test that statistics for a method that is not a final method are refused rather than misfiled."""
+    stats = FactoringStats(tmp_path / "stats.json", read_only=True)
+
+    with pytest.raises(ValueError, match="not a final factoring method"):
+        stats.update_final(method, DIGITS, 1, 2.0)
+
+    with pytest.raises(ValueError, match="not a final factoring method"):
+        _ = stats.get_final_stats(method, DIGITS, 1)

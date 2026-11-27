@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import math
+
 # The smallest number with a prime factorization.
 MIN_FACTORABLE = 2
 
@@ -25,7 +27,7 @@ FINAL_METHOD_NAMES: dict[str, str] = {
 MAX_CONSECUTIVE_TOOL_FAILURES = 3
 
 ECM_P_FACTOR_DEFAULT = 0.1
-ECM_P_FACTOR_DECAY = pow(0.5, 1 / 16)
+ECM_P_FACTOR_DECAY = math.pow(0.5, 1 / 16)
 
 ECM_CURVES: dict[int, tuple[int, int]] = {
     2: (5, 340),

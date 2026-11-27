@@ -9,7 +9,7 @@ import subprocess  # ruff: ignore[suspicious-subprocess-import]
 import sys
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock
 
 if TYPE_CHECKING:
@@ -32,6 +32,9 @@ from factortool.stats import ECMCutoffs, FactoringStats
 from factortool.tools import CadoNfsError, ToolError, ToolFailure, YafuError, run_tool
 
 from .helpers import NO_STATS_PATH, fake_time, make_config, make_number
+
+# A composite below the CADO-NFS minimum.
+C56 = 10**55 + 1
 
 # Composites on either side of the YAFU NFS minimum, each with a small factor.
 C84 = 10**83 + 1
@@ -76,11 +79,12 @@ def test_tf_time_excludes_generating_the_primes(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr("factortool.number.small_primes", small_primes)
     monkeypatch.setattr("factortool.number.time", fake_time(perf_counter_ns=lambda: clock))
-    stats = Mock()
+    update_probability = Mock()
+    stats = Mock(update_probability=update_probability)
 
     assert factor_tf(2 * 3 * 5 * 7 * 11, stats) == [2, 3, 5, 77]
 
-    stats.update_probability.assert_called_once_with(4, "tf", 1, 0.0, success=True)
+    update_probability.assert_called_once_with(4, "tf", 1, 0.0, success=True)
 
 
 def resumed_number(n: int, factors: list[int]) -> Number:
@@ -125,15 +129,14 @@ def test_a_number_split_into_composites_is_partially_factored() -> None:
 def test_small_cofactors_use_statistical_ecm_cutoffs() -> None:
     """Test that a composite too small for CADO-NFS stops ECM at the learned cutoff rather than the maximum level."""
     number = make_number(15 * 10**50 + 7)
-    stats = Mock(spec=FactoringStats)
-    stats.get_ecm_cutoffs.return_value = ECMCutoffs(2, 5)
-    number._stats = stats
+    get_ecm_cutoffs = Mock(return_value=ECMCutoffs(2, 5))
+    number._stats = Mock(spec_set=FactoringStats, get_ecm_cutoffs=get_ecm_cutoffs)
     number.composite_factors = [10**40 + 1]
     number._ecm_level = 4
 
     assert number.ecm_needed
 
-    stats.get_ecm_cutoffs.assert_called_once_with(41, number._config.max_threads, ("siqs",))
+    get_ecm_cutoffs.assert_called_once_with(41, number._config.max_threads, ("siqs",))
 
     number._ecm_level = 5
     assert not number.ecm_needed
@@ -142,9 +145,7 @@ def test_small_cofactors_use_statistical_ecm_cutoffs() -> None:
 def test_no_ecm_is_needed_when_the_cutoff_is_none() -> None:
     """Test that a number that has done no ECM does none when the cutoff says none is worthwhile."""
     number = make_number(10**59 + 1)
-    stats = Mock(spec=FactoringStats)
-    stats.get_ecm_cutoffs.return_value = ECMCutoffs(0, 0)
-    number._stats = stats
+    number._stats = Mock(spec_set=FactoringStats, get_ecm_cutoffs=Mock(return_value=ECMCutoffs(0, 0)))
 
     assert not number.ecm_needed
 
@@ -152,15 +153,15 @@ def test_no_ecm_is_needed_when_the_cutoff_is_none() -> None:
 def test_ecm_cutoff_follows_the_latest_statistics() -> None:
     """Test that the ECM cutoff is reevaluated as statistics arrive, and that a finished number stays finished."""
     number = make_number(10**59 + 1)
-    stats = Mock(spec=FactoringStats)
-    number._stats = stats
+    get_ecm_cutoffs = Mock()
+    number._stats = Mock(spec_set=FactoringStats, get_ecm_cutoffs=get_ecm_cutoffs)
     number._ecm_level = 10
 
     # Each reading is collected rather than asserted in turn, which type checkers would narrow as if it couldn't change.
     # In the last case, resuming would skip the levels the engine ran in the meantime.
     needed: list[bool] = []
     for cutoffs in (ECMCutoffs(None, 20), ECMCutoffs(8, 10), ECMCutoffs(8, 20)):
-        stats.get_ecm_cutoffs.return_value = cutoffs
+        get_ecm_cutoffs.return_value = cutoffs
         needed.append(number.ecm_needed)
 
     assert needed == [True, False, False]
@@ -174,7 +175,7 @@ def test_yafu_nfs_forces_nfs_and_records_its_own_statistics(monkeypatch: pytest.
 
     factors = factor_yafu(C90, "nfs", 4, make_config(work_path=tmp_path).yafu_paths, stats)
 
-    cmd = run_tool.call_args.args[0]
+    cmd = cast("list[str]", run_tool.call_args.args[0])
     assert factors == C90_SPLIT
     assert cmd[1] == f"nfs({C90})"
     assert cmd[cmd.index("-xover") + 1] == "1"
@@ -192,7 +193,7 @@ def test_nfs_is_not_run_below_its_minimum(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     calls: dict[str, Callable[[], object]] = {
         "nfs_yafu": lambda: factor_yafu(C84, "nfs", 4, make_config().yafu_paths, stats),
-        "nfs_cado": lambda: factor_nfs_cado(10**55 + 1, 4, Path("cado-nfs.py"), tmp_path, stats),
+        "nfs_cado": lambda: factor_nfs_cado(C56, 4, Path("cado-nfs.py"), tmp_path, stats),
     }
 
     with pytest.raises(ValueError, match="needs at least"):
@@ -312,7 +313,7 @@ def test_tools_are_given_the_threads_their_method_can_use(
     else:
         _ = factor_yafu(C90, tool, 4, yafu, stats)
 
-    cmd = run_tool.call_args.args[0]
+    cmd = cast("list[str]", run_tool.call_args.args[0])
     option = "-t" if tool == "nfs_cado" else "-threads"
 
     # YAFU uses a single thread unless told otherwise.

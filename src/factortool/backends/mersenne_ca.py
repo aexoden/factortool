@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 
-from typing import TYPE_CHECKING, Any, ClassVar, cast, override
+from typing import TYPE_CHECKING, ClassVar, cast, override
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -160,7 +160,7 @@ class MersenneCA(BaseBackend):
             SubmitOutcome: The outcome of the submission.
         """
         try:
-            body: Any = response.json()
+            body = cast("object", response.json())
         except ValueError:
             body = None
 
@@ -168,7 +168,7 @@ class MersenneCA(BaseBackend):
             logger.warning("mersenne.ca returned a malformed response for {}", format_number(n, truncate=False))
             return SubmitOutcome.FAILED
 
-        fields = cast("dict[str, Any]", body)
+        fields = cast("dict[str, object]", body)
 
         if warning := fields.get("warning"):
             logger.warning("mersenne.ca reported a warning for {}: {}", format_number(n, truncate=False), warning)

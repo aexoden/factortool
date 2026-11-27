@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from http import HTTPStatus
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
@@ -98,11 +99,7 @@ def test_submit_reports_the_outcome_of_a_response(
 ) -> None:
     """Test that only an error reported by the service is final, and a malformed response is worth another attempt."""
     submission = Submission(n=100, prime_factors=(2, 2, 5, 5), composite_factors=(), expires_at=0.0)
-    response = Mock(spec=requests.Response)
-    if json_error:
-        response.json.side_effect = json_error
-    else:
-        response.json.return_value = json_result
+    response = Mock(spec_set=requests.Response, json=Mock(side_effect=json_error, return_value=json_result))
     request = Mock(return_value=response)
     monkeypatch.setattr(HttpClient, "request", request)
 
@@ -134,7 +131,7 @@ def test_method_not_allowed_is_not_retried(mersenne_ca: MersenneCA, monkeypatch:
     """Test that a 405 Method Not Allowed is a permanent error, unlike FactorDB's transient one."""
     submission = Submission(n=100, prime_factors=(2, 2, 5, 5), composite_factors=(), expires_at=0.0)
     not_allowed = requests.Response()
-    not_allowed.status_code = requests.codes.method_not_allowed
+    not_allowed.status_code = HTTPStatus.METHOD_NOT_ALLOWED
     request = Mock(side_effect=[not_allowed])
     monkeypatch.setattr(mersenne_ca._http_client.session, "request", request)
 

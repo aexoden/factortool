@@ -10,12 +10,14 @@ import signal
 import sys
 import time
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import Mock, call
 
 if TYPE_CHECKING:
     from collections.abc import Collection
     from pathlib import Path
+
+    from factortool.config import Config
 
 import pytest
 
@@ -358,7 +360,7 @@ def test_the_options_override_the_configuration(
     with pytest.raises(SystemExit):
         main()
 
-    (config,) = validate_tools.call_args.args
+    (config,) = cast("tuple[Config]", validate_tools.call_args.args)
 
     assert (config.backend, config.factoring_mode, config.max_threads) == expected
 

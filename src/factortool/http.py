@@ -10,6 +10,7 @@ import threading
 import time
 
 from email.utils import parsedate_to_datetime
+from http import HTTPStatus
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
@@ -308,7 +309,7 @@ class HttpClient:
                     time.monotonic() - start_time,
                 )
 
-                if response.status_code == requests.codes.too_many_requests:
+                if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
                     rate_limit_delay = self._note_rate_limit(response)
                     reason = f"Rate limited by {self._service_name} (429)"
                 elif response.status_code in self._transient_status_codes:
@@ -322,7 +323,7 @@ class HttpClient:
                 logger.debug("{} {} timed out after {:.2f}s", method, url, time.monotonic() - start_time)
             except requests.HTTPError as e:
                 error = e
-                status = getattr(e.response, "status_code", None)
+                status = e.response.status_code if e.response is not None else None
                 reason = f"Unexpected HTTP {status} from {self._service_name}: {e}"
 
                 if is_permanent_client_error(status):

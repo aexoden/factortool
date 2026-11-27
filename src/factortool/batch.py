@@ -93,7 +93,7 @@ class BatchController:
         items_per_second = items_per_second * batch_size_factor + self._state.items_per_second * (1 - batch_size_factor)
 
         time_since_update = time.time() - self._state.last_update
-        factor = pow(1 - BATCH_DECAY_RATE, time_since_update)
+        factor = math.pow(1 - BATCH_DECAY_RATE, time_since_update)
         new_items_per_second = self._state.items_per_second * factor + items_per_second * (1 - factor)
 
         logger.debug(

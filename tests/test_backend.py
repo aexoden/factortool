@@ -8,7 +8,8 @@ import math
 import threading
 import time
 
-from typing import TYPE_CHECKING, Any, ClassVar, override
+from http import HTTPStatus
+from typing import TYPE_CHECKING, ClassVar, cast, override
 from unittest.mock import Mock, call
 
 if TYPE_CHECKING:
@@ -189,8 +190,16 @@ def rpc_error(code: int, message: str) -> Mock:
     Returns:
         Mock: The response mock.
     """
-    body = [{"jsonrpc": "2.0", "id": 0, "error": {"code": code, "message": message}}]
-    return Mock(spec=requests.Response, json=Mock(return_value=body))
+    return Mock(spec=requests.Response, json=Mock(return_value=rpc_error_body(code, message)))
+
+
+def rpc_error_body(code: int, message: str) -> list[dict[str, object]]:
+    """Build the body of an HTTP response carrying a single JSON-RPC error.
+
+    Returns:
+        list[dict[str, object]]: The decoded body.
+    """
+    return [{"jsonrpc": "2.0", "id": 0, "error": {"code": code, "message": message}}]
 
 
 def row(n: int, fid: int = 1) -> dict[str, object]:
@@ -203,13 +212,27 @@ def row(n: int, fid: int = 1) -> dict[str, object]:
     return {"fid": fid, "digits": len(decimal), "preview": decimal[:100], "tail": decimal[100:][-100:], "term": ""}
 
 
-def rpc_calls(http_request: Mock) -> list[tuple[str, dict[str, Any]]]:
+def rpc_calls(http_request: Mock) -> list[tuple[str, dict[str, object]]]:
     """Collect the JSON-RPC calls made through a recording request mock.
 
     Returns:
-        list[tuple[str, dict[str, Any]]]: The method and parameters of each call, in order.
+        list[tuple[str, dict[str, object]]]: The method and parameters of each call, in order.
     """
-    return [(c["method"], c["params"]) for request in http_request.call_args_list for c in request.kwargs["json"]]
+    return [
+        (cast("str", c["method"]), cast("dict[str, object]", c["params"]))
+        for request in http_request.call_args_list
+        for c in cast("list[dict[str, object]]", request.kwargs["json"])
+    ]
+
+
+def target_expr(params: Mapping[str, object]) -> str:
+    """Get the expression of the number a JSON-RPC call targets.
+
+    Returns:
+        str: The target's expression.
+    """
+    target = cast("dict[str, object]", params["target"])
+    return cast("str", target["expr"])
 
 
 @pytest.fixture
@@ -240,25 +263,25 @@ def factordb(config: Config) -> Iterator[FactorDB]:
 
 def test_trial_factoring_submits_to_generic_backend_once(config: Config) -> None:
     """Test that a completed number is submitted once to a generic backend."""
-    backend = Mock(spec=Backend)
     submissions: list[tuple[Number, list[int], list[int]]] = []
 
     def record_submission(numbers: Collection[Number]) -> None:
         submissions.extend((number, number.prime_factors.copy(), number.composite_factors.copy()) for number in numbers)
 
-    backend.submit.side_effect = record_submission
+    submit = Mock(side_effect=record_submission)
+    backend = Mock(spec_set=Backend, submit=submit)
     number = Number(15, config, FactoringStats(config.stats_path, read_only=True), backend)
 
     number.factor_tf()
 
     assert number.factored
     assert submissions == [(number, [3, 5], [])]
-    backend.submit.assert_called_once_with([number])
+    submit.assert_called_once_with([number])
 
     number.factor_tf()
 
     assert submissions == [(number, [3, 5], [])]
-    backend.submit.assert_called_once_with([number])
+    submit.assert_called_once_with([number])
 
 
 def test_parse_composites_reads_one_number_per_line() -> None:
@@ -887,9 +910,9 @@ def make_factor_submission_responder(results_by_target: Mapping[str, object]) ->
         Callable[..., Mock]: A request callback returning a mock HTTP response containing the JSON-RPC results.
     """
 
-    def respond(*_args: object, json: list[dict[str, Any]], **_kwargs: object) -> Mock:
+    def respond(*_args: object, json: list[dict[str, object]], **_kwargs: object) -> Mock:
         results = [
-            results_by_target[c["params"]["target"]["expr"]]
+            results_by_target[target_expr(cast("dict[str, object]", c["params"]))]
             if c["method"] == "report_factors"
             else {"found": True, "login": "x"}
             for c in json
@@ -1007,7 +1030,7 @@ def test_factordb_submits_a_batch_in_one_request(factordb: FactorDB, http_reques
     assert factordb._submit_numbers(submissions) == [SubmitOutcome.ACCEPTED] * len(submissions)
 
     http_request.assert_called_once()
-    assert [params["target"]["expr"] for _, params in rpc_calls(http_request)] == ["15", "21", "35"]
+    assert [target_expr(params) for _, params in rpc_calls(http_request)] == ["15", "21", "35"]
 
 
 def test_factordb_reports_the_outcome_of_each_call_in_a_batch(factordb: FactorDB, http_request: Mock) -> None:
@@ -1035,12 +1058,12 @@ def test_factordb_reports_the_outcome_of_each_call_in_a_batch(factordb: FactorDB
     ]
 
     http_request.assert_called_once()
-    assert [params["target"]["expr"] for _, params in rpc_calls(http_request)] == ["15", "21", "35", "77"]
+    assert [target_expr(params) for _, params in rpc_calls(http_request)] == ["15", "21", "35", "77"]
 
 
 @pytest.mark.parametrize(
     "error",
-    [PermanentHttpError("HTTP 400"), rpc_error(-32600, "invalid request").json()[0] | {"id": None}],
+    [PermanentHttpError("HTTP 400"), rpc_error_body(-32600, "invalid request")[0] | {"id": None}],
     ids=["http", "rpc"],
 )
 def test_factordb_keeps_a_batch_that_is_refused_for_the_next_run(
@@ -1287,7 +1310,7 @@ def test_parse_rpc_responses_rejects_malformed_responses(body: object) -> None:
 def test_parse_rpc_responses_treats_invalid_requests_as_permanent(code: int) -> None:
     """Test that errors indicating an invalid request are not retried."""
     with pytest.raises(PermanentHttpError, match="unsupported"):
-        _ = parse_rpc_responses(rpc_error(code, "unsupported").json(), 1)
+        _ = parse_rpc_responses(rpc_error_body(code, "unsupported"), 1)
 
 
 @pytest.mark.parametrize("batch", [False, True], ids=["single", "batch"])
@@ -1302,7 +1325,7 @@ def test_parse_rpc_responses_raises_errors_without_an_id(*, batch: bool) -> None
 def test_parse_rpc_responses_raises_other_errors() -> None:
     """Test that other errors are raised as ordinary request exceptions."""
     with pytest.raises(RpcError, match="Division by zero") as exc_info:
-        _ = parse_rpc_responses(rpc_error(-32000, "eval: Division by zero").json(), 1)
+        _ = parse_rpc_responses(rpc_error_body(-32000, "eval: Division by zero"), 1)
 
     assert not isinstance(exc_info.value, PermanentHttpError)
 
@@ -1375,9 +1398,9 @@ def test_factordb_without_token_is_anonymous(factordb: FactorDB, http_request: M
 def test_factordb_retries_method_not_allowed(factordb: FactorDB, monkeypatch: pytest.MonkeyPatch, wait: Mock) -> None:
     """Test that FactorDB's occasional 405 Method Not Allowed is retried as a transient failure."""
     not_allowed = requests.Response()
-    not_allowed.status_code = requests.codes.method_not_allowed
+    not_allowed.status_code = HTTPStatus.METHOD_NOT_ALLOWED
     ok = rpc_response({"rows": [row(15)], "has_more": False})
-    ok.status_code = requests.codes.ok
+    ok.status_code = HTTPStatus.OK
     monkeypatch.setattr(factordb._http_client.session, "request", Mock(side_effect=[not_allowed, ok]))
 
     assert [x.n for x in factordb.fetch(FetchCriteria(count=1, min_digits=2))] == [15]

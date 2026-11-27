@@ -84,10 +84,18 @@ FactoringMode = Literal["standard", "yafu"]
 
 RequestInterval = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
+
+def _upper_if_str(value: object) -> object:
+    """Convert a string to upper case, leaving any other value for validation to reject.
+
+    Returns:
+        object: The value, in upper case if it is a string.
+    """
+    return value.upper() if isinstance(value, str) else value
+
+
 # Log levels are case-insensitive.
-CaseInsensitiveLogLevel = Annotated[
-    LogLevel, BeforeValidator(lambda value: value.upper() if isinstance(value, str) else value)
-]
+CaseInsensitiveLogLevel = Annotated[LogLevel, BeforeValidator(_upper_if_str)]
 
 
 def _setting_names(data: object) -> set[str]:
@@ -347,7 +355,7 @@ def load_config(path: Path, **overrides: object) -> Config:
             if error["loc"]:
                 logger.error("--{} ({}) is invalid: {}", error["loc"][0], error["input"], error["msg"])
             else:
-                reason = error.get("ctx", {}).get("error", error["msg"])
+                reason = cast("object", error.get("ctx", {}).get("error", error["msg"]))
                 logger.error("Configuration error with the given options: {}", reason)
 
         sys.exit(ExitStatus.INVALID_INPUT)

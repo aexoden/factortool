@@ -7,7 +7,7 @@ from __future__ import annotations
 import time
 
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Any, Self
+from typing import IO, TYPE_CHECKING, Self, cast
 from unittest.mock import Mock
 
 if TYPE_CHECKING:
@@ -209,8 +209,15 @@ def fail_appends_partway(monkeypatch: pytest.MonkeyPatch, path: Path, count: int
     remaining = [count]
     real_open = Path.open
 
-    def open_failing_partway(self: Path, mode: str = "r", *args: Any, **kwargs: Any) -> IO[Any] | PartiallyFailingFile:  # ruff: ignore[any-type] (Mirrors Path.open)
-        f = real_open(self, mode, *args, **kwargs)
+    def open_failing_partway(  # ruff: ignore[too-many-arguments, too-many-positional-arguments] (Mirrors Path.open)
+        self: Path,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> IO[str] | PartiallyFailingFile:
+        f = cast("IO[str]", real_open(self, mode, buffering, encoding, errors, newline))
 
         if self == path and mode == "a" and remaining[0] > 0:
             remaining[0] -= 1
