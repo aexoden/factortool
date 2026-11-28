@@ -22,6 +22,7 @@ from factortool.constants import MAX_CONSECUTIVE_TOOL_FAILURES
 from factortool.engine import EngineStatus, FactorEngine, TimeLimits
 from factortool.interrupt import ABORT, FINISH_BATCH, POLL_INTERVAL, STOP_SOON, Interrupted, InterruptState
 from factortool.number import Number
+from factortool.progress import CompositeProgress
 from factortool.stats import ECMCutoffs, FactoringStats
 from factortool.tools import YafuError, run_tool, tool_failures
 
@@ -81,7 +82,7 @@ def run_interrupted_on(
 
     def factor_ecm(self: Number, level: int) -> None:
         factor(self)
-        self._ecm_level = level
+        self._progress = {n: CompositeProgress(n=n, ecm_level=level) for n in self.composite_factors}
 
     for method in ("factor_yafu_direct", "factor_tf", "factor_rho", "factor_pm1", "factor_final"):
         monkeypatch.setattr(f"factortool.number.Number.{method}", factor, raising=True)
@@ -364,7 +365,7 @@ def test_a_number_set_aside_is_skipped_by_the_later_stages(monkeypatch: pytest.M
     monkeypatch.setattr("factortool.number.Number.factor_rho", factor_rho, raising=True)
     monkeypatch.setattr("factortool.number.Number.factor_pm1", record("pm1"), raising=True)
     monkeypatch.setattr("factortool.number.Number.factor_final", record("final"), raising=True)
-    monkeypatch.setattr("factortool.number.Number.ecm_cutoffs", ECMCutoffs(0, 0), raising=True)
+    monkeypatch.setattr("factortool.number.Number._ecm_cutoffs", Mock(return_value=ECMCutoffs(0, 0)), raising=True)
 
     assert engine.run([failing, other]) == EngineStatus.SUCCESS
     assert attempted == [("pm1", other.n), ("final", other.n)]
@@ -747,3 +748,32 @@ def test_composites_too_small_for_nfs_are_finished_with_siqs(monkeypatch: pytest
     assert methods[-1] == "siqs"
     assert number.factored
     assert sorted(number.prime_factors) == C41_FACTORS
+
+
+def test_ecm_skips_levels_a_number_has_already_done(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that the engine keeps going through levels a pending number's composites have already reached."""
+    config = make_config()
+
+    def get_ecm_cutoffs(digits: int, *_args: object) -> ECMCutoffs:
+        return ECMCutoffs(None, {3: 2, 4: 4}[digits])
+
+    stats = Mock(
+        spec_set=FactoringStats,
+        get_ecm_cutoffs=Mock(side_effect=get_ecm_cutoffs),
+        get_final_method=Mock(return_value="siqs"),
+    )
+    early = Number(100, config, stats, None)
+    ahead = Number(1001, config, stats, None)
+    ahead._progress = {1001: CompositeProgress(n=1001, ecm_level=3)}
+    ecm_calls: list[tuple[int, int]] = []
+
+    def factor_ecm(n: int, level: int, *_args: object) -> list[int]:
+        ecm_calls.append((n, level))
+        return [n]
+
+    for method in ("factor_tf", "factor_rho", "factor_pm1", "factor_final"):
+        monkeypatch.setattr(Number, method, Mock(), raising=True)
+    monkeypatch.setattr("factortool.number.factor_ecm", factor_ecm, raising=True)
+
+    assert FactorEngine(config, InterruptState()).run([early, ahead]) == EngineStatus.SUCCESS
+    assert ecm_calls == [(100, 2), (1001, 4)]

@@ -28,6 +28,7 @@ from factortool.number import (
     factor_yafu,
     factor_yafu_direct,
 )
+from factortool.progress import CompositeProgress
 from factortool.stats import ECMCutoffs, FactoringStats
 from factortool.tools import CadoNfsError, ToolError, ToolFailure, YafuError, run_tool
 
@@ -50,6 +51,15 @@ def is_prime_unless_c90(n: int) -> bool:
         bool: Whether n is to be treated as prime.
     """
     return n != C90
+
+
+def never_prime(_n: int) -> bool:
+    """Treat every number as composite, so that test factors need not be real primes.
+
+    Returns:
+        bool: Always False.
+    """
+    return False
 
 
 def yafu_output(factors: list[int]) -> str:
@@ -132,14 +142,14 @@ def test_small_cofactors_use_statistical_ecm_cutoffs() -> None:
     get_ecm_cutoffs = Mock(return_value=ECMCutoffs(2, 5))
     number._stats = Mock(spec_set=FactoringStats, get_ecm_cutoffs=get_ecm_cutoffs)
     number.composite_factors = [10**40 + 1]
-    number._ecm_level = 4
+    number._progress = {10**40 + 1: CompositeProgress(n=10**40 + 1, ecm_level=4)}
 
-    assert number.ecm_needed
+    assert number.ecm_needed()
 
     get_ecm_cutoffs.assert_called_once_with(41, number._config.max_threads, ("siqs",))
 
-    number._ecm_level = 5
-    assert not number.ecm_needed
+    number._progress = {10**40 + 1: CompositeProgress(n=10**40 + 1, ecm_level=5)}
+    assert not number.ecm_needed()
 
 
 def test_no_ecm_is_needed_when_the_cutoff_is_none() -> None:
@@ -147,7 +157,7 @@ def test_no_ecm_is_needed_when_the_cutoff_is_none() -> None:
     number = make_number(10**59 + 1)
     number._stats = Mock(spec_set=FactoringStats, get_ecm_cutoffs=Mock(return_value=ECMCutoffs(0, 0)))
 
-    assert not number.ecm_needed
+    assert not number.ecm_needed()
 
 
 def test_ecm_cutoff_follows_the_latest_statistics() -> None:
@@ -155,14 +165,14 @@ def test_ecm_cutoff_follows_the_latest_statistics() -> None:
     number = make_number(10**59 + 1)
     get_ecm_cutoffs = Mock()
     number._stats = Mock(spec_set=FactoringStats, get_ecm_cutoffs=get_ecm_cutoffs)
-    number._ecm_level = 10
+    number._progress = {number.n: CompositeProgress(n=number.n, ecm_level=10)}
 
     # Each reading is collected rather than asserted in turn, which type checkers would narrow as if it couldn't change.
     # In the last case, resuming would skip the levels the engine ran in the meantime.
     needed: list[bool] = []
     for cutoffs in (ECMCutoffs(None, 20), ECMCutoffs(8, 10), ECMCutoffs(8, 20)):
         get_ecm_cutoffs.return_value = cutoffs
-        needed.append(number.ecm_needed)
+        needed.append(number.ecm_needed())
 
     assert needed == [True, False, False]
 
@@ -449,7 +459,7 @@ def test_a_tool_failure_sets_the_number_aside(monkeypatch: pytest.MonkeyPatch) -
 
     assert number.tool_failed
     assert not number.active
-    assert not number.ecm_needed
+    assert not number.ecm_needed()
     assert number.composite_factors == [C90]
     assert number.started
     assert number.outcome is Outcome.FAILED
@@ -608,6 +618,7 @@ def test_an_immediate_final_run_does_not_rename_the_method_for_later_composites(
     """Test that a composite split by ECM is credited to ECM, even after another was finished for statistics."""
     number = make_number(15 * 77)
     number.composite_factors = [15, 77]
+    number._stats = Mock(spec_set=FactoringStats, get_ecm_cutoffs=Mock(return_value=ECMCutoffs(None, 5)))
 
     def factor_ecm(n: int, *_args: object) -> list[int]:
         if n == 15:  # ruff: ignore[magic-value-comparison]
@@ -627,3 +638,106 @@ def test_an_immediate_final_run_does_not_rename_the_method_for_later_composites(
 
     assert number.methods == ["SIQS", "ECM"]
     assert sorted(number.prime_factors) == [3, 5, 7, 11]
+
+
+def test_a_factor_equal_to_another_composite_keeps_the_progress_of_both(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a split producing a composite already present doesn't lose the progress recorded for it."""
+    a, b = 1001, 1003
+    number = make_number(a * b * b)
+    number.composite_factors = [a * b, b]
+    number._progress = {b: CompositeProgress(n=b, completed=frozenset({"rho"}), ecm_level=3)}
+    factor_yafu = Mock(return_value=[a, b])
+    monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
+    monkeypatch.setattr("factortool.number.is_prime", never_prime, raising=True)
+
+    number.factor_pm1()
+
+    factor_yafu.assert_called_once_with(a * b, "pm1", *number._yafu_args)
+    assert sorted(number.composite_factors) == [a, b, b]
+    assert number._progress_of(b) == CompositeProgress(n=b, completed=frozenset({"rho", "pm1"}), ecm_level=3)
+
+
+def test_factors_found_by_yafu_inherit_the_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that YAFU's factor() runs whatever the progress, and passes it on to any composite factors it leaves."""
+    a, b = 1001, 1003
+    number = make_number(a * b)
+    progress = CompositeProgress(n=a * b, completed=frozenset({"tf", "rho", "pm1"}), ecm_level=10)
+    number._progress = {a * b: progress}
+    monkeypatch.setattr("factortool.number.factor_yafu_direct", Mock(return_value=[a, b]), raising=True)
+    monkeypatch.setattr("factortool.number.is_prime", never_prime, raising=True)
+
+    number.factor_yafu_direct()
+
+    assert [number._progress_of(n) for n in (a, b)] == [progress.for_factor(a), progress.for_factor(b)]
+
+
+def test_ecm_runs_each_composite_up_to_its_own_cutoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a small composite stops ECM at its own cutoff rather than following the largest one."""
+    small, large = 10**30 + 1, 10**50 + 1
+    number = make_number(small * large)
+    number.composite_factors = [small, large]
+    targets = {31: 3, 51: 5}
+
+    def get_ecm_cutoffs(digits: int, *_args: object) -> ECMCutoffs:
+        return ECMCutoffs(None, targets[digits])
+
+    number._stats = Mock(spec_set=FactoringStats, get_ecm_cutoffs=Mock(side_effect=get_ecm_cutoffs))
+    calls: list[tuple[int, int]] = []
+
+    def factor_ecm(n: int, level: int, *_args: object) -> list[int]:
+        calls.append((n, level))
+        return [n]
+
+    monkeypatch.setattr("factortool.number.factor_ecm", factor_ecm, raising=True)
+    monkeypatch.setattr("factortool.number.is_prime", never_prime, raising=True)
+
+    for level in range(2, 7):
+        assert number.ecm_needed(level) == (level <= max(targets.values()))
+        number.factor_ecm(level)
+
+    assert calls == [(small, 2), (large, 2), (small, 3), (large, 3), (large, 4), (large, 5)]
+    assert not number.ecm_needed()
+    assert [number._progress_of(n).ecm_level for n in (small, large)] == [3, 5]
+
+
+def test_factors_of_a_composite_inherit_its_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that composites split from another keep the work done on it, so it is not repeated on them."""
+    a, b, c = 1001, 1003, 1007
+    number = make_number(a * b * c)
+    splits = {a * b * c: [a, b * c], b * c: [b, c]}
+    calls: list[tuple[str, int]] = []
+
+    def factor_yafu(n: int, method: str, *_args: object) -> list[int]:
+        calls.append((method, n))
+        return [n] if method == "pm1" else splits[n]
+
+    def factor_ecm(n: int, level: int, *_args: object) -> list[int]:
+        calls.append((f"ecm{level}", n))
+        return splits.get(n, [n])
+
+    monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
+    monkeypatch.setattr("factortool.number.factor_ecm", factor_ecm, raising=True)
+    monkeypatch.setattr("factortool.number.is_prime", never_prime, raising=True)
+    number._stats = Mock(spec_set=FactoringStats, get_ecm_cutoffs=Mock(return_value=ECMCutoffs(None, 3)))
+
+    number.factor_rho()
+    number.factor_rho()
+    number.factor_pm1()
+    number.factor_ecm(2)
+    number.factor_ecm(3)
+
+    assert calls == [
+        ("rho", a * b * c),
+        ("pm1", a),
+        ("pm1", b * c),
+        ("ecm2", a),
+        ("ecm2", b * c),
+        ("ecm3", a),
+        ("ecm3", b),
+        ("ecm3", c),
+    ]
+    assert {n: number._progress_of(n) for n in number.composite_factors} == {
+        a: CompositeProgress(n=a, completed=frozenset({"rho", "pm1"}), ecm_level=3),
+        b: CompositeProgress(n=b, completed=frozenset({"rho", "pm1"}), ecm_level=3),
+        c: CompositeProgress(n=c, completed=frozenset({"rho", "pm1"}), ecm_level=3),
+    }

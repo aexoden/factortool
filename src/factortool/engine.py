@@ -297,10 +297,14 @@ class FactorEngine:
         # Attempt to factor each number via ECM.
         for ecm_level in range(ECM_MIN_LEVEL, ECM_MAX_LEVEL + 1):
             overall_number_count = len([x for x in numbers if x.active])
-            ecm_numbers = [x for x in numbers if x.ecm_needed and not self._skip_expired(x)]
+            ecm_numbers = [x for x in numbers if x.ecm_needed(ecm_level) and not self._skip_expired(x)]
             ecm_number_count = len(ecm_numbers)
 
             if ecm_number_count == 0:
+                # A composite may already have reached this level, while still needing later ones.
+                if any(x.ecm_needed() and not self._skip_expired(x) for x in numbers):
+                    continue
+
                 break
 
             curves, b1 = ECM_CURVES[ecm_level]

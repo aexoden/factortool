@@ -110,11 +110,14 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- ECM amounts are chosen better: cofactors whose digit count was never seen
-  as an input number no longer do far too much ECM, cofactors below the CADO-NFS
-  minimum no longer run ECM until they are factored instead of switching to
-  SIQS, ECM is skipped entirely when the statistics say none is worthwhile, and
-  gaps in the ECM statistics are handled.
+- ECM amounts are chosen better: each remaining composite of a number does the
+  ECM its own size calls for, rather than all of them doing the amount the
+  largest calls for (which also skewed the statistics for the smaller sizes),
+  cofactors whose digit count was never seen as an input number no longer do
+  far too much ECM, cofactors below the CADO-NFS minimum no longer run ECM until
+  they are factored instead of switching to SIQS, ECM is skipped entirely when
+  the statistics say none is worthwhile, and gaps in the ECM statistics are
+  handled.
 - Statistics updates from concurrent workers are no longer lost.
 - Errors in the rho and P-1 workers are no longer silently ignored.
 - External tools receive the full environment, less factortool's own Python

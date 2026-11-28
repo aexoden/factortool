@@ -25,13 +25,21 @@ from factortool.constants import (
     NFS_CADO_MIN_DIGITS,
     NFS_YAFU_MIN_DIGITS,
 )
+from factortool.progress import CompositeProgress
 from factortool.tools import ToolFailure, run_cado_nfs, run_yafu
 from factortool.util import format_number, is_prime, log_factor_result, small_primes
 
 if TYPE_CHECKING:
     from factortool.config import Config, FinalMethods, YafuPaths
+    from factortool.progress import PretestMethod
     from factortool.stats import ECMCutoffs, FactoringStats
     from factortool.submissions import Submission
+
+PRETEST_METHOD_NAMES: dict[PretestMethod, str] = {
+    "tf": "TF",
+    "rho": "Rho",
+    "pm1": "P-1",
+}
 
 YAFU_METHOD_NAMES: dict[str, str] = {
     "rho": "Rho",
@@ -265,8 +273,8 @@ class Number:
     started: bool
     tool_failed: bool
 
-    _ecm_level: int
-    _ecm_finished: bool
+    _progress: dict[int, CompositeProgress]
+    _ecm_finished: set[int]
     _stats: FactoringStats
     _config: Config
     _backend: ResultSink | None
@@ -293,8 +301,8 @@ class Number:
         self.started = False
         self.tool_failed = False
 
-        self._ecm_level = 0
-        self._ecm_finished = False
+        self._progress = {}
+        self._ecm_finished = set()
 
         if factors and (math.prod(factors) != n or min(factors) <= 1):
             logger.warning(
@@ -383,29 +391,55 @@ class Number:
         self._backend.submit([self])
         self._submitted = True
 
-    @property
-    def ecm_needed(self) -> bool:
-        """Determine if further ECM factoring is needed, based on the latest statistics.
+    def ecm_needed(self, level: int | None = None) -> bool:
+        """Whether any remaining composite needs further ECM, based on the latest statistics.
 
-        Once a number has finished ECM, it stays finished even if the cutoff shifts later.
+        If a level is given, only a composite that needs ECM and has not yet reached that level counts.
+
+        Returns:
+            bool: True if ECM would be run on at least one composite.
         """
-        if self._ecm_finished or not self.active:
+        return self.active and any(
+            self._ecm_needed(n) and (level is None or self._progress_of(n).ecm_level < level)
+            for n in self.composite_factors
+        )
+
+    def _ecm_needed(self, n: int) -> bool:
+        """Whether a composite needs further ECM, based on the latest statistics for its own size.
+
+        Once a composite has finished ECM, it stays finished even if the cutoff shifts later, as resuming would skip
+        the levels run on other composites in the meantime.
+
+        Returns:
+            bool: True if the composite has not yet reached its ECM cutoff.
+        """
+        if n in self._ecm_finished:
             return False
 
-        if self._ecm_level < self.ecm_cutoffs.target:
+        if self._progress_of(n).ecm_level < self._ecm_cutoffs(n).target:
             return True
 
-        self._ecm_finished = True
+        self._ecm_finished.add(n)
         return False
 
-    @property
-    def ecm_cutoffs(self) -> ECMCutoffs:
-        """The optimal and target ECM cutoffs for the largest remaining composite factor."""
-        # We use the largest remaining composite factor, as that's the largest number we're still actually factoring.
-        digits = len(str(max(self.composite_factors)))
+    def _ecm_cutoffs(self, n: int) -> ECMCutoffs:
+        """The optimal and target ECM cutoffs for a composite of the given size.
+
+        Returns:
+            ECMCutoffs: The cutoffs for the composite.
+        """
+        digits = len(str(n))
         methods = self._config.final_methods.for_digits(digits)
 
         return self._stats.get_ecm_cutoffs(digits, self._config.max_threads, methods)
+
+    def _progress_of(self, n: int) -> CompositeProgress:
+        """The standard-mode work done so far on a remaining composite.
+
+        Returns:
+            CompositeProgress: The composite's progress.
+        """
+        return self._progress.get(n) or CompositeProgress(n=n)
 
     @property
     def final_method(self) -> str:
@@ -455,10 +489,10 @@ class Number:
         logger.warning("{}. Leaving {} unfactored", failure, format_number(self.n))
         self.tool_failed = True
 
-    def _replace_composite(self, n: int, method: str, factors: list[int]) -> list[int]:
+    def _replace_composite(self, n: int, method: str, factors: list[int], progress: CompositeProgress) -> list[int]:
         """Replace a composite factor with the factors a method found for it.
 
-        Progress on a number that remains unfinished is checkpointed at once.
+        Each composite factor found, or the composite itself if it did not split, takes the given progress.
 
         Returns:
             list[int]: The factors that are themselves composite.
@@ -467,12 +501,20 @@ class Number:
             self.methods.append(method)
 
         self.composite_factors.remove(n)
+
+        if n not in self.composite_factors:
+            _ = self._progress.pop(n, None)
+
         composites: list[int] = []
 
         for factor in factors:
             if is_prime(factor):
                 self.prime_factors.append(factor)
             else:
+                # A factor may equal another remaining composite, whose own progress is kept as well.
+                inherited = progress.for_factor(factor)
+                existing = self._progress.get(factor)
+                self._progress[factor] = inherited if existing is None else existing.merged(inherited)
                 self.composite_factors.append(factor)
                 composites.append(factor)
 
@@ -516,7 +558,9 @@ class Number:
                 failure = e
             else:
                 if len(factors) > 1:
-                    for composite in self._replace_composite(n, FINAL_METHOD_NAMES[method], factors):
+                    progress = self._progress_of(n)
+
+                    for composite in self._replace_composite(n, FINAL_METHOD_NAMES[method], factors, progress):
                         self._factor_final(composite)
 
                     return
@@ -533,14 +577,22 @@ class Number:
     def _factor_generic(
         self,
         method: str,
+        advance: Callable[[CompositeProgress], CompositeProgress | None],
         factor_func: Callable[..., list[int]],
         *args: int | str | Path | YafuPaths | FinalMethods | FactoringStats,
     ) -> None:
+        """Run a method on each remaining composite that still needs it.
+
+        The advance function gives a composite's progress once the method has run on it, or None to skip it.
+        """
         self.started = True
 
         for n in list(self.composite_factors):
+            if n not in self.composite_factors or (progress := advance(self._progress_of(n))) is None:
+                continue
+
             try:
-                _ = self._replace_composite(n, method, factor_func(n, *args))
+                _ = self._replace_composite(n, method, factor_func(n, *args), progress)
             except FinalMethodNeeded as e:
                 logger.info("Immediately doing {} on {} for statistics", FINAL_METHOD_NAMES[e.method], format_number(n))
                 self._factor_final(n, e.method)
@@ -552,26 +604,48 @@ class Number:
 
         self._finish()
 
+    def _factor_pretest(
+        self,
+        method: PretestMethod,
+        factor_func: Callable[..., list[int]],
+        *args: int | str | Path | YafuPaths | FinalMethods | FactoringStats,
+    ) -> None:
+        """Run a method that is done once per composite on each remaining composite not yet given it."""
+
+        def advance(progress: CompositeProgress) -> CompositeProgress | None:
+            return None if method in progress.completed else progress.after(method)
+
+        self._factor_generic(PRETEST_METHOD_NAMES[method], advance, factor_func, *args)
+
     def factor_yafu_direct(self) -> None:
-        """Factor using YAFU's automatic method selection."""
-        self._factor_generic("YAFU", factor_yafu_direct, *self._yafu_args)
+        """Factor using YAFU's automatic method selection.
+
+        YAFU does its own pretesting, so the progress recorded by the standard methods is not consulted.
+        """
+        self._factor_generic("YAFU", lambda progress: progress, factor_yafu_direct, *self._yafu_args)
 
     def factor_tf(self) -> None:
         """Factor using trial factoring."""
-        self._factor_generic("TF", factor_tf, self._stats)
+        self._factor_pretest("tf", factor_tf, self._stats)
 
     def factor_rho(self) -> None:
         """Factor using Pollard's Rho algorithm."""
-        self._factor_generic("Rho", factor_yafu, "rho", *self._yafu_args)
+        self._factor_pretest("rho", factor_yafu, "rho", *self._yafu_args)
 
     def factor_pm1(self) -> None:
         """Factor using Pollard's P-1 algorithm."""
-        self._factor_generic("P-1", factor_yafu, "pm1", *self._yafu_args)
+        self._factor_pretest("pm1", factor_yafu, "pm1", *self._yafu_args)
 
     def factor_ecm(self, level: int) -> None:
-        """Factor using ECM at the specified level."""
-        self._factor_generic("ECM", factor_ecm, level, self._config.final_methods, *self._yafu_args)
-        self._ecm_level = level
+        """Factor using ECM at the specified level, on each remaining composite that needs it."""
+
+        def advance(progress: CompositeProgress) -> CompositeProgress | None:
+            if progress.ecm_level >= level or not self._ecm_needed(progress.n):
+                return None
+
+            return progress.model_copy(update={"ecm_level": level})
+
+        self._factor_generic("ECM", advance, factor_ecm, level, self._config.final_methods, *self._yafu_args)
 
     def factor_final(self) -> None:
         """Factor each remaining composite using its own fastest final method, falling back to the others."""
