@@ -265,7 +265,8 @@ prek install
 ```
 
 Python uses [uv](https://docs.astral.sh/uv/), which installs the Python version
-pinned in `.python-version`.
+pinned in `.python-version`. `AGENTS.md` describes the commands, conventions
+and architecture in more detail.
 
 ## License
 
