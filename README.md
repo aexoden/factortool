@@ -76,8 +76,9 @@ You may then run the program. It accepts the following options:
 
 An overridden setting is validated as if it were in the configuration file. The
 automatic batch size is measured separately for each backend, factoring mode and
-thread count (as well as for each digit range and skip count), so changing any
-of them starts the measurement over.
+thread count (as well as for each digit range and skip count). Each combination
+keeps its own measurement, so a run with different settings doesn't disturb the
+others, and a measurement not updated for two hours is discarded.
 
 Log messages are written to standard error. The `log_level` setting (`INFO` by
 default) chooses the least severe messages that are shown. `INFO` shows each

@@ -101,6 +101,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   and only a `factordb` run with an automatic batch size is limited to twice
   the target duration by default. Any other run, including one with
   `--batch_size`, now has no limit unless `--time_limit` is given.
+- The automatic batch size is measured separately for each backend, factoring
+  mode, thread count, digit range and skip count, and each keeps its own
+  measurement, so a run with different settings no longer starts the usual
+  measurement over.
 - ECM cutoffs are reevaluated during a run as the statistics change, rather
   than fixed at its start.
 - The results file lists only the numbers a run found new factors of, in
