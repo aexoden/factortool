@@ -123,6 +123,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   they are factored instead of switching to SIQS, ECM is skipped entirely when
   the statistics say none is worthwhile, and gaps in the ECM statistics are
   handled.
+- The automatic batch size no longer stays at one or two numbers for many runs
+  after its measurement starts over. Every number factored now counts equally
+  toward the measured rate, whatever the size of its batch, and the batch grows
+  to the target duration, at most doubling each run, so that an unusually
+  quick first number can't lead to an oversized batch.
 - Statistics updates from concurrent workers are no longer lost.
 - Errors in the rho and P-1 workers are no longer silently ignored.
 - External tools receive the full environment, less factortool's own Python

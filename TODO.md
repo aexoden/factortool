@@ -7,15 +7,6 @@ later ones.
 
 ## Code/Architectural Improvements
 
-- Dynamic batch sizes can be slow to ramp up. This may not be as bad as it was
-  in the past, but it's still worth looking at once more. One cause: after a
-  reset, the first measurement is weighted by the time since the last update,
-  which is close to nothing for a fast batch. Seeding directly from the first
-  measurement when there's no prior rate would help. Resets can also be more
-  common, as the batch key includes `max_threads` and `factoring_mode`, which
-  can be changed for a single run.
-  As the batch state is one of the files the SQLite move would absorb, do this
-  first, so the migration only has to carry the final format.
 - Consider setting the default factoring mode to yafu. In most cases, it makes
   more sense. Should do some performance comparisons between standard and yafu
   (and maybe a depth-first standard--though that has multithreading issues to

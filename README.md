@@ -78,7 +78,12 @@ An overridden setting is validated as if it were in the configuration file. The
 automatic batch size is measured separately for each backend, factoring mode and
 thread count (as well as for each digit range and skip count). Each combination
 keeps its own measurement, so a run with different settings doesn't disturb the
-others, and a measurement not updated for two hours is discarded.
+others, and a measurement not updated for two hours is discarded. Every number
+factored counts equally toward the measured rate, with recent ones counting
+more than older ones. A new measurement starts with a batch of one, and each
+batch is at most twice the most numbers factored in one batch so far, so the
+batch size works up to the target duration over several runs rather than
+trusting the first few numbers.
 
 Log messages are written to standard error. The `log_level` setting (`INFO` by
 default) chooses the least severe messages that are shown. `INFO` shows each
