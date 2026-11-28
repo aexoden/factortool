@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 import pytest
 
 from factortool.assignments import Assignment, AssignmentState, AssignmentStore
+from factortool.progress import CompositeProgress
 
 # How long mersenne.ca reserves an assignment.
 LIFETIME = 3600.0
@@ -68,6 +69,32 @@ def test_factors_found_so_far_round_trip(tmp_path: Path) -> None:
     AssignmentStore(state_path, "mersenne_ca").record([assignment])
 
     assert AssignmentStore(state_path, "mersenne_ca").load() == [assignment]
+
+
+def test_progress_on_each_composite_round_trips(tmp_path: Path) -> None:
+    """Test that the work done on each unfinished composite is carried over with its assignment."""
+    state_path = tmp_path / "assignments.json"
+    progress = (
+        CompositeProgress(n=1001, completed=frozenset({"tf", "rho"}), ecm_level=12),
+        CompositeProgress(n=1003, completed=frozenset({"tf"})),
+    )
+    assignment = Assignment(
+        n=15015 * 1003, expires_at=time.time() + LIFETIME, factors=(3, 5, 1001, 1003), progress=progress
+    )
+    AssignmentStore(state_path, "mersenne_ca").record([assignment])
+
+    assert AssignmentStore(state_path, "mersenne_ca").load() == [assignment]
+
+
+def test_an_assignment_saved_without_progress_loads(tmp_path: Path) -> None:
+    """Test that an assignment saved before progress was recorded loads with none."""
+    state_path = tmp_path / "assignments.json"
+    expires_at = time.time() + LIFETIME
+    write_state(state_path, {"assignments": [{"n": 15015, "expires_at": expires_at, "factors": [3, 5, 1001]}]})
+
+    assert AssignmentStore(state_path, "mersenne_ca").load() == [
+        Assignment(n=15015, expires_at=expires_at, factors=(3, 5, 1001))
+    ]
 
 
 def test_every_change_is_written_at_once(tmp_path: Path) -> None:

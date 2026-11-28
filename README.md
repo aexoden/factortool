@@ -172,9 +172,14 @@ For `factordb`, partial factorizations are submitted if a run ends after finding
 one or more factors.
 
 For `mersenne_ca`, only complete factorizations are submitted. Assignments are
-saved in the state directory. Work continues on an assignment until it expires,
-an hour after it was fetched. Once it has expired, it is dropped, and any
-factors found for it are recorded only in the results file.
+saved in the state directory, along with the factors found and, in `standard`
+mode, the methods already run on each remaining composite (trial factoring,
+rho, P-1 and the ECM level reached), so a later run resumes them without
+repeating that work. A run in `yafu` mode leaves YAFU to choose its own methods,
+but keeps the saved progress for a later `standard` run. Work continues on an
+assignment until it expires, an hour after it was fetched. Once it has expired,
+it is dropped, and any factors found for it are recorded only in the results
+file.
 
 ## Results Files
 

@@ -280,10 +280,18 @@ class Number:
     _backend: ResultSink | None
     _submitted: bool
 
-    def __init__(
-        self, n: int, config: Config, stats: FactoringStats, backend: ResultSink | None, factors: Sequence[int] = ()
+    def __init__(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
+        self,
+        n: int,
+        config: Config,
+        stats: FactoringStats,
+        backend: ResultSink | None,
+        factors: Sequence[int] = (),
+        progress: Iterable[CompositeProgress] = (),
     ) -> None:
-        """Initialize the number object, optionally resuming from factors found by a previous run.
+        """Initialize the number object, optionally resuming from the factors and progress of a previous run.
+
+        Progress is kept only for the composites among the factors, and only if the factors are a factorization.
 
         Raises:
             ValueError: If the number is below the minimum factorable value.
@@ -301,7 +309,6 @@ class Number:
         self.started = False
         self.tool_failed = False
 
-        self._progress = {}
         self._ecm_finished = set()
 
         if factors and (math.prod(factors) != n or min(factors) <= 1):
@@ -310,10 +317,12 @@ class Number:
                 format_number(n, truncate=False),
             )
             factors = ()
+            progress = ()
 
         known_factors = factors or (n,)
         self.prime_factors = [x for x in known_factors if is_prime(x)]
         self.composite_factors = [x for x in known_factors if not is_prime(x)]
+        self._progress = {x.n: x for x in progress if x.n in self.composite_factors}
 
         self.methods = []
 
@@ -433,6 +442,13 @@ class Number:
 
         return self._stats.get_ecm_cutoffs(digits, self._config.max_threads, methods)
 
+    @property
+    def progress(self) -> tuple[CompositeProgress, ...]:
+        """The standard-mode work done so far on each remaining composite that has had any, smallest first."""
+        return tuple(
+            sorted((self._progress[n] for n in set(self.composite_factors) if n in self._progress), key=lambda x: x.n)
+        )
+
     def _progress_of(self, n: int) -> CompositeProgress:
         """The standard-mode work done so far on a remaining composite.
 
@@ -492,7 +508,8 @@ class Number:
     def _replace_composite(self, n: int, method: str, factors: list[int], progress: CompositeProgress) -> list[int]:
         """Replace a composite factor with the factors a method found for it.
 
-        Each composite factor found, or the composite itself if it did not split, takes the given progress.
+        Each composite factor found, or the composite itself if it did not split, takes the given progress. Any change
+        to an unfinished number is checkpointed at once.
 
         Returns:
             list[int]: The factors that are themselves composite.
@@ -500,6 +517,7 @@ class Number:
         if len(factors) > 1:
             self.methods.append(method)
 
+        changed = len(factors) > 1 or self._progress_of(n) != progress
         self.composite_factors.remove(n)
 
         if n not in self.composite_factors:
@@ -518,7 +536,7 @@ class Number:
                 self.composite_factors.append(factor)
                 composites.append(factor)
 
-        if len(factors) > 1 and not self.factored and self._backend is not None:
+        if changed and not self.factored and self._backend is not None:
             self._backend.checkpoint(self)
 
         return composites
@@ -583,13 +601,14 @@ class Number:
     ) -> None:
         """Run a method on each remaining composite that still needs it.
 
-        The advance function gives a composite's progress once the method has run on it, or None to skip it.
+        The advance function gives a composite's progress once the method has run on it, or None to skip it. A number
+        counts as started only once a method has been run on it, rather than skipped for work a previous run saved.
         """
-        self.started = True
-
         for n in list(self.composite_factors):
             if n not in self.composite_factors or (progress := advance(self._progress_of(n))) is None:
                 continue
+
+            self.started = True
 
             try:
                 _ = self._replace_composite(n, method, factor_func(n, *args), progress)

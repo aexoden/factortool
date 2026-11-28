@@ -7,21 +7,11 @@ later ones.
 
 ## Code/Architectural Improvements
 
-- Track ECM progress for each composite factor rather than for the number as a
-  whole. ECM currently runs on every remaining composite at a level chosen by
-  the largest one, so a small composite is carried through levels it would never
-  choose for itself, and the statistics for its digit count gain runs at those
-  levels. This may go along with revisiting how factors are stored and with
-  accounting for all factors in the time estimates. At the same time, save the
-  progress with each retained mersenne.ca assignment. Only the factors found are
-  saved at present, so a resumed number repeats rho, P-1 and every ECM level on
-  its remaining composites. Figure out how to handle a switch between standard
-  and yafu modes with a still pending number. Consider moving the state files
-  (assignments, pending submissions, statistics, batch and tool state) into a
-  single SQLite database at the same time, as this reshapes what is stored
-  anyway. Transactions would replace the journal's compaction and the atomic
-  file rewrites, and storing individual runs rather than running totals would
-  allow the statistics to report their variance.
+- Consider moving the state files (assignments, pending submissions,
+  statistics, batch and tool state) into a single SQLite database. Transactions
+  would replace the journal's compaction and the atomic file rewrites, and
+  storing individual runs rather than running totals would allow the statistics
+  to report their variance.
 - Determine how multithreaded YAFU's implementation of SIQS is (may vary by
   digit count), and consider threading it ourselves like with rho and P-1.
   Should probably check how well YAFU NFS and CADO-NFS use threads as well.

@@ -41,10 +41,12 @@ from factortool.backends.factordb import (
 )
 from factortool.backends.factory import create_backend
 from factortool.backends.mersenne_ca import MersenneCA
+from factortool.engine import EngineStatus, FactorEngine
 from factortool.http import HttpClient, PermanentHttpError, build_user_agent
 from factortool.interrupt import ABORT, Interrupted, InterruptState
-from factortool.number import Number
-from factortool.stats import FactoringStats
+from factortool.number import Number, Outcome
+from factortool.progress import CompositeProgress
+from factortool.stats import ECMCutoffs, FactoringStats
 from factortool.submissions import Submission, SubmissionJournal
 
 if TYPE_CHECKING:
@@ -1720,6 +1722,100 @@ def test_resumed_work_continues_from_the_factors_already_found(config: Config) -
 
         assert (number.prime_factors, number.composite_factors) == ([3, 5], [1001])
         assert number.expires_at == expires_at
+    finally:
+        backend.close()
+
+
+def test_resumed_work_continues_from_the_methods_already_run(monkeypatch: pytest.MonkeyPatch, config: Config) -> None:
+    """Test that a retained number skips the work saved for its composites, and saves the work done since at once."""
+    composite = HARD_COMPOSITES[0]
+    saved = CompositeProgress(n=composite, completed=frozenset({"tf", "rho"}), ecm_level=5)
+    retain(
+        config, Assignment(n=2 * composite, expires_at=time.time() + 1800.0, factors=(2, composite), progress=(saved,))
+    )
+    backend = make_assigning_backend(config)
+    calls: list[str] = []
+
+    def factor_yafu(n: int, method: str, *_args: object) -> list[int]:
+        calls.append(method)
+        return [n]
+
+    monkeypatch.setattr("factortool.number.factor_yafu", factor_yafu, raising=True)
+
+    try:
+        (number,) = backend.resume()
+        assert number.progress == (saved,)
+
+        number.factor_tf()
+        number.factor_rho()
+        assert retained(config)[0].progress == (saved,)
+
+        number.factor_pm1()
+        assert calls == ["pm1"]
+        assert retained(config)[0].progress == (saved.after("pm1"),)
+    finally:
+        backend.close()
+
+
+def test_resumed_work_continues_ecm_from_the_level_reached(monkeypatch: pytest.MonkeyPatch, config: Config) -> None:
+    """Test that the engine resumes ECM on a retained number after its saved level, saving each level as it ends."""
+    composite = HARD_COMPOSITES[0]
+    saved = CompositeProgress(n=composite, completed=frozenset({"tf", "rho", "pm1"}), ecm_level=3)
+    retain(config, Assignment(n=composite, expires_at=time.time() + 1800.0, progress=(saved,)))
+    backend = make_assigning_backend(config)
+    levels: list[int] = []
+    retained_levels: list[int] = []
+
+    def factor_ecm(n: int, level: int, *_args: object) -> list[int]:
+        retained_levels.append(retained(config)[0].progress[0].ecm_level)
+        levels.append(level)
+        return [n]
+
+    monkeypatch.setattr("factortool.number.factor_ecm", factor_ecm, raising=True)
+    monkeypatch.setattr("factortool.number.Number._ecm_cutoffs", Mock(return_value=ECMCutoffs(None, 5)), raising=True)
+    monkeypatch.setattr("factortool.number.Number.factor_final", Mock(), raising=True)
+
+    try:
+        (number,) = backend.resume()
+        assert not number.started
+
+        assert FactorEngine(config, InterruptState()).run([number]) == EngineStatus.SUCCESS
+        assert levels == [4, 5]
+        assert retained_levels == [3, 4]
+        assert retained(config)[0].progress == (saved.model_copy(update={"ecm_level": 5}),)
+    finally:
+        backend.close()
+
+
+def test_a_resumed_number_skipped_entirely_is_not_started(config: Config) -> None:
+    """Test that a retained number whose saved work covers a method is not counted as started by it."""
+    saved = CompositeProgress(n=HARD_COMPOSITES[0], completed=frozenset({"tf"}))
+    retain(config, Assignment(n=HARD_COMPOSITES[0], expires_at=time.time() + 1800.0, progress=(saved,)))
+    backend = make_assigning_backend(config)
+
+    try:
+        (number,) = backend.resume()
+        number.factor_tf()
+
+        assert number.outcome == Outcome.NOT_STARTED
+    finally:
+        backend.close()
+
+
+def test_resumed_work_ignores_progress_for_factors_it_does_not_have(config: Config) -> None:
+    """Test that saved progress is dropped for a composite that is not among the factors, or if they are unusable."""
+    expires_at = time.time() + 1800.0
+    stray = (CompositeProgress(n=1003, ecm_level=5), CompositeProgress(n=15015, ecm_level=5))
+    kept = CompositeProgress(n=1001, completed=frozenset({"tf"}))
+    retain(
+        config,
+        Assignment(n=15015, expires_at=expires_at, factors=(3, 5, 1001), progress=(*stray, kept)),
+        Assignment(n=15015 * 17, expires_at=expires_at, factors=(3, 5, 7), progress=stray),
+    )
+    backend = make_assigning_backend(config)
+
+    try:
+        assert {x.n: x.progress for x in backend.resume()} == {15015: (kept,), 15015 * 17: ()}
     finally:
         backend.close()
 

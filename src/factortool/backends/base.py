@@ -133,7 +133,7 @@ class Backend(Protocol):
         ...
 
     def resume(self) -> set[Number]:
-        """Resume the numbers whose assignments a previous run left unfinished, with the factors it found."""
+        """Resume the numbers whose assignments a previous run left unfinished, with the factors and progress saved."""
         ...
 
     def fetch(self, criteria: FetchCriteria) -> set[Number]:
@@ -166,7 +166,7 @@ class Backend(Protocol):
 
 
 def snapshot_assignment(number: Number) -> Assignment | None:
-    """Capture a number's assignment with the factors found so far.
+    """Capture a number's assignment with the factors found and the work done so far.
 
     Returns:
         Assignment | None: The assignment, or None if the number is not assigned.
@@ -174,7 +174,9 @@ def snapshot_assignment(number: Number) -> Assignment | None:
     if number.expires_at is None:
         return None
 
-    return Assignment(n=number.n, expires_at=number.expires_at, factors=tuple(number.known_factors))
+    return Assignment(
+        n=number.n, expires_at=number.expires_at, factors=tuple(number.known_factors), progress=number.progress
+    )
 
 
 def parse_composites(text: str) -> list[int]:
@@ -424,7 +426,7 @@ class BaseBackend(ABC):
             raise PermanentHttpError(msg)
 
     def resume(self) -> set[Number]:
-        """Resume the numbers whose assignments a previous run left unfinished, with the factors it found.
+        """Resume the numbers whose assignments a previous run left unfinished, with the factors and progress it saved.
 
         A number whose result is already waiting to be resubmitted is not resumed, as the previous run must have been
         stopped between submitting it and releasing its assignment. A number that is already fully factored, because the
@@ -439,7 +441,7 @@ class BaseBackend(ABC):
         resumed: list[Number] = []
 
         for assignment in self._carried_assignments:
-            number = Number(assignment.n, self._config, self._stats, self, assignment.factors)
+            number = Number(assignment.n, self._config, self._stats, self, assignment.factors, assignment.progress)
             number.expires_at = assignment.expires_at
             resumed.append(number)
 

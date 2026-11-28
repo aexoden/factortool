@@ -17,6 +17,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from factortool.constants import MIN_FACTORABLE
+from factortool.progress import CompositeProgress
 from factortool.util import format_count, safe_write
 
 
@@ -30,13 +31,14 @@ def assignment_expired(expires_at: float) -> bool:
 
 
 class Assignment(BaseModel):
-    """An assignment of a composite number, with any factors found so far."""
+    """An assignment of a composite number, with any factors found so far and the work done on its composites."""
 
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     n: int = Field(ge=MIN_FACTORABLE)
     expires_at: float
     factors: tuple[int, ...] = ()
+    progress: tuple[CompositeProgress, ...] = ()
 
 
 class AssignmentState(BaseModel):

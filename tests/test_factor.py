@@ -741,3 +741,29 @@ def test_factors_of_a_composite_inherit_its_progress(monkeypatch: pytest.MonkeyP
         b: CompositeProgress(n=b, completed=frozenset({"rho", "pm1"}), ecm_level=3),
         c: CompositeProgress(n=c, completed=frozenset({"rho", "pm1"}), ecm_level=3),
     }
+
+
+def test_yafu_mode_ignores_but_keeps_the_saved_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that YAFU's factor() runs on composites whatever standard mode did, keeping the progress if it fails."""
+    progress = (CompositeProgress(n=1001, completed=frozenset({"tf", "rho", "pm1"}), ecm_level=10),)
+    number = Number(15015, make_config(), FactoringStats(NO_STATS_PATH, read_only=True), None, (3, 5, 1001), progress)
+    factor_yafu_direct = Mock(side_effect=ToolFailure("YAFU failed"))
+    monkeypatch.setattr("factortool.number.factor_yafu_direct", factor_yafu_direct, raising=True)
+
+    number.factor_yafu_direct()
+
+    factor_yafu_direct.assert_called_once_with(1001, *number._yafu_args)
+    assert number.progress == progress
+
+
+def test_progress_without_a_new_factor_is_checkpointed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that a method finding nothing still records that it ran, while a skipped method records nothing."""
+    checkpoint = Mock()
+    number = Number(1001, make_config(), FactoringStats(NO_STATS_PATH, read_only=True), Mock(checkpoint=checkpoint))
+    monkeypatch.setattr("factortool.number.factor_yafu", Mock(return_value=[1001]), raising=True)
+
+    number.factor_rho()
+    number.factor_rho()
+
+    checkpoint.assert_called_once_with(number)
+    assert number.progress == (CompositeProgress(n=1001, completed=frozenset({"rho"})),)

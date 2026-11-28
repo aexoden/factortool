@@ -15,8 +15,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   `--backend`), set `gimps_login`, and pace its requests with
   `mersenne_ca_request_interval`. It requires `--max_digits`, submits only
   complete factorizations, and keeps its assignments in the state directory so
-  that a later run can resume them. An assignment is worked until it expires,
-  an hour after it was fetched, when any tool still running on it is
+  that a later run can resume them, without repeating the work already done on
+  their remaining composites in `standard` mode. An assignment is worked until
+  it expires, an hour after it was fetched, when any tool still running on it is
   abandoned. `--no_new_work` works only the retained assignments without
   fetching more.
 - YAFU's built-in NFS as a final factoring method, enabled with `use_nfs_yafu`.
